@@ -40,6 +40,8 @@ export class Player {
   pose: Pose = 'stand'
   dead = false
   riding = false
+  // Called when the respawn timer puts you back on the island.
+  onRespawn: () => void = () => {}
   private velY = 0
   private velX = 0
   private velZ = 0
@@ -73,6 +75,7 @@ export class Player {
       this.group.position.set(spawn.x, spawn.y, spawn.z)
       this.velX = this.velY = this.velZ = 0
       this.dead = false
+      this.onRespawn()
     }, 2500)
   }
 

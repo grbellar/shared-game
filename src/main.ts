@@ -13,6 +13,7 @@ import { Arrows } from './arrows'
 import { Destruction } from './destruction'
 import { DayNight } from './daynight'
 import { FirstPersonAim } from './firstperson'
+import { Health } from './health'
 import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
 import { sfx } from './audio'
 import { Voice } from './voice'
@@ -49,6 +50,8 @@ const player = new Player(scene, color, name)
 const remotes = new Remotes(scene)
 const settings = initSettings()
 const touch = new TouchControls()
+const health = new Health()
+player.onRespawn = () => health.revive()
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -115,6 +118,7 @@ net.onCrater = (c) => {
 }
 effects.onBlast = (center) => {
   const BLAST_RADIUS = 7
+  const BLAST_DAMAGE = 75 // dead center; a rocket jump off the rim is cheap
   sfx.explosion(distVol(center, 90))
   const d = player.group.position.distanceTo(center)
   if (d >= BLAST_RADIUS) return
@@ -124,6 +128,8 @@ effects.onBlast = (center) => {
   if (dir.lengthSq() < 0.01) dir.set(0, 0, 1)
   dir.normalize()
   player.applyImpulse(dir.x * 20 * k, 7 + 9 * k, dir.z * 20 * k)
+  // Own blast included: rocket jumps should hurt.
+  health.damage(BLAST_DAMAGE * k)
 }
 net.onFire = (id, origin, dir) => {
   const from = new THREE.Vector3(...origin)
@@ -135,13 +141,24 @@ net.onSlash = (id) => {
   sfx.slash(group ? distVol(group.position) : 0.7)
   remotes.slash(id)
 }
+net.onHit = (_attacker, dmg) => health.damage(dmg)
+// Losing the last of your health is your own announcement to make: the head
+// pops here, and everyone else hears about it through `kill`.
+health.onDeath = () => {
+  if (net.id) net.sendKill(net.id)
+  dieLocally()
+}
+function dieLocally(): void {
+  const headPos = popHead(player.group)
+  if (headPos) effects.spawnHeadPop(headPos)
+  sfx.pop()
+  sfx.death()
+  player.die()
+}
 net.onKill = (victim) => {
   if (victim === net.id) {
-    const headPos = popHead(player.group)
-    if (headPos) effects.spawnHeadPop(headPos)
-    sfx.pop()
-    sfx.death()
-    player.die()
+    health.kill()
+    dieLocally()
   } else {
     const group = remotes.getGroup(victim)
     sfx.pop(group ? distVol(group.position) : 0.7)
@@ -171,7 +188,9 @@ function releaseBow(): void {
 }
 
 let lastAttack = 0
+const SWORD_DAMAGE = 55 // two clean swings takes a head off
 function attack(): void {
+  if (player.dead) return
   const now = performance.now()
   if (weapon === 'gun' && now - lastAttack > 800) {
     lastAttack = now
@@ -203,8 +222,10 @@ function attack(): void {
           Math.cos(Math.atan2(to.x, to.z) - player.group.rotation.y),
         )
         if (Math.abs(facing) < 1.2) {
-          net.sendKill(id)
-          remotes.decapitate(id, effects)
+          // Just the damage — the victim decides whether that was fatal and
+          // announces it, so the head pops when their `kill` comes back.
+          net.sendHit(id, SWORD_DAMAGE)
+          sfx.hitmark()
           break
         }
       }
@@ -358,7 +379,7 @@ settings.onClockChange = (fromToggle) => {
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -380,6 +401,7 @@ renderer.setAnimationLoop(() => {
     },
     gameCamera.yaw,
   )
+  health.update(dt)
   voice.update(dt)
   player.group.userData.talk = voice.level // our own mouth flaps too
   voice.updateVolumes(player.group.position, (id) => remotes.getGroup(id)?.position)

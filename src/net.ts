@@ -31,6 +31,7 @@ type ServerMsg =
   | { t: 'chat'; id: string; name: string; text: string }
   | { t: 'fire'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
   | { t: 'slash'; id: string }
+  | { t: 'hit'; id: string; victim: string; dmg: number }
   | { t: 'kill'; victim: string }
   | { t: 'crater'; x: number; z: number; r: number; d: number }
   | { t: 'rtc'; from: string; data: unknown }
@@ -45,6 +46,8 @@ export class Net {
   onFire: (id: string, origin: [number, number, number], dir: [number, number, number]) => void =
     () => {}
   onSlash: (id: string) => void = () => {}
+  // Only fires when the hit was aimed at us — you apply your own damage.
+  onHit: (attacker: string, dmg: number) => void = () => {}
   onKill: (victim: string) => void = () => {}
   onCrater: (c: Crater) => void = () => {}
   onRtc: (from: string, data: unknown) => void = () => {}
@@ -85,6 +88,8 @@ export class Net {
         if (msg.id !== this.id) this.onFire(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz])
       } else if (msg.t === 'slash') {
         if (msg.id !== this.id) this.onSlash(msg.id)
+      } else if (msg.t === 'hit') {
+        if (msg.victim === this.id) this.onHit(msg.id, msg.dmg)
       } else if (msg.t === 'kill') {
         this.onKill(msg.victim)
       } else if (msg.t === 'crater') {
@@ -128,6 +133,11 @@ export class Net {
   sendSlash(): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'slash' }))
+  }
+
+  sendHit(victim: string, dmg: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'hit', victim, dmg }))
   }
 
   sendKill(victim: string): void {

@@ -81,8 +81,10 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   id. Every client simulates the rocket; each client applies blast knockback
   to itself only (see `effects.ts`).
 - client→server `slash`: katana swing (relayed for the animation). The
-  attacker detects hits and sends `kill` with the victim's id; the server
-  relays it to everyone, and each client plays the decapitation locally.
+  attacker detects hits and sends `hit` `{victim, dmg}`; the server relays it
+  with the attacker's id, and only the named victim acts on it.
+- client→server `kill`: you announce your own death (see Health below). The
+  server relays it to everyone and each client plays the decapitation.
 - client→server `arrow`: a bow shot — origin, direction, and draw power;
   relayed with the archer's id. Every client simulates the same ballistic
   arc (`arrows.ts`); hits are cosmetic (arrows embed in terrain, props, and
@@ -103,6 +105,17 @@ over the network — every client computes the same island. If you add world
 content, keep it deterministic or sync it through the room. Terrain damage is
 the one synced mutation: craters live in `welcome` replay, and placement code
 must keep using `baseHeightAt` so the prop PRNG streams never shift.
+
+## Health
+
+Your hit points are yours alone (`src/health.ts`), the same rule blast
+knockback follows: every client tracks its own health and nobody else's.
+Attackers only ever send damage — the victim subtracts it, and when it reaches
+zero the victim sends `kill` naming itself. That's why no head ever pops from
+somebody else's laggy simulation. Blast damage is self-applied in
+`effects.onBlast`, own rockets included, so rocket jumps cost you. Health
+regenerates after five quiet seconds and refills on respawn. New weapons
+should send `hit`, never `kill`.
 
 ## Art direction: N64
 

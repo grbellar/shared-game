@@ -113,6 +113,20 @@ export class GameRoom extends DurableObject<Env> {
       )
     } else if (msg.t === 'slash') {
       this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
+    } else if (msg.t === 'hit') {
+      // Relayed damage. Only the named victim acts on it: they own their own
+      // health, and they're the one who announces the resulting `kill`.
+      const dmg = Number(msg.dmg)
+      if (!Number.isFinite(dmg)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'hit',
+          id: att.id,
+          victim: String(msg.victim).slice(0, 16),
+          dmg: Math.max(0, Math.min(100, dmg)),
+        }),
+        ws,
+      )
     } else if (msg.t === 'kill') {
       this.broadcast(JSON.stringify({ t: 'kill', victim: String(msg.victim).slice(0, 16) }), ws)
     } else if (msg.t === 'arrow') {

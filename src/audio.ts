@@ -215,6 +215,19 @@ class Sfx {
     this.noise('lowpass', 900, 250, 0.06, 0.18 * vol)
   }
 
+  // Getting hurt: a winded thud, louder the bigger the bite.
+  hurt(vol = 1): void {
+    const v = Math.min(1, vol)
+    this.tone('square', 210, 85, 0.16, 0.2 * v)
+    this.noise('lowpass', 1300, 220, 0.11, 0.22 * v)
+  }
+
+  // Tick that confirms your swing connected.
+  hitmark(): void {
+    this.tone('square', 1250, 1650, 0.04, 0.1)
+    this.tone('square', 1650, 950, 0.05, 0.09, 0.05)
+  }
+
   // Comedic decapitation pop.
   pop(vol = 1): void {
     this.tone('sine', 520, 70, 0.12, 0.35 * vol)
