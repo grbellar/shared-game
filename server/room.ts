@@ -383,6 +383,23 @@ export class GameRoom extends DurableObject<Env> {
         JSON.stringify({ t: 'skelhit', i, dmg: Math.max(0, Math.min(200, dmg)) }),
         ws,
       )
+    } else if (msg.t === 'mg') {
+      // One .50 round, straight through. Nothing stored: a tracer is gone in
+      // a tenth of a second, and everything it actually broke arrives as the
+      // ordinary hit / bhit / crater the shooter mints.
+      this.broadcast(
+        JSON.stringify({
+          t: 'mg',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          tx: Number(msg.tx) || 0,
+          ty: Number(msg.ty) || 0,
+          tz: Number(msg.tz) || 0,
+        }),
+        ws,
+      )
     } else if (msg.t === 'meck') {
       // Somebody picked a Meckie up or set them down. Last writer wins: two
       // people grabbing at once is rare and self-correcting, since the loser

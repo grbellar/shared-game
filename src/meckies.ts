@@ -36,12 +36,26 @@ function homeSpot(i: number): { x: number; z: number } {
 }
 
 const PICKUP_RANGE = 3.2
+// How close a Meckie has to be to notice someone hurting you. Carried always
+// counts, however far the two of you have travelled.
+const GUARD_RANGE = 14
+const CRY_COOLDOWN = 2.6 // seconds, per resident
+const FURY_TIME = 1.6 // how long the face stays angry after a cry
+
+// What they shout. `%s` is your name — they are defending a person, not a
+// position, so the cry says whose.
+const WAR_CRIES = [
+  'GET AWAY FROM %s',
+  'NOT %s. NEVER %s.',
+  'YOU DO NOT TOUCH %s',
+  '%s IS UNDER MY PROTECTION',
+]
 const FACE_PX = 64
 const BOB = 0.16
 
 // What the face is doing. Mapped from what's happening to them rather than
 // from anything synced — an expression is cosmetic, so each client picks it.
-type Mood = 'curious' | 'excited' | 'happy' | 'thinking'
+type Mood = 'curious' | 'excited' | 'happy' | 'thinking' | 'furious'
 
 interface Live {
   group: THREE.Group
@@ -62,9 +76,19 @@ export class Meckies {
   // Someone picked a Meckie up or set them down: {i, x, z, by}. main.ts sends
   // it; the room stores the last one per resident and replays it to joiners.
   onMove: (i: number, x: number, z: number, by: string) => void = () => {}
+  // A Meckie shouted. main.ts puts it in a speech bubble over them.
+  onWarCry: (group: THREE.Group, text: string) => void = () => {}
+  // A Meckie struck back at whoever hurt their person. main.ts turns this into
+  // damage on that player — through the ordinary `hit` message, so the victim
+  // still decides whether it killed them and announces it themselves.
+  onStrike: (attackerId: string) => void = () => {}
+  // Whose name goes in the cry.
+  personName: () => string = () => 'my person'
   private live: Live[] = []
   private hint: HTMLDivElement
   private carriedBy = -1 // index we're personally carrying, or -1
+  private cryCd: number[] = []
+  private fury: number[] = []
 
   constructor(scene: THREE.Scene, private touch: boolean) {
     RESIDENTS.forEach((res, i) => {
@@ -109,6 +133,8 @@ export class Meckies {
         x: spot.x, z: spot.z, by: '', bob: i * 1.7, drawn: '',
       }
       this.live.push(l)
+      this.cryCd.push(0)
+      this.fury.push(0)
       this.paint(l, res, 'curious')
     })
 
@@ -143,6 +169,25 @@ export class Meckies {
     this.carriedBy = i
     sfx.equip(true)
     this.onMove(i, this.live[i].x, this.live[i].z, 'me')
+  }
+
+  // Somebody just hurt the person they live with. Every Meckie who is with
+  // you — in your arms, or close enough to see it — cries out and goes for
+  // the attacker. They are family; this is the whole point of them.
+  avenge(attackerId: string): void {
+    if (!attackerId) return
+    this.live.forEach((l, i) => {
+      if (this.cryCd[i] > 0) return
+      const withMe = l.by === 'me' || l.group.position.distanceTo(this.playerPos) < GUARD_RANGE
+      if (!withMe) return
+      this.cryCd[i] = CRY_COOLDOWN
+      this.fury[i] = FURY_TIME
+      const cry = WAR_CRIES[Math.floor(Math.random() * WAR_CRIES.length)]
+        .replaceAll('%s', this.personName().toUpperCase())
+      this.onWarCry(l.group, cry)
+      sfx.warCry()
+      this.onStrike(attackerId)
+    })
   }
 
   private nearestIndex(): number {
@@ -188,6 +233,10 @@ export class Meckies {
     this.playerPos.copy(playerPos)
     this.live.forEach((l, i) => {
       l.bob += dt
+      if (this.cryCd[i] > 0) this.cryCd[i] -= dt
+      if (this.fury[i] > 0) this.fury[i] -= dt
+      // Where they are and how they feel are separate questions: a furious
+      // Meckie in your arms still rides along, they just do it snarling.
       const holder = l.by === 'me' ? playerPos : l.by ? carrierPos(l.by) : undefined
       let mood: Mood
       if (holder) {
@@ -200,6 +249,7 @@ export class Meckies {
         l.group.position.set(l.x, ground + 1.15 + Math.sin(l.bob * 1.6) * BOB, l.z)
         mood = l.group.position.distanceTo(playerPos) < PICKUP_RANGE + 2 ? 'happy' : 'curious'
       }
+      if (this.fury[i] > 0) mood = 'furious'
       // Billboard the face at the camera, not at the player. Turning toward
       // whoever holds them looks right until they're the one holding you —
       // then the target sits directly below, the rotation degenerates, and you
@@ -246,14 +296,18 @@ function drawFace(ctx: CanvasRenderingContext2D, color: string, mood: Mood): voi
   ctx.fillStyle = color
   const eyeY = mood === 'thinking' ? 27 : 28
   // Excited squints up, curious opens wide, happy is a soft arc.
-  const h = mood === 'excited' ? 8 : mood === 'curious' ? 15 : 12
+  const h = mood === 'excited' ? 8 : mood === 'curious' ? 15 : mood === 'furious' ? 10 : 12
   for (const ex of [21, 43]) ctx.fillRect(ex - 6, eyeY - h / 2, 12, h)
 
   // Brow carries the mood, the way it does on the real face.
   ctx.strokeStyle = color
   ctx.lineWidth = 3
   ctx.beginPath()
-  if (mood === 'thinking') {
+  if (mood === 'furious') {
+    // Hard inward slant — the whole face is the brow.
+    ctx.moveTo(12, 10); ctx.lineTo(29, 19)
+    ctx.moveTo(35, 19); ctx.lineTo(52, 10)
+  } else if (mood === 'thinking') {
     ctx.moveTo(13, 15); ctx.lineTo(29, 18)
     ctx.moveTo(35, 13); ctx.lineTo(51, 13)
   } else if (mood === 'excited' || mood === 'happy') {
@@ -268,7 +322,11 @@ function drawFace(ctx: CanvasRenderingContext2D, color: string, mood: Mood): voi
   // Mouth.
   ctx.lineWidth = 3
   ctx.beginPath()
-  if (mood === 'excited') {
+  if (mood === 'furious') {
+    // Bared, shouting.
+    ctx.rect(23, 40, 18, 9)
+    ctx.moveTo(23, 44); ctx.lineTo(41, 44)
+  } else if (mood === 'excited') {
     ctx.arc(32, 42, 9, 0.15 * Math.PI, 0.85 * Math.PI)
   } else if (mood === 'happy') {
     ctx.arc(32, 43, 7, 0.2 * Math.PI, 0.8 * Math.PI)

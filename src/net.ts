@@ -1,5 +1,7 @@
 // Keep the message types in sync with server/room.ts
 
+import type * as THREE from 'three'
+
 import type { Pose } from './character'
 import type { Crater } from './world'
 import type { BlockSpec, WorldDamage } from './blocks'
@@ -65,6 +67,7 @@ type ServerMsg =
   | { t: 'sharkhit'; dmg: number }
   | { t: 'land'; id: string; x: number; y: number; z: number }
   | { t: 'meck'; id: string; i: number; x: number; z: number; by: string }
+  | { t: 'mg'; id: string; x: number; y: number; z: number; tx: number; ty: number; tz: number }
   | { t: 'mob'; i: number; x: number; z: number; ry: number; hp: number; st: string }
   | { t: 'mobhit'; i: number; dmg: number }
   | { t: 'skel'; s: number[] }
@@ -111,6 +114,10 @@ export class Net {
   // A Meckie was picked up or set down. `by` is the carrier's id, '' if they
   // were put down. The sender's own id arrives so 'me' can be resolved.
   onMeckie: (id: string, i: number, x: number, z: number, by: string) => void = () => {}
+  // One .50 round: muzzle and where it stopped. Cosmetic on every client but
+  // the shooter's, who already resolved and applied the hit.
+  onFifty: (id: string, from: [number, number, number], to: [number, number, number]) => void =
+    () => {}
   onMob: (s: MobNetState) => void = () => {}
   onMobHit: (i: number, dmg: number) => void = () => {}
   // The castle garrison, packed five numbers per skeleton (see skeletons.ts).
@@ -202,6 +209,8 @@ export class Net {
         if (msg.id !== this.id) this.onLand(msg.id, [msg.x, msg.y, msg.z])
       } else if (msg.t === 'meck') {
         if (msg.id !== this.id) this.onMeckie(msg.id, msg.i, msg.x, msg.z, msg.by)
+      } else if (msg.t === 'mg') {
+        if (msg.id !== this.id) this.onFifty(msg.id, [msg.x, msg.y, msg.z], [msg.tx, msg.ty, msg.tz])
       } else if (msg.t === 'mob') {
         const st = msg.st
         this.onMob({
@@ -361,6 +370,16 @@ export class Net {
   sendFireworkLaunch(): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'fwgo' }))
+  }
+
+  // One round from the M2. The shooter resolves the hit and mints its
+  // consequences (hit / bhit / crater); this is only so everyone can see the
+  // tracer land in the same place.
+  sendFifty(from: { x: number; y: number; z: number }, to: THREE.Vector3Like): void {
+    if (!this.connected) return
+    this.ws!.send(
+      JSON.stringify({ t: 'mg', x: from.x, y: from.y, z: from.z, tx: to.x, ty: to.y, tz: to.z }),
+    )
   }
 
   // Picked a Meckie up ('me' as `by`) or set them down (''). Where a carried
