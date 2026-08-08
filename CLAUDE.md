@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-shared-game is a silly multiplayer 3D game built entirely by LLM agents, iterated
-on by a group of friends. Anything goes, as long as it stays fun and stays in the
-art style.
+**Wheelchair Warriors** (repo/worker name: shared-game) is a silly multiplayer
+3D game built entirely by LLM agents, iterated on by a group of friends.
+Anything goes, as long as it stays fun and stays in the art style.
 
 ## Jam mode (currently ON)
 

@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>shared game</title>
+    <title>Wheelchair Warriors</title>
     <style>
       html, body {
         margin: 0;
@@ -130,9 +130,34 @@
       #touch-fire {
         bottom: calc(env(safe-area-inset-bottom) + 120px);
       }
+      #welcome {
+        position: fixed;
+        top: 22%;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: #ffdf3a;
+        font: bold 34px monospace;
+        text-shadow: 3px 3px 0 #000;
+        letter-spacing: 2px;
+        pointer-events: none;
+        animation: welcome-fade 5s ease forwards;
+      }
+      #welcome small {
+        display: block;
+        font-size: 16px;
+        color: #fff;
+        margin-top: 8px;
+        letter-spacing: 1px;
+      }
+      @keyframes welcome-fade {
+        0%, 70% { opacity: 1; }
+        100% { opacity: 0; visibility: hidden; }
+      }
     </style>
   </head>
   <body>
+    <div id="welcome">WELCOME TO<br />WHEELCHAIR WARRIORS<small>press R to ride</small></div>
     <div id="status"></div>
     <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; V voice &middot; G bazooka &middot; H katana &middot; F shovel &middot; B bow (hold click) &middot; T build (1-4 material) &middot; R wheelchair &middot; Y ramsey &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
