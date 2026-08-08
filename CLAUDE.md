@@ -213,8 +213,13 @@ third means touching four things together:
 The shark is leashed to home (`ROAM_R` in `shark.ts`), the cats never leave it,
 and `randomSpawn` always puts you back there — so dying abroad sends you home.
 That's deliberate: home is the hub, the far rock is somewhere you travel to.
-Rocket travel is island-only; the shadow realm is the gate's job, so `J` and
-the map both refuse to launch while you're out there.
+Rocket travel goes everywhere, the castle included — `DESTINATIONS` in
+`rocket.ts` is the list, and the map builds its buttons straight off it, so
+anything added there is immediately travellable. Each entry says how to tell
+whether you're standing on it and where to set down; the realm brings its own
+pad, because it's a region rather than an island. The gate is still the scenic
+route. Trips scale their apex with distance — 1800 units at a fixed height is
+a flat skim through the fog instead of an arc over it.
 
 ## The shadow realm
 

@@ -1,9 +1,12 @@
-import { ISLANDS, baseHeightAt, nearestIsland } from './world'
+import { ISLANDS, baseHeightAt } from './world'
+import { inRealm } from './realm'
+import { DESTINATIONS } from './rocket'
 import { sfx } from './audio'
 
 // The map. Tab to open it: the whole archipelago drawn from the terrain
 // function itself, every friend in the room pinned on it, and one click to
-// rocket to any of them (or to the island you aren't standing on).
+// rocket to any of them — or to any destination in rocket.ts, the castle
+// included, from the button row underneath.
 //
 // The terrain is sampled once and cached — the island shape is analytic and
 // never changes, and craters are far too small to show up at this scale. Only
@@ -37,12 +40,14 @@ export interface MapData {
 export class GameMap {
   // Where to rocket to. main.ts turns these into a RocketRide.launch.
   onPickPlayer: (id: string) => void = () => {}
-  onPickIsland: (index: number) => void = () => {}
+  onPickDest: (index: number) => void = () => {}
   data: () => MapData = () => ({ me: { x: 0, z: 0, ry: 0, color: '#fff', name: '' }, friends: [] })
   private root: HTMLDivElement
   private view: HTMLDivElement
   private me: HTMLDivElement
   private canvas: HTMLCanvasElement
+  private dests: HTMLDivElement
+  private destButtons: HTMLDivElement[] = []
   private islandChips: HTMLDivElement[] = []
   private pins = new Map<string, { el: HTMLDivElement; label: HTMLDivElement }>()
   private opened = false
@@ -69,21 +74,16 @@ export class GameMap {
     this.canvas.height = MAP_H
     this.view.append(this.canvas)
 
-    // One chip per island, sitting on it. Clicking one is a one-way ticket.
-    ISLANDS.forEach((isl, i) => {
+    // Labels only — which blob is which. Travel is the button row below, so
+    // that the castle (1800 units east, nowhere near this map) is offered the
+    // same way as everywhere else.
+    ISLANDS.forEach((isl) => {
       const chip = document.createElement('div')
       chip.className = 'map-island'
       chip.textContent = isl.name
       const [px, py] = project(isl.x, isl.z)
       chip.style.left = `${px}%`
       chip.style.top = `${py}%`
-      chip.addEventListener('pointerdown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        if (chip.classList.contains('here')) return
-        this.close()
-        this.onPickIsland(i)
-      })
       this.islandChips.push(chip)
       this.view.append(chip)
     })
@@ -92,11 +92,28 @@ export class GameMap {
     this.me.id = 'map-me'
     this.view.append(this.me)
 
+    // One button per destination. The one you're standing on is hidden rather
+    // than greyed — a trip to where you already are isn't a choice.
+    this.dests = document.createElement('div')
+    this.dests.id = 'map-dests'
+    DESTINATIONS.forEach((_dest, i) => {
+      const button = document.createElement('div')
+      button.className = 'map-dest'
+      button.addEventListener('pointerdown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        this.close()
+        this.onPickDest(i)
+      })
+      this.destButtons.push(button)
+      this.dests.append(button)
+    })
+
     const hint = document.createElement('div')
     hint.id = 'map-hint'
     hint.textContent = 'click a friend to rocket to them'
 
-    panel.append(title, this.view, hint)
+    panel.append(title, this.view, this.dests, hint)
     this.root.append(panel)
     document.body.append(this.root)
 
@@ -173,13 +190,26 @@ export class GameMap {
     this.me.style.transform = `translate(-50%, -50%) rotate(${180 - (me.ry * 180) / Math.PI}deg)`
     this.me.style.borderBottomColor = me.color
 
-    const here = nearestIsland(me.x, me.z)
+    const here = DESTINATIONS.findIndex((dest) => dest.here(me.x, me.z))
     this.islandChips.forEach((chip, i) => chip.classList.toggle('here', i === here))
+    // Straight display, not the hidden attribute: a class rule with a display
+    // would beat [hidden] the same way #map-root did.
+    this.destButtons.forEach((button, i) => {
+      button.style.display = i === here ? 'none' : ''
+      const dest = DESTINATIONS[i]
+      // Headcount doubles as the only way to see who's at the castle, since
+      // it's 1800 units east and can't be drawn on this map at all.
+      const n = friends.filter((f) => dest.here(f.x, f.z)).length
+      button.textContent = `${dest.icon} ${dest.name}${n ? `  (${n} there)` : ''}`
+    })
 
     // Pins for everyone currently in the room, minted and dropped as people
     // come and go.
     const seen = new Set<string>()
     for (const f of friends) {
+      // Anyone in the realm is off this map entirely — they're counted on the
+      // castle button instead. Leaving them out of `seen` drops their pin.
+      if (inRealm(f.x, f.z)) continue
       seen.add(f.id)
       let pin = this.pins.get(f.id)
       if (!pin) {
@@ -270,6 +300,13 @@ function paintTerrain(canvas: HTMLCanvasElement): void {
 function styleTag(): HTMLStyleElement {
   const style = document.createElement('style')
   style.textContent = `
+    /* MUST come with the rule below. An id selector beats the browser's
+       [hidden] { display: none }, so setting .hidden on something an id rule
+       gives a display to does exactly nothing and the overlay never goes
+       away. The radial wheels dodge this only by never setting display. */
+    #map-root[hidden] {
+      display: none;
+    }
     #map-root {
       position: fixed;
       inset: 0;
@@ -311,31 +348,42 @@ function styleTag(): HTMLStyleElement {
       text-align: center;
       margin-top: 8px;
     }
+    /* Labels, not buttons — travel lives in #map-dests. */
     .map-island {
       position: absolute;
       transform: translate(-50%, -50%);
       background: rgba(0, 0, 0, 0.7);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      color: rgba(255, 255, 255, 0.8);
       padding: 3px 7px;
       white-space: nowrap;
-      cursor: pointer;
+      pointer-events: none;
     }
-    .map-island::before {
-      content: '🚀 ';
-    }
-    .map-island:hover {
-      background: rgba(90, 90, 100, 0.95);
-      border-color: #fff;
-    }
-    /* The island you're already standing on isn't a destination. */
     .map-island.here {
-      opacity: 0.5;
-      cursor: default;
-      border-style: dashed;
+      border-color: #fff;
+      color: #fff;
     }
     .map-island.here::before {
       content: '📍 ';
+    }
+    #map-dests {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      margin-top: 8px;
+    }
+    .map-dest {
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      color: #fff;
+      padding: 5px 9px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .map-dest:hover {
+      background: rgba(90, 90, 100, 0.95);
+      border-color: #fff;
     }
     .map-pin {
       position: absolute;

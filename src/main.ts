@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createWorld, heightAt, landingSpotOn, nearestIsland, ISLANDS } from './world'
+import { createWorld, heightAt } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
@@ -35,7 +35,7 @@ import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
 import { ItemWheel } from './itemwheel'
 import { GameMap } from './map'
-import { RocketRide, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
+import { RocketRide, DESTINATIONS, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
 import {
   setWeapon,
   setRide,
@@ -446,35 +446,24 @@ map.data = () => ({
   },
   friends: remotes.list(),
 })
-// Rocket travel is island business. The shadow realm is 1800 units east and
-// the gate is how you leave it — a rocket out of there would fly a fifteen-
-// hundred-unit arc and quietly bypass the whole portal.
-function grounded(): boolean {
-  if (!inRealm(player.group.position.x, player.group.position.z)) return true
-  chat.addMessage('🚀', 'no launching from the realm — take the gate')
-  return false
-}
+// The castle counts as a destination like anywhere else — the gate is still
+// the scenic route, the rocket is the fast one.
 map.onPickPlayer = (id) => {
   const group = remotes.getGroup(id)
-  if (!group || !grounded()) return
-  // Never at someone who's in the realm either: the arc would drop you
-  // through the lava sea with no gate in sight.
-  if (inRealm(group.position.x, group.position.z)) {
-    chat.addMessage('🚀', `${remotes.nameOf(id)} is in the realm — take the gate`)
-    return
-  }
+  if (!group) return
   rocket.launch(player, { x: group.position.x, z: group.position.z, followId: id })
 }
-map.onPickIsland = (index) => {
-  if (grounded()) rocket.launch(player, landingSpotOn(index))
+map.onPickDest = (index) => {
+  const dest = DESTINATIONS[index]
+  if (dest && rocket.launch(player, dest.spot())) chat.addMessage('🚀', `to ${dest.name}!`)
 }
-// Keyboard shortcut for the trip everyone actually wants: the other island,
-// no map required.
+// Keyboard shortcut, no map required: J cycles to the next place that isn't
+// this one — island, island, castle, round again.
 function rocketToNextIsland(): void {
-  if (!grounded()) return
-  const here = nearestIsland(player.group.position.x, player.group.position.z)
-  const next = (here + 1) % ISLANDS.length
-  if (rocket.launch(player, landingSpotOn(next))) chat.addMessage('🚀', `to ${ISLANDS[next].name}!`)
+  const p = player.group.position
+  const here = DESTINATIONS.findIndex((d) => d.here(p.x, p.z))
+  const next = (here + 1) % DESTINATIONS.length
+  map.onPickDest(next)
 }
 
 cats.onPet = (index) => net.sendPet(index)
