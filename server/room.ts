@@ -293,6 +293,32 @@ export class GameRoom extends DurableObject<Env> {
       if (!d.startsWith('data:image/jpeg;base64,') || d.length > 8000) return
       this.faces.set(att.id, d)
       this.broadcast(JSON.stringify({ t: 'face', id: att.id, d }), ws)
+    } else if (msg.t === 'shark') {
+      // Relayed straight through: exactly one client (the lowest player id in
+      // the room) owns the shark sim and pushes it ~10x/sec. Nothing is
+      // stored — a late joiner picks it up on the next tick.
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      const ry = Number(msg.ry)
+      const hp = Number(msg.hp)
+      if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(ry) || !Number.isFinite(hp))
+        return
+      this.broadcast(
+        JSON.stringify({
+          t: 'shark',
+          x,
+          z,
+          ry,
+          hp,
+          st: String(msg.st).slice(0, 8),
+          grab: String(msg.grab ?? '').slice(0, 16),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'sharkhit') {
+      const dmg = Number(msg.dmg)
+      if (!Number.isFinite(dmg)) return
+      this.broadcast(JSON.stringify({ t: 'sharkhit', dmg: Math.max(0, Math.min(200, dmg)) }), ws)
     }
   }
 

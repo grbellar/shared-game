@@ -9,7 +9,7 @@ const RIDE_SPEED = 16 // wheelchair beats walking
 const RAMSEY_SPEED = 19 // and four limbs beat two wheels
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
-const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
+export const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
 
 // A random dry-land spot so players don't stack on one point. Rejection
@@ -42,6 +42,9 @@ export class Player {
   pose: Pose = 'stand'
   dead = false
   ride: 'none' | 'wheelchair' | 'ramsey' = 'none'
+  // Something has hold of you (the shark) — input is ignored and whatever
+  // grabbed you owns your position until it lets go.
+  grabbed = false
   // Called when the respawn timer puts you back on the island.
   onRespawn: () => void = () => {}
   // Fired when we hit water hard enough to splash (main.ts spawns the effect).
@@ -84,6 +87,7 @@ export class Player {
   die(): void {
     if (this.dead) return
     this.dead = true
+    this.grabbed = false
     setTimeout(() => {
       const spawn = randomSpawn()
       this.group.position.set(spawn.x, spawn.y, spawn.z)
@@ -94,6 +98,16 @@ export class Player {
   }
 
   update(dt: number, input: PlayerInput, camYaw: number): void {
+    // Clamped in a shark's mouth: it drives the position, you just flail.
+    if (this.grabbed && !this.dead) {
+      this.velX = this.velY = this.velZ = 0
+      this.moving = false
+      this.pose = 'swim'
+      this.walkPhase += dt * 22
+      animateCharacter(this.group, dt, this.walkPhase, 1, 'swim')
+      return
+    }
+
     const swimming = this.pose === 'swim'
     const crouching = !swimming && this.ride === 'none' && input.crouch
     const sprinting = !crouching && input.sprint

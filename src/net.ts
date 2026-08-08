@@ -3,6 +3,7 @@
 import type { Pose } from './character'
 import type { Crater } from './world'
 import type { BlockSpec } from './blocks'
+import type { SharkNetState } from './shark'
 
 export interface PlayerState {
   id: string
@@ -52,6 +53,8 @@ type ServerMsg =
   | { t: 'fw'; id: string; x: number; z: number; c: number }
   | { t: 'fwgo'; id: string }
   | { t: 'face'; id: string; d: string }
+  | { t: 'shark'; x: number; z: number; ry: number; hp: number; st: string; grab: string }
+  | { t: 'sharkhit'; dmg: number }
 
 export class Net {
   id: string | null = null
@@ -85,6 +88,8 @@ export class Net {
   onFirework: (id: string, x: number, z: number, c: number) => void = () => {}
   onFireworkLaunch: (id: string) => void = () => {}
   onFace: (id: string, dataUrl: string) => void = () => {}
+  onShark: (s: SharkNetState) => void = () => {}
+  onSharkHit: (dmg: number) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -142,6 +147,18 @@ export class Net {
         this.onFireworkLaunch(msg.id)
       } else if (msg.t === 'face') {
         if (msg.id !== this.id) this.onFace(msg.id, msg.d)
+      } else if (msg.t === 'shark') {
+        const st = msg.st
+        this.onShark({
+          x: msg.x,
+          z: msg.z,
+          ry: msg.ry,
+          hp: msg.hp,
+          st: st === 'hunt' || st === 'grab' || st === 'dead' ? st : 'patrol',
+          grab: msg.grab,
+        })
+      } else if (msg.t === 'sharkhit') {
+        this.onSharkHit(msg.dmg)
       }
     }
     ws.onclose = () => {
@@ -189,6 +206,17 @@ export class Net {
   sendCrater(c: Crater): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'crater', x: c.x, z: c.z, r: c.r, d: c.d }))
+  }
+
+  // Only the shark's host client sends this (see shark.ts).
+  sendShark(s: SharkNetState): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'shark', ...s }))
+  }
+
+  sendSharkHit(dmg: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'sharkhit', dmg }))
   }
 
   // Voice-chat signaling (offer/answer/ICE), relayed to one target peer.

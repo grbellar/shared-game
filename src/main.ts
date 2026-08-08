@@ -19,6 +19,7 @@ import { initBuildHud } from './buildhud'
 import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
+import { Shark } from './shark'
 import { Cats } from './cats'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
@@ -214,6 +215,7 @@ net.onArrow = (id, origin, dir, power) => {
   arrows.spawn(id, from, new THREE.Vector3(...dir), power)
 }
 const destruction = new Destruction(effects, net)
+const shark = new Shark(scene, net, effects, remotes, health)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
@@ -229,6 +231,9 @@ effects.solidAt = (p) => blockAtPoint(p.x, p.y, p.z) !== undefined
 effects.onOwnExplosion = (center) => {
   destruction.rocketCrater(center)
   building.blastDamage(center)
+  // Same rule as craters: only the rocket's owner scores the hit, so one
+  // blast can't be counted once per client in the room.
+  shark.blast(center)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
@@ -386,6 +391,7 @@ function attack(): void {
           return
         }
       }
+      if (shark.swing(player.group.position, player.group.rotation.y, 34)) return
       const block = meleeBlockTarget()
       if (block) building.hit(block.gx, block.gy, block.gz, 1)
     }, SLASH_DURATION * 500)
@@ -404,6 +410,8 @@ function attack(): void {
         building.hit(block.gx, block.gy, block.gz, 2)
         return
       }
+      // A shovel to the nose counts too, and beats digging a hole in the sea.
+      if (shark.swing(player.group.position, player.group.rotation.y, 24)) return
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
       destruction.dig(
@@ -521,6 +529,7 @@ if (profile.voice) {
 }
 
 const chat = new Chat()
+shark.onDeath = () => chat.addMessage('🦈', 'blub…')
 const bubbles = new Bubbles(camera, renderer.domElement)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
@@ -552,8 +561,16 @@ setInterval(() => {
 }, 500)
 
 const keys = new Set<string>()
+const MASH_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'])
+let mashCount = 0
 window.addEventListener('keydown', (e) => {
   keys.add(e.code)
+  // Being dragged off by the shark: mash to fight your way out. Held keys
+  // don't count, so it has to be actual panic.
+  if (shark.draggingMe && !e.repeat && MASH_KEYS.has(e.code) && ++mashCount >= 4) {
+    mashCount = 0
+    shark.struggle()
+  }
   if (e.code === 'Enter' && !chat.isOpen) {
     e.preventDefault()
     chat.open()
@@ -665,6 +682,7 @@ settings.onClockChange = (fromToggle) => {
   voice,
   arrows,
   health,
+  shark,
   effects,
   music,
   building,
@@ -715,6 +733,10 @@ renderer.setAnimationLoop(() => {
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   fireworks.update(dt)
   remotes.update(dt)
+  // After the player and remotes have moved: the shark chases current
+  // positions, and when it has you it overrides where you ended up.
+  shark.update(dt, player)
+  if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
   gameCamera.update(dt, keys, player, settings, fp)
   daynight.update(settings, camera.position)
