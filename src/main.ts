@@ -20,6 +20,7 @@ import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
+import { Minimap } from './minimap'
 import { Health } from './health'
 import { Shark } from './shark'
 import { Cats } from './cats'
@@ -737,6 +738,7 @@ window.addEventListener('keyup', (e) => keys.delete(e.code))
 
 const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
+const minimap = new Minimap(touch.active, color)
 const daynight = new DayNight(scene)
 
 // The day/night clock is shared: the room's clock arrives in welcome (and on
@@ -839,6 +841,7 @@ renderer.setAnimationLoop(() => {
     dt,
   )
   daynight.update(settings, camera.position)
+  minimap.update(player, remotes, settings, voice.level)
 
   renderer.render(scene, camera)
 })

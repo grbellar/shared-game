@@ -5,6 +5,7 @@
 export interface Settings {
   cameraFollow: boolean
   firstPerson: boolean
+  minimap: boolean
   clockRun: boolean // day/night cycle advances on its own
   timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
   music: boolean
@@ -45,6 +46,8 @@ function load(): Settings {
     return {
       cameraFollow: obj.cameraFollow === true,
       firstPerson: obj.firstPerson === true,
+      // Minimap is on unless you turned it off.
+      minimap: obj.minimap !== false,
       clockRun: obj.clockRun !== false,
       timeOfDay: typeof obj.timeOfDay === 'number' && isFinite(obj.timeOfDay) ? obj.timeOfDay : 10,
       // Music defaults on, so absence means true.
@@ -58,6 +61,7 @@ function load(): Settings {
     return {
       cameraFollow: false,
       firstPerson: false,
+      minimap: true,
       clockRun: true,
       timeOfDay: 10,
       music: true,
@@ -107,6 +111,8 @@ export function initSettings(
       background: rgba(0, 0, 0, 0.55);
       border: 2px solid rgba(255, 255, 255, 0.28);
       border-radius: 0;
+      /* Above the minimap, which shares this corner on touch. */
+      z-index: 5;
     }
     #settings-gear {
       top: 8px;
@@ -376,6 +382,7 @@ export function initSettings(
     charRow,
     makeRow('settings-camera-follow-label', 'camera always behind me', 'cameraFollow'),
     makeRow('settings-first-person-label', 'first-person aim (with weapon)', 'firstPerson'),
+    makeRow('settings-minimap-label', 'mini-map', 'minimap'),
     makeRow('settings-clock-run-label', 'day/night clock runs', 'clockRun'),
     timeRow,
     slider,

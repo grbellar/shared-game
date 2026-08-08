@@ -26,6 +26,7 @@ interface Remote {
   skin: string
   name: string
   emote: string
+  color: string
 }
 
 // Renders and interpolates the other players in the room.
@@ -63,6 +64,7 @@ export class Remotes {
         skin: 'none',
         name: p.name,
         emote: 'none',
+        color: p.color,
       }
       this.players.set(p.id, remote)
       const face = this.faces.get(p.id)
@@ -138,6 +140,17 @@ export class Remotes {
     if (!remote) return
     const headPos = popHead(remote.group)
     if (headPos) effects.spawnHeadPop(headPos)
+  }
+
+  // Where everyone is, in their own colour, and how loudly they're talking
+  // right now — for the minimap.
+  blips(): { id: string; pos: THREE.Vector3; color: string; talk: number }[] {
+    return [...this.players.entries()].map(([id, r]) => ({
+      id,
+      pos: r.group.position,
+      color: r.color,
+      talk: (r.group.userData.talk as number) ?? 0,
+    }))
   }
 
   // Positions rockets can collide with.
