@@ -12,6 +12,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   body.position.y = 1.1
 
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), skinMat)
+  head.name = 'head'
   head.position.y = 1.95
   const eyeGeo = new THREE.BoxGeometry(0.09, 0.12, 0.05)
   const eyeMat = new THREE.MeshLambertMaterial({ color: 0x111111 })
@@ -50,19 +51,60 @@ export function animateCharacter(group: THREE.Group, walkPhase: number, moving: 
   limbs.legL.rotation.x = swing
   limbs.legR.rotation.x = -swing
   limbs.armL.rotation.x = -swing * 0.7
-  // Gun arm is held straight out in front; otherwise it swings.
-  limbs.armR.rotation.x = group.userData.gun ? -Math.PI / 2 : swing * 0.7
+
+  const weapon = group.userData.weapon as string | undefined
+  if (weapon === 'gun') {
+    // Bazooka arm is held straight out in front.
+    limbs.armR.rotation.x = -Math.PI / 2
+  } else if (weapon === 'sword') {
+    const t = (performance.now() - (group.userData.attackStart ?? 0)) / 1000
+    if (t < SLASH_DURATION) {
+      // Overhead chop: wind up behind the head, slice down past the knees.
+      limbs.armR.rotation.x = -2.8 + (t / SLASH_DURATION) * 3.6
+    } else {
+      limbs.armR.rotation.x = -0.25 + swing * 0.3
+    }
+  } else {
+    limbs.armR.rotation.x = swing * 0.7
+  }
 }
 
-// Attach or remove the bazooka: a big tube resting on the right shoulder,
-// pointing forward (+Z). Synced over the network via the `gun` flag in
-// PlayerState. The raised right arm (see animateCharacter) holds it up.
-export function setGun(group: THREE.Group, has: boolean): void {
-  const existing = group.getObjectByName('gun')
-  group.userData.gun = has
-  if (has && !existing) {
+export const SLASH_DURATION = 0.3
+
+export function startSlash(group: THREE.Group): void {
+  group.userData.attackStart = performance.now()
+}
+
+// Hide the head for the death window and return where it was (world space)
+// so effects can send a copy flying. Returns null if already headless.
+export function popHead(group: THREE.Group): THREE.Vector3 | null {
+  const head = group.getObjectByName('head')
+  if (!head || !head.visible) return null
+  head.visible = false
+  setTimeout(() => (head.visible = true), 2600)
+  return group.position.clone().add(new THREE.Vector3(0, 1.95, 0))
+}
+
+// Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand), or
+// 'none'. Synced over the network via the `weapon` field in PlayerState.
+export function setWeapon(group: THREE.Group, weapon: string): void {
+  const existing = group.getObjectByName('weapon')
+  if (existing) existing.parent!.remove(existing)
+  group.userData.weapon = weapon
+  if (weapon === 'gun') {
+    group.add(buildBazooka())
+  } else if (weapon === 'sword') {
+    const armR = (group.userData.limbs as { armR: THREE.Mesh }).armR
+    armR.add(buildKatana())
+  }
+}
+
+// Big tube resting on the right shoulder, pointing forward (+Z). The raised
+// right arm (see animateCharacter) holds it up.
+function buildBazooka(): THREE.Group {
+  {
     const gun = new THREE.Group()
-    gun.name = 'gun'
+    gun.name = 'weapon'
     const olive = new THREE.MeshLambertMaterial({ color: 0x55603a, flatShading: true })
     const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
     const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
@@ -82,10 +124,30 @@ export function setGun(group: THREE.Group, has: boolean): void {
 
     gun.add(tube, muzzle, exhaust, band, sight, grip)
     gun.position.set(0.38, 1.8, 0.1)
-    group.add(gun)
-  } else if (!has && existing) {
-    group.remove(existing)
+    return gun
   }
+}
+
+// Katana held in the right hand, blade extending past the hand (local -Y),
+// so it hangs at the side and follows the arm during a slash.
+function buildKatana(): THREE.Group {
+  const sword = new THREE.Group()
+  sword.name = 'weapon'
+  const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+  const gold = new THREE.MeshLambertMaterial({ color: 0xb8973a, flatShading: true })
+  const steel = new THREE.MeshLambertMaterial({ color: 0xd8dde4, flatShading: true })
+
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.26, 0.07), dark)
+  handle.position.y = -0.38
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.04, 0.17), gold)
+  guard.position.y = -0.52
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.85, 0.12), steel)
+  blade.position.y = -0.97
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.24, 0.1), steel)
+  tip.position.set(0, -1.48, 0.025)
+  tip.rotation.x = 0.22
+  sword.add(handle, guard, blade, tip)
+  return sword
 }
 
 function makeNameTag(name: string): THREE.Sprite {
