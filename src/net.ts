@@ -14,7 +14,7 @@ export interface PlayerState {
   name: string
   pose: Pose
   weapon: string // 'none' | 'gun' | 'sword' | 'shovel'
-  ride: string // 'none' | 'wheelchair'
+  ride: string // 'none' | 'wheelchair' | 'ramsey'
   talk: number // 0..1 mic level, drives the mouth on remote screens
 }
 

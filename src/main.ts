@@ -90,7 +90,7 @@ net.onLeave = (id) => {
 net.connect()
 
 let weapon: 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' = 'none'
-let ride: 'none' | 'wheelchair' = 'none'
+let ride: 'none' | 'wheelchair' | 'ramsey' = 'none'
 let material = 0 // index into MATERIALS, picked with 1-4 while building
 
 setInterval(() => {
@@ -431,7 +431,13 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') {
     ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
     setRide(player.group, ride)
-    player.riding = ride === 'wheelchair'
+    player.ride = ride
+    sfx.equip(ride !== 'none')
+  }
+  if (e.code === 'KeyY') {
+    ride = ride === 'ramsey' ? 'none' : 'ramsey'
+    setRide(player.group, ride)
+    player.ride = ride
     sfx.equip(ride !== 'none')
   }
   if (e.code === 'KeyM') sfx.toggleMute()

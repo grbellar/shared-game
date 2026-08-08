@@ -6,6 +6,7 @@ import { sfx } from './audio'
 
 const SPEED = 9
 const RIDE_SPEED = 16 // wheelchair beats walking
+const RAMSEY_SPEED = 19 // and four limbs beat two wheels
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
 const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
@@ -40,7 +41,7 @@ export class Player {
   moving = false // movement input this frame? The follow cam only recenters while true.
   pose: Pose = 'stand'
   dead = false
-  riding = false
+  ride: 'none' | 'wheelchair' | 'ramsey' = 'none'
   // Called when the respawn timer puts you back on the island.
   onRespawn: () => void = () => {}
   // Fired when we hit water hard enough to splash (main.ts spawns the effect).
@@ -94,7 +95,7 @@ export class Player {
 
   update(dt: number, input: PlayerInput, camYaw: number): void {
     const swimming = this.pose === 'swim'
-    const crouching = !swimming && !this.riding && input.crouch
+    const crouching = !swimming && this.ride === 'none' && input.crouch
     const sprinting = !crouching && input.sprint
     let speedMul = swimming ? 0.6 : crouching ? 0.45 : 1
     if (sprinting) speedMul *= 1.6
@@ -122,7 +123,8 @@ export class Player {
       dx /= len
       dz /= len
       const analog = Math.min(mag, 1)
-      const moveSpeed = this.riding ? RIDE_SPEED : SPEED
+      const moveSpeed =
+        this.ride === 'ramsey' ? RAMSEY_SPEED : this.ride === 'wheelchair' ? RIDE_SPEED : SPEED
       this.tryMove(dx * moveSpeed * speedMul * analog * dt, dz * moveSpeed * speedMul * analog * dt)
       // Face the direction of travel, taking the short way around —
       // unless the mouse owns the facing (first-person strafe).
@@ -201,7 +203,8 @@ export class Player {
     // treading water in place the cycle still ticks, as quiet lapping.
     if (Math.floor(this.walkPhase / Math.PI) !== prevStep && !this.dead) {
       if (floating) moving > 0.15 ? sfx.paddle() : sfx.lap()
-      else if (moving > 0.15 && this.onGround) this.riding ? sfx.squeak() : sfx.step()
+      else if (moving > 0.15 && this.onGround)
+        this.ride === 'wheelchair' ? sfx.squeak() : sfx.step()
     }
     this.wasFloating = floating
 

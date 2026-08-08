@@ -73,7 +73,8 @@ export function animateCharacter(
 ): void {
   const rig = group.userData.rig as Rig
   const anim = group.userData.anim as { crouch: number; swim: number; mouth: number }
-  const riding = group.userData.ride === 'wheelchair'
+  const ride = group.userData.ride as string | undefined
+  const riding = ride === 'wheelchair' || ride === 'ramsey'
   const k = Math.min(1, 10 * dt)
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
   anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
@@ -87,21 +88,47 @@ export function animateCharacter(
   rig.armL.position.y = rig.armR.position.y = 1.6 - 0.3 * crouch
 
   const stride = Math.sin(walkPhase) * 0.8 * moving * (1 - 0.55 * crouch)
-  if (riding) {
+  if (ride === 'wheelchair') {
     // Sitting: legs out to the footrest, hands down on the push rims.
     rig.legL.rotation.x = -1.35
     rig.legR.rotation.x = -1.35
+    rig.legL.rotation.z = 0
+    rig.legR.rotation.z = 0
     rig.armL.rotation.x = -0.6
     rig.armR.rotation.x = -0.6
     rig.armL.rotation.z = 0
     rig.armR.rotation.z = 0
     const wheels = group.userData.rideWheels as THREE.Group[] | undefined
     if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
+  } else if (ride === 'ramsey') {
+    // Straddling Ramsey's back: legs forward and spread down his sides,
+    // hands gripping his shoulders.
+    rig.legL.rotation.x = -0.9
+    rig.legR.rotation.x = -0.9
+    rig.legL.rotation.z = 0.45
+    rig.legR.rotation.z = -0.45
+    rig.armL.rotation.x = -0.8
+    rig.armR.rotation.x = -0.8
+    rig.armL.rotation.z = 0.15
+    rig.armR.rotation.z = -0.15
+    // Ramsey bounds like a dog: front limbs together, hind limbs opposite.
+    const limbs = group.userData.rideLimbs as
+      | { frontL: THREE.Mesh; frontR: THREE.Mesh; hindL: THREE.Mesh; hindR: THREE.Mesh }
+      | undefined
+    if (limbs) {
+      const bound = Math.sin(walkPhase) * 0.7 * moving
+      limbs.frontL.rotation.x = bound
+      limbs.frontR.rotation.x = bound
+      limbs.hindL.rotation.x = -bound
+      limbs.hindR.rotation.x = -bound
+    }
   } else {
     // Legs: stride on land (shorter while crouched), flutter kick in water.
     const kick = Math.sin(walkPhase * 2.6) * (0.35 + 0.25 * moving)
     rig.legL.rotation.x = stride * (1 - swim) + kick * swim
     rig.legR.rotation.x = -stride * (1 - swim) - kick * swim
+    rig.legL.rotation.z = 0
+    rig.legR.rotation.z = 0
 
     // Arms: swing opposite the legs on land, windmill a front crawl in water.
     // Wrapped to one turn so blending in/out of swim doesn't pinwheel forever.
@@ -197,18 +224,105 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
   }
 }
 
-// Mount or dismount the wheelchair. Synced via the `ride` field in
-// PlayerState. The character sits in it (see animateCharacter).
+// Mount or dismount a ride: 'wheelchair' or 'ramsey' (a guy you ride like
+// a horse). Synced via the `ride` field in PlayerState. The character sits
+// on it (see animateCharacter).
 export function setRide(group: THREE.Group, ride: string): void {
   const existing = group.getObjectByName('ride')
   if (existing) existing.parent!.remove(existing)
   group.userData.ride = ride
   delete group.userData.rideWheels
+  delete group.userData.rideLimbs
   if (ride === 'wheelchair') {
     const chair = buildWheelchair()
     group.add(chair)
     group.userData.rideWheels = chair.userData.wheels
+  } else if (ride === 'ramsey') {
+    const ramsey = buildRamsey()
+    group.add(ramsey)
+    group.userData.rideLimbs = ramsey.userData.limbs
   }
+}
+
+// Ramsey: a loyal guy on all fours you ride like a horse. White tee, jeans,
+// and his signature flat-top army cap. His back lines up with the rider's
+// seat; limbs pivot at the shoulder/hip so he can bound (see animateCharacter).
+function buildRamsey(): THREE.Group {
+  const ramsey = new THREE.Group()
+  ramsey.name = 'ride'
+  const tee = new THREE.MeshLambertMaterial({ color: 0xcfc9b8 })
+  const jeans = new THREE.MeshLambertMaterial({ color: 0x3d4f73 })
+  const skin = new THREE.MeshLambertMaterial({ color: 0xe0b088 })
+
+  // Horizontal torso, back at seat height (the rider's hips sit at 0.6).
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.45, 1.1), tee)
+  torso.position.set(0, 0.4, -0.05)
+
+  // Head up at the front, watching where he's galloping.
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), skin)
+  head.position.set(0, 0.75, 0.6)
+  const eyeGeo = new THREE.BoxGeometry(0.09, 0.12, 0.05)
+  const eyeMat = new THREE.MeshLambertMaterial({ color: 0x111111 })
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat)
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat)
+  eyeL.position.set(-0.13, 0.02, 0.29)
+  eyeR.position.set(0.13, 0.02, 0.29)
+  head.add(eyeL, eyeR)
+  head.add(buildArmyCap())
+
+  // Front limbs are arms (tee sleeves), hind limbs are jean legs. All pivot
+  // at the top so the bound swings them from the shoulder/hip.
+  const frontGeo = new THREE.BoxGeometry(0.2, 0.52, 0.2)
+  frontGeo.translate(0, -0.26, 0)
+  const frontL = new THREE.Mesh(frontGeo, tee)
+  const frontR = new THREE.Mesh(frontGeo, tee)
+  frontL.position.set(-0.24, 0.5, 0.42)
+  frontR.position.set(0.24, 0.5, 0.42)
+  const hindGeo = new THREE.BoxGeometry(0.26, 0.5, 0.26)
+  hindGeo.translate(0, -0.25, 0)
+  const hindL = new THREE.Mesh(hindGeo, jeans)
+  const hindR = new THREE.Mesh(hindGeo, jeans)
+  hindL.position.set(-0.22, 0.5, -0.5)
+  hindR.position.set(0.22, 0.5, -0.5)
+
+  ramsey.add(torso, head, frontL, frontR, hindL, hindR)
+  ramsey.userData.limbs = { frontL, frontR, hindL, hindR }
+  return ramsey
+}
+
+// Ramsey's brown flat-top army cap: oval crown, stubby brim, and a tiny
+// canvas-drawn KANGOL label on the front. Built in head-local space.
+function buildArmyCap(): THREE.Group {
+  const cap = new THREE.Group()
+  const cloth = new THREE.MeshLambertMaterial({ color: 0x6b5747, flatShading: true })
+  // Crown flares slightly outward toward the flat top, military-cadet style.
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.36, 0.24, 10), cloth)
+  crown.position.y = 0.38
+  const brim = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.26), cloth)
+  brim.position.set(0, 0.29, 0.42)
+  brim.rotation.x = 0.18
+
+  const canvas = document.createElement('canvas')
+  canvas.width = 64
+  canvas.height = 16
+  const ctx = canvas.getContext('2d')!
+  ctx.font = 'bold 11px monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#d8c9a8'
+  ctx.fillText('KANGOL', 32, 9)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.minFilter = THREE.NearestFilter
+  texture.magFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.34, 0.085),
+    new THREE.MeshLambertMaterial({ map: texture, transparent: true }),
+  )
+  label.position.set(0, 0.33, 0.39)
+
+  cap.add(crown, brim, label)
+  return cap
 }
 
 // Classic chrome-frame wheelchair. Big rear wheels with box spokes so the
