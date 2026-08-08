@@ -18,11 +18,15 @@ const KICK_TIME = 0.25 // bazooka recoil, seconds
 // View-model pose per weapon, in camera space (camera looks down -Z).
 // The bazooka is built pointing +Z so it flips around; the katana and
 // shovel are built blade-down (-Y) so a positive X tilt raises the
-// business end up-forward into a ready stance.
-const VIEW_POSES: Record<string, { pos: [number, number, number]; rot: [number, number, number] }> = {
+// business end up-forward into a ready stance. `hand` is where the handle
+// ends up after that rotation — the fist and sleeve anchor there.
+const VIEW_POSES: Record<
+  string,
+  { pos: [number, number, number]; rot: [number, number, number]; hand?: [number, number, number] }
+> = {
   gun: { pos: [0.5, -0.4, -0.9], rot: [0, Math.PI, 0] },
-  sword: { pos: [0.42, -0.5, -0.8], rot: [1.9, 0, 0.15] },
-  shovel: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12] },
+  sword: { pos: [0.42, -0.5, -0.8], rot: [1.9, 0, 0.15], hand: [0.05, 0.12, -0.36] },
+  shovel: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12], hand: [0.05, 0, -0.4] },
 }
 
 export class FirstPersonAim {
@@ -38,6 +42,7 @@ export class FirstPersonAim {
     private readonly player: Player,
     private readonly canvas: HTMLCanvasElement,
     private readonly camera: THREE.PerspectiveCamera,
+    private readonly color: string,
   ) {
     const style = document.createElement('style')
     style.textContent = `
@@ -96,13 +101,8 @@ export class FirstPersonAim {
       this.viewWeapon = want
       this.swingT = this.kickT = -1
       if (want !== 'none') {
-        const model =
-          want === 'gun' ? buildBazooka() : want === 'sword' ? buildKatana() : buildShovel()
-        const pose = VIEW_POSES[want]
-        model.position.set(...pose.pos) // overrides the shoulder-mount offset baked into buildBazooka
-        model.rotation.set(...pose.rot)
-        this.viewModel = model
-        this.camera.add(model)
+        this.viewModel = this.buildHeld(want)
+        this.camera.add(this.viewModel)
       }
     }
 
@@ -118,6 +118,43 @@ export class FirstPersonAim {
     }
   }
 
+  // Wrapper pinned at the grip point, in camera space: the weapon (posed)
+  // plus, for handheld tools, a blocky arm. Swings rotate the wrapper, so
+  // arm and weapon chop together around the hand.
+  private buildHeld(weapon: string): THREE.Group {
+    const held = new THREE.Group()
+    const pose = VIEW_POSES[weapon]
+    held.position.set(...pose.pos)
+    const model =
+      weapon === 'gun' ? buildBazooka() : weapon === 'sword' ? buildKatana() : buildShovel()
+    model.position.set(0, 0, 0) // strip the shoulder-mount offset baked into buildBazooka
+    model.rotation.set(...pose.rot)
+    held.add(model)
+    // The bazooka rests on the shoulder; the katana and shovel get a fist
+    // on the handle and a sleeve reaching down toward off-screen.
+    if (pose.hand) {
+      const arm = this.buildArm()
+      arm.position.set(...pose.hand)
+      held.add(arm)
+    }
+    return held
+  }
+
+  private buildArm(): THREE.Group {
+    const arm = new THREE.Group()
+    const fist = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.2, 0.22),
+      new THREE.MeshLambertMaterial({ color: 0xe0b088 }),
+    )
+    const sleeveGeo = new THREE.BoxGeometry(0.22, 0.7, 0.22)
+    sleeveGeo.translate(0, -0.35, 0) // pivot at the wrist, like the character's shoulder pivot
+    const sleeve = new THREE.Mesh(sleeveGeo, new THREE.MeshLambertMaterial({ color: this.color }))
+    // Reach back down-right toward the bottom corner of the screen.
+    sleeve.rotation.set(-0.55, 0, 0.35)
+    arm.add(fist, sleeve)
+    return arm
+  }
+
   // Chop arc for the katana/shovel view model; call on attack.
   swing(): void {
     if (this.active) this.swingT = 0
@@ -129,10 +166,11 @@ export class FirstPersonAim {
   }
 
   // Per-frame view-model animation: everything eases back to the idle pose.
+  // Offsets go on the wrapper (weapon pose rotations live on its child).
   update(dt: number): void {
     if (!this.viewModel) return
     const pose = VIEW_POSES[this.viewWeapon]
-    let rx = pose.rot[0]
+    let rx = 0
     let z = pose.pos[2]
     if (this.swingT >= 0) {
       this.swingT += dt / SLASH_DURATION

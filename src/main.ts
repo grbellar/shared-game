@@ -259,7 +259,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 
 const gameCamera = new GameCamera(camera)
-const fp = new FirstPersonAim(player, renderer.domElement, camera)
+const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
