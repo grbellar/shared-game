@@ -14,29 +14,65 @@ export interface PlayerState {
   pose: Pose
   weapon: string // 'none' | 'gun' | 'sword' | 'shovel'
   ride: string // 'none' | 'wheelchair'
+  hat: string // 'none' | dug-up loot | 'duck' (see character.ts)
+}
+
+export interface Score {
+  id: string
+  name: string
+  kills: number
+  deaths: number
+}
+
+// One-off world events for the easter eggs: 'dig' (treasure cache n claimed),
+// 'duck' (the duck was murdered), 'sun' (someone shot the sun), 'nessie'
+// (Nessie was hit and dived). Only 'dig' is remembered by the room.
+export interface EggEvent {
+  id: string
+  name: string
+  k: string
+  n?: number
 }
 
 type ServerMsg =
-  | { t: 'welcome'; id: string; players: PlayerState[]; craters?: Crater[] }
+  | {
+      t: 'welcome'
+      id: string
+      players: PlayerState[]
+      craters?: Crater[]
+      scores?: Score[]
+      found?: number[]
+    }
   | { t: 'state'; p: PlayerState }
   | { t: 'leave'; id: string }
   | { t: 'chat'; id: string; name: string; text: string }
   | { t: 'fire'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
   | { t: 'slash'; id: string }
-  | { t: 'kill'; victim: string }
+  | { t: 'kill'; victim: string; killer: string; killerName: string; victimName: string }
   | { t: 'crater'; x: number; z: number; r: number; d: number }
+  | { t: 'score'; scores: Score[] }
+  | { t: 'egg'; id: string; name: string; k: string; n?: number }
+
+export interface Welcome {
+  players: PlayerState[]
+  craters: Crater[]
+  scores: Score[]
+  found: number[]
+}
 
 export class Net {
   id: string | null = null
-  onWelcome: (players: PlayerState[], craters: Crater[]) => void = () => {}
+  onWelcome: (w: Welcome) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
   onChat: (id: string, name: string, text: string) => void = () => {}
   onFire: (id: string, origin: [number, number, number], dir: [number, number, number]) => void =
     () => {}
   onSlash: (id: string) => void = () => {}
-  onKill: (victim: string) => void = () => {}
+  onKill: (victim: string, killer: string, killerName: string, victimName: string) => void = () => {}
   onCrater: (c: Crater) => void = () => {}
+  onScores: (scores: Score[]) => void = () => {}
+  onEgg: (e: EggEvent) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -52,7 +88,12 @@ export class Net {
       }
       if (msg.t === 'welcome') {
         this.id = msg.id
-        this.onWelcome(msg.players, msg.craters ?? [])
+        this.onWelcome({
+          players: msg.players,
+          craters: msg.craters ?? [],
+          scores: msg.scores ?? [],
+          found: msg.found ?? [],
+        })
       } else if (msg.t === 'state') {
         if (msg.p.id !== this.id) this.onState(msg.p)
       } else if (msg.t === 'leave') {
@@ -64,10 +105,15 @@ export class Net {
       } else if (msg.t === 'slash') {
         if (msg.id !== this.id) this.onSlash(msg.id)
       } else if (msg.t === 'kill') {
-        this.onKill(msg.victim)
+        this.onKill(msg.victim, msg.killer, msg.killerName, msg.victimName)
       } else if (msg.t === 'crater') {
         // No self-echo check needed: the server never echoes to the sender.
         this.onCrater({ x: msg.x, z: msg.z, r: msg.r, d: msg.d })
+      } else if (msg.t === 'score') {
+        // Broadcast to everyone including the scorer, so all boards agree.
+        this.onScores(msg.scores)
+      } else if (msg.t === 'egg') {
+        this.onEgg({ id: msg.id, name: msg.name, k: msg.k, n: msg.n })
       }
     }
     ws.onclose = () => {
@@ -110,5 +156,10 @@ export class Net {
   sendCrater(c: Crater): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'crater', x: c.x, z: c.z, r: c.r, d: c.d }))
+  }
+
+  sendEgg(k: string, n?: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'egg', k, n }))
   }
 }

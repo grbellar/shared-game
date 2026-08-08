@@ -4,6 +4,8 @@ import {
   animateCharacter,
   setWeapon,
   setRide,
+  setHat,
+  releaseCharacter,
   startSlash,
   popHead,
   type Pose,
@@ -18,6 +20,8 @@ interface Remote {
   pose: Pose
   weapon: string
   ride: string
+  hat: string
+  name: string
 }
 
 // Renders and interpolates the other players in the room.
@@ -44,9 +48,12 @@ export class Remotes {
         pose: 'stand',
         weapon: 'none',
         ride: 'none',
+        hat: 'none',
+        name: p.name,
       }
       this.players.set(p.id, remote)
     }
+    remote.name = p.name
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
     remote.pose = p.pose ?? 'stand'
     const weapon =
@@ -60,10 +67,26 @@ export class Remotes {
       remote.ride = ride
       setRide(remote.group, ride)
     }
+    const hat = typeof p.hat === 'string' ? p.hat : 'none'
+    if (remote.hat !== hat) {
+      remote.hat = hat
+      setHat(remote.group, hat)
+    }
+  }
+
+  // Who is wearing what, for the killboard badges.
+  hats(): Map<string, string> {
+    const map = new Map<string, string>()
+    for (const [id, r] of this.players) map.set(id, r.hat)
+    return map
   }
 
   getGroup(id: string): THREE.Group | undefined {
     return this.players.get(id)?.group
+  }
+
+  nameOf(id: string): string {
+    return this.players.get(id)?.name ?? 'someone'
   }
 
   slash(id: string): void {
@@ -87,6 +110,7 @@ export class Remotes {
     const remote = this.players.get(id)
     if (!remote) return
     this.scene.remove(remote.group)
+    releaseCharacter(remote.group)
     this.players.delete(id)
   }
 

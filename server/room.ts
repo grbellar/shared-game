@@ -20,6 +20,14 @@ interface PlayerState {
   pose: 'stand' | 'crouch' | 'swim'
   weapon: string
   ride: string
+  hat: string
+}
+
+interface Score {
+  id: string
+  name: string
+  kills: number
+  deaths: number
 }
 
 // Dumb relay: clients send their own state, the room broadcasts it to
@@ -31,6 +39,12 @@ export class GameRoom extends DurableObject<Env> {
   // World damage (blast craters, shovel digs), replayed to late joiners in
   // `welcome`. In-memory like `states`: hibernation heals the island.
   private craters: Crater[] = []
+  // Kill tally for the killboard. Entries outlive the connection that earned
+  // them, so leaving doesn't wipe your record for the session.
+  private scores = new Map<string, Score>()
+  // Treasure caches already dug up (indices into the client's deterministic
+  // cache list). Replayed in `welcome` so a late joiner can't re-claim one.
+  private found: number[] = []
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
@@ -42,7 +56,14 @@ export class GameRoom extends DurableObject<Env> {
     server.serializeAttachment({ id })
     this.ctx.acceptWebSocket(server)
     server.send(
-      JSON.stringify({ t: 'welcome', id, players: [...this.states.values()], craters: this.craters }),
+      JSON.stringify({
+        t: 'welcome',
+        id,
+        players: [...this.states.values()],
+        craters: this.craters,
+        scores: [...this.scores.values()],
+        found: this.found,
+      }),
     )
     return new Response(null, { status: 101, webSocket: client })
   }
@@ -69,6 +90,7 @@ export class GameRoom extends DurableObject<Env> {
         pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
         weapon: String(msg.weapon).slice(0, 8),
         ride: String(msg.ride).slice(0, 12),
+        hat: String(msg.hat ?? 'none').slice(0, 12),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -94,7 +116,33 @@ export class GameRoom extends DurableObject<Env> {
     } else if (msg.t === 'slash') {
       this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
     } else if (msg.t === 'kill') {
-      this.broadcast(JSON.stringify({ t: 'kill', victim: String(msg.victim).slice(0, 16) }), ws)
+      const victim = String(msg.victim).slice(0, 16)
+      const killerName = this.states.get(att.id)?.name ?? 'someone'
+      const victimName = this.states.get(victim)?.name ?? 'someone'
+      this.broadcast(
+        JSON.stringify({ t: 'kill', victim, killer: att.id, killerName, victimName }),
+        ws,
+      )
+      // The room keeps the tally so every killboard agrees. Suicides (which
+      // shouldn't happen, but clients are trusted) only count as a death.
+      if (victim !== att.id) this.score(att.id, killerName).kills++
+      this.score(victim, victimName).deaths++
+      this.broadcast(JSON.stringify({ t: 'score', scores: [...this.scores.values()] }))
+    } else if (msg.t === 'egg') {
+      const k = String(msg.k).slice(0, 12)
+      const n = Number(msg.n)
+      // 'dig' claims a treasure cache — the only egg the room remembers, so
+      // late joiners can't dig up something that's already gone.
+      if (k === 'dig') {
+        if (!Number.isInteger(n) || n < 0 || n > 63) return
+        if (this.found.includes(n)) return
+        this.found.push(n)
+      }
+      const name = this.states.get(att.id)?.name ?? 'someone'
+      this.broadcast(
+        JSON.stringify({ t: 'egg', id: att.id, name, k, n: Number.isFinite(n) ? n : undefined }),
+        ws,
+      )
     } else if (msg.t === 'crater') {
       const x = Number(msg.x)
       const z = Number(msg.z)
@@ -129,6 +177,23 @@ export class GameRoom extends DurableObject<Env> {
     if (!att) return
     this.states.delete(att.id)
     this.broadcast(JSON.stringify({ t: 'leave', id: att.id }), ws)
+  }
+
+  // Fetch (or start) a player's row on the killboard, keeping the name fresh.
+  private score(id: string, name: string): Score {
+    let row = this.scores.get(id)
+    if (!row) {
+      row = { id, name, kills: 0, deaths: 0 }
+      // Cap the board so a long-lived room can't grow without bound; the
+      // oldest record falls off first.
+      if (this.scores.size >= 32) {
+        const oldest = this.scores.keys().next()
+        if (!oldest.done) this.scores.delete(oldest.value)
+      }
+      this.scores.set(id, row)
+    }
+    row.name = name
+    return row
   }
 
   private broadcast(data: string, except?: WebSocket): void {
