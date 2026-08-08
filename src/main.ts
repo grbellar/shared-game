@@ -40,6 +40,8 @@ import {
   setName,
   setFace,
   setEmote,
+  setLook,
+  getLook,
   startSlash,
   startJabber,
   popHead,
@@ -54,6 +56,9 @@ import { music } from './music'
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
 const VIEW_H = 240
+
+// How far the head glances toward the third-person camera's heading.
+const GLANCE = 0.9
 
 // Who you are survives reloads now: token, name, color, and loadout all come
 // from the browser-storage profile (minted on your very first visit).
@@ -234,6 +239,7 @@ remotes.onEmote = (id, emote) => {
 }
 
 setInterval(() => {
+  const look = getLook(player.group)
   net.sendState({
     x: player.group.position.x,
     y: player.group.position.y,
@@ -247,6 +253,8 @@ setInterval(() => {
     skin,
     talk: Math.round(voice.level * 100) / 100,
     emote: emotes.current,
+    hp: look.pitch,
+    hy: look.yaw,
   })
 }, 66)
 
@@ -960,6 +968,20 @@ renderer.setAnimationLoop(() => {
     weapon,
   )
   fp.update(dt)
+
+  // Head tracks where we're looking: the mouse pitch in first person (the
+  // body already owns the yaw there), and in third person a glance toward
+  // whatever the orbit camera is pointing at — so Q/E peeks and touch drags
+  // show up on the character instead of only moving the view. The sine
+  // shapes the glance: biggest when the view is square to the body, unwound
+  // to face-forward when the camera looks straight down the body's own
+  // heading (nobody cranes their neck a full half-turn).
+  const viewOffset = gameCamera.yaw + Math.PI - player.group.rotation.y
+  setLook(
+    player.group,
+    fp.isActive ? fp.pitch : 0,
+    fp.isActive ? 0 : GLANCE * Math.sin(viewOffset),
+  )
 
   player.update(
     dt,

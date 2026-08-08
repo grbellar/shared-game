@@ -19,6 +19,8 @@ export interface PlayerState {
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
   emote: string // 'none' or an id from src/emotes.ts
+  hp: number // head pitch, up-positive radians
+  hy: number // head yaw, offset from the body's facing
 }
 
 export interface Face {

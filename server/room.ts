@@ -43,6 +43,15 @@ interface PlayerState {
   skin: string
   talk: number
   emote: string
+  hp: number // head pitch
+  hy: number // head yaw, offset from the body's facing
+}
+
+// Head aim limits, matching src/character.ts.
+function clampLook(v: unknown, limit: number): number {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(-limit, Math.min(limit, n))
 }
 
 // Real seconds per full in-game day. Keep in sync with src/daynight.ts.
@@ -130,6 +139,8 @@ export class GameRoom extends DurableObject<Env> {
         skin: String(msg.skin ?? 'none').slice(0, 12),
         talk: Math.max(0, Math.min(1, Number(msg.talk) || 0)),
         emote: String(msg.emote ?? 'none').slice(0, 12),
+        hp: clampLook(msg.hp, 1.2),
+        hy: clampLook(msg.hy, 1.0),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
