@@ -555,6 +555,15 @@ class Sfx {
     this.tone('square', 880, 1180, 0.12, 0.08 * v, 0.1)
   }
 
+  // Intentionally overdriven, abrupt noise for the full-screen scare. It
+  // still passes through the master output, so the existing mute key wins.
+  jumpScare(): void {
+    this.noise('bandpass', 5200, 380, 0.72, 1.8, 0, 8000)
+    this.tone('sawtooth', 1450, 120, 0.68, 1.15)
+    this.tone('square', 82, 34, 0.9, 1.5)
+    this.noise('lowpass', 420, 75, 0.9, 1.4)
+  }
+
   // Big dumb death groan, then bubbles.
   sharkDie(vol = 1): void {
     this.tone('sawtooth', 200, 38, 0.8, 0.24 * vol)

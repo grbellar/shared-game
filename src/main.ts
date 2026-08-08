@@ -54,6 +54,7 @@ import { SKINS, applySkin } from './skins'
 import { sfx } from './audio'
 import { Voice } from './voice'
 import { music } from './music'
+import { JumpScares } from './jumpscares'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -148,6 +149,7 @@ const settings = initSettings(
     }
   },
 )
+new JumpScares(() => settings.jumpScares).start()
 faceBar.setEnabled(settings.webcamBar)
 // Camera was on last session: restart it. Denied (or camera gone) flips the
 // switch back off, same as toggling it by hand.
