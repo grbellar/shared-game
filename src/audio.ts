@@ -7,6 +7,8 @@
 // gesture (calls are no-ops until the AudioContext unlocks itself on the
 // first pointerdown/keydown).
 
+const MUTE_KEY = 'shared-game.sfx-muted'
+
 class Sfx {
   private ctx: AudioContext | null = null
   private out: GainNode | null = null
@@ -17,6 +19,11 @@ class Sfx {
   private sharkLow = false
 
   constructor() {
+    try {
+      this.mutedFlag = localStorage.getItem(MUTE_KEY) === '1'
+    } catch {
+      // Storage unavailable (private mode); mute resets each session.
+    }
     const unlock = () => {
       this.init()
       window.removeEventListener('pointerdown', unlock)
@@ -32,6 +39,11 @@ class Sfx {
 
   toggleMute(): boolean {
     this.mutedFlag = !this.mutedFlag
+    try {
+      localStorage.setItem(MUTE_KEY, this.mutedFlag ? '1' : '0')
+    } catch {
+      // Storage unavailable; the toggle still works this session.
+    }
     if (this.out && this.ctx) {
       this.out.gain.setValueAtTime(this.mutedFlag ? 0 : this.masterGain, this.ctx.currentTime)
     }
