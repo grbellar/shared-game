@@ -63,6 +63,10 @@ build) is the only gate.
     saves), plus name, color, and equipped loadout. Settings persist
     separately in `settings.ts`.
   - `remotes.ts` — rendering/interpolation of other players.
+  - `rocket.ts` — rocket travel: the arc that throws you to another island or
+    onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
+    overlay that aims it — the islands drawn straight out of `baseHeightAt`,
+    with a clickable pin per player.
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
   `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
@@ -81,10 +85,15 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 
 - server→client `welcome`: your id + everyone's last known state
 - client→server `state`: your position/rotation/color/name/weapon/ride/skin/
-  talk/emote (~15x/sec). `emote` is the radial-menu pose you're playing (see
-  `emotes.ts`); it rides in `state` rather than being its own message, so
-  late joiners see a dance already in progress. Each client animates it off
-  its own clock.
+  talk/emote/head aim (~15x/sec). `emote` is the radial-menu pose you're
+  playing (see `emotes.ts`); it rides in `state` rather than being its own
+  message, so late joiners see a dance already in progress. Each client
+  animates it off its own clock. Two poses aren't on the wheel at all:
+  `rocketfly` and `hero` are played by `rocket.ts`, and because they ride this
+  same field, remotes replay a whole rocket flight and superhero landing with
+  no new message — the pose animates off the flight timings in `emotes.ts`,
+  each client on its own clock. Head aim is `hp` (pitch) and `hy` (yaw offset
+  from the body's facing); an emote's head pose overrides it.
 - server→client `state`: another player's state (relayed)
 - server→client `leave`: a player disconnected
 - client→server `chat`: a chat message; server relays it to everyone else as
@@ -153,6 +162,14 @@ split as blast knockback.
   through it, so what you see outlined is exactly what the click acts on.
 - `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
   world-generated blocks. Replayed onto a freshly regenerated castle.
+- client→server `land`: a rocket trip touching down, `{x, y, z}`; relayed with
+  the traveller's id. The *flight* sends nothing at all — your position already
+  streams ~15x/sec and the pose rides in `state.emote` (see above) — but the
+  impact needs to land on the same frame everywhere, so the touchdown gets its
+  own message. Everyone plays the blast; each client applies the shove and
+  damage to itself only (never the traveller, who is busy sticking the
+  landing), and the traveller alone mints the crater, the same rule rockets
+  follow. See `rocket.ts`.
 - client→server `pet`: someone petted a cat, `{cat: index}`; relayed with the
   petter's id so everyone sees the heart. Cats themselves are never synced —
   see `cats.ts`, where position is a closed-form function of the clock. That's
@@ -170,10 +187,34 @@ split as blast knockback.
   `character.ts`.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
-over the network — every client computes the same island. If you add world
+over the network — every client computes the same islands. If you add world
 content, keep it deterministic or sync it through the room. Terrain damage is
 the one synced mutation: craters live in `welcome` replay, and placement code
 must keep using `baseHeightAt` so the prop PRNG streams never shift.
+
+## Islands
+
+`ISLANDS` in `world.ts` lists them: home at the origin, and the far rock out
+east at x=280, past the fog wall. `baseHeightAt` takes the *tallest* island at
+a point, so each one keeps exactly the shape it had when it was alone — which
+is why adding the second one didn't move a single tree on the first. Adding a
+third means touching four things together:
+
+- `ISLANDS`, plus a terrain tile for it in `createWorld`. One mesh per island,
+  tiled edge to edge in x with matching segment size (3⅓ units) — two meshes
+  over the same ground z-fight, and mismatched segments crack the seam.
+- Its own PRNG seed in the `scatterProps` call, never a shared stream.
+- Check it fits inside `GRID_XZ_MAX` (`blocks.ts` *and* `server/room.ts`) and
+  `WORLD_XZ_MAX` (`server/room.ts`). Both are currently sized for the shadow
+  realm at x≈1800, so there's plenty of room — but a landmass outside them
+  gets its blocks rejected and its craters silently clamped somewhere else,
+  which forks everyone's terrain.
+
+The shark is leashed to home (`ROAM_R` in `shark.ts`), the cats never leave it,
+and `randomSpawn` always puts you back there — so dying abroad sends you home.
+That's deliberate: home is the hub, the far rock is somewhere you travel to.
+Rocket travel is island-only; the shadow realm is the gate's job, so `J` and
+the map both refuse to launch while you're out there.
 
 ## The shadow realm
 

@@ -2,6 +2,29 @@ import * as THREE from 'three'
 
 const ISLAND_RADIUS = 90
 
+export interface Island {
+  name: string
+  x: number
+  z: number
+  r: number
+}
+
+// Every island you can stand on. Home sits at the origin exactly where it
+// always has; the far rock is out east, past the fog wall, close enough to
+// rocket to (see rocket.ts) and far enough that it's a rumour from the beach.
+//
+// Two rules hold this together, and both are load-bearing:
+//   1. baseHeightAt takes the TALLEST island at a point, so each one keeps
+//      precisely the shape it had when it was alone in the world.
+//   2. createWorld builds one terrain mesh per island, tiled edge to edge in
+//      x and never overlapping — two meshes over the same ground z-fight.
+// Adding a third island means extending both, plus the grid/crater caps in
+// blocks.ts and server/room.ts that bound how far out the world may be edited.
+export const ISLANDS: Island[] = [
+  { name: 'home', x: 0, z: 0, r: ISLAND_RADIUS },
+  { name: 'the far rock', x: 280, z: 0, r: 70 },
+]
+
 // A bowl carved out of the terrain by a rocket blast or a shovel dig.
 // Synced through the room (net.ts 'crater' message) and summed into heightAt.
 export interface Crater {
@@ -58,17 +81,62 @@ export function addRegion(
 // loops) must use this — never the crater-adjusted heightAt — so the seeded
 // PRNG streams stay identical on every client no matter what has been
 // blown up by the time someone joins.
+//
+// Also exported because the travel map draws the world from it (map.ts): the
+// same surface heightAt reports, minus the crater walk, which is invisible at
+// map scale and would mean 30k crater-list scans per redraw.
+//
+// Two layers sit on top of the base noise, in order. A region (the shadow
+// realm) owns its patch of the map outright and short-circuits everything
+// else. Otherwise the tallest ISLAND wins.
 export function baseHeightAt(x: number, z: number): number {
   const other = region?.(x, z)
   if (other !== null && other !== undefined) return other
-  let h =
+  const noise =
     Math.sin(x * 0.05) * Math.cos(z * 0.05) * 3 +
     Math.sin(x * 0.021 + 1.7) * Math.cos(z * 0.017 - 0.4) * 6 +
     Math.sin(x * 0.11 - 2.1) * Math.sin(z * 0.13) * 1.2 +
     4
-  const d = Math.hypot(x, z)
-  h -= Math.pow(d / ISLAND_RADIUS, 3) * 18
+  // Tallest island wins. Home's own term is untouched by this — every other
+  // island is hundreds of units of falloff away by the time you're standing
+  // on it — so the world everyone already built on is bit-for-bit the same.
+  let h = -Infinity
+  for (const isl of ISLANDS) {
+    const d = Math.hypot(x - isl.x, z - isl.z)
+    h = Math.max(h, noise - Math.pow(d / isl.r, 3) * 18)
+  }
   return h
+}
+
+// Which island is nearest to a point (an index into ISLANDS). Used by the map
+// and by "rocket me to the next island", which is just the other one.
+export function nearestIsland(x: number, z: number): number {
+  let best = 0
+  let bestD = Infinity
+  ISLANDS.forEach((isl, i) => {
+    const d = Math.hypot(x - isl.x, z - isl.z)
+    if (d < bestD) {
+      bestD = d
+      best = i
+    }
+  })
+  return best
+}
+
+// Somewhere dry to come down on an island. Rejection sampled against the
+// crater-aware heightAt so a rocket never drops you into a flooded pit; the
+// island's middle as a last resort. Not deterministic and doesn't need to be
+// — only the traveller picks their own landing spot.
+export function landingSpotOn(index: number): { x: number; z: number } {
+  const isl = ISLANDS[index] ?? ISLANDS[0]
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2
+    const r = Math.sqrt(Math.random()) * isl.r * 0.6
+    const x = isl.x + Math.cos(a) * r
+    const z = isl.z + Math.sin(a) * r
+    if (heightAt(x, z) > 1.5) return { x, z }
+  }
+  return { x: isl.x, z: isl.z }
 }
 
 // Deterministic terrain height — the client is the only authority on
@@ -112,6 +180,7 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
   craters.push(...fresh)
   revision++
 
+  // Every tile: a crater can land on any island, or in the realm.
   for (const geo of terrainGeos) {
     const pos = geo.attributes.position
     const col = geo.attributes.color
@@ -188,9 +257,13 @@ function mulberry32(seed: number): () => number {
   }
 }
 
-function buildTerrain(): THREE.Mesh {
-  const geo = new THREE.PlaneGeometry(320, 320, 96, 96)
+// One terrain tile, spanning `width` in x centred on `cx` and the full 320 in
+// z. Segment size must come out the same on every tile (3⅓ units), so tiles
+// share their seam vertices exactly and the join is invisible underwater.
+function buildTerrain(cx: number, width: number, segX: number): THREE.Mesh {
+  const geo = new THREE.PlaneGeometry(width, 320, segX, 96)
   geo.rotateX(-Math.PI / 2)
+  geo.translate(cx, 0, 0)
   const pos = geo.attributes.position
   const colors: number[] = []
   const rand = mulberry32(1)
@@ -250,7 +323,10 @@ export function createWorld(scene: THREE.Scene): void {
   sun.position.set(40, 60, 20)
   scene.add(sun)
 
-  scene.add(buildTerrain())
+  // One tile per island, laid end to end: home covers x -160..160 (exactly the
+  // plane it has always had), the far rock picks up at 160 and runs to 400.
+  scene.add(buildTerrain(0, 320, 96))
+  scene.add(buildTerrain(280, 240, 72))
 
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(800, 800),
@@ -260,10 +336,23 @@ export function createWorld(scene: THREE.Scene): void {
   water.position.y = 0
   scene.add(water)
 
-  const rand = mulberry32(42)
-  for (let i = 0; i < 70; i++) {
-    const x = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 8)
-    const z = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 8)
+  // Each island gets its own PRNG stream, so adding one can never shift the
+  // trees and rocks on any island that came before it.
+  scatterProps(scene, ISLANDS[0], 42, 70, 20)
+  scatterProps(scene, ISLANDS[1], 77, 26, 34) // barer and rockier than home
+}
+
+function scatterProps(
+  scene: THREE.Scene,
+  isl: Island,
+  seed: number,
+  trees: number,
+  rocks: number,
+): void {
+  const rand = mulberry32(seed)
+  for (let i = 0; i < trees; i++) {
+    const x = isl.x + (rand() - 0.5) * 2 * (isl.r - 8)
+    const z = isl.z + (rand() - 0.5) * 2 * (isl.r - 8)
     const h = baseHeightAt(x, z)
     if (h < 1.5 || h > 9) continue
     const tree = buildTree()
@@ -276,9 +365,9 @@ export function createWorld(scene: THREE.Scene): void {
   }
 
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x7d7d85, flatShading: true })
-  for (let i = 0; i < 20; i++) {
-    const x = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 5)
-    const z = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 5)
+  for (let i = 0; i < rocks; i++) {
+    const x = isl.x + (rand() - 0.5) * 2 * (isl.r - 5)
+    const z = isl.z + (rand() - 0.5) * 2 * (isl.r - 5)
     const h = baseHeightAt(x, z)
     if (h < 0.5) continue
     const size = 0.5 + rand() * 1.2

@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createWorld, heightAt } from './world'
+import { createWorld, heightAt, landingSpotOn, nearestIsland, ISLANDS } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
@@ -27,17 +27,23 @@ import { FirstPersonAim } from './firstperson'
 import { Minimap } from './minimap'
 import { Health } from './health'
 import { Shark } from './shark'
+import { Mobs } from './mobs'
 import { Skeletons } from './skeletons'
 import { Cats } from './cats'
+import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
 import { ItemWheel } from './itemwheel'
+import { GameMap } from './map'
+import { RocketRide, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
 import {
   setWeapon,
   setRide,
   setName,
   setFace,
   setEmote,
+  setLook,
+  getLook,
   startSlash,
   startJabber,
   popHead,
@@ -52,6 +58,9 @@ import { music } from './music'
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
 const VIEW_H = 240
+
+// How far the head glances toward the third-person camera's heading.
+const GLANCE = 0.9
 
 // Who you are survives reloads now: token, name, color, and loadout all come
 // from the browser-storage profile (minted on your very first visit).
@@ -232,6 +241,7 @@ remotes.onEmote = (id, emote) => {
 }
 
 setInterval(() => {
+  const look = getLook(player.group)
   net.sendState({
     x: player.group.position.x,
     y: player.group.position.y,
@@ -245,6 +255,8 @@ setInterval(() => {
     skin,
     talk: Math.round(voice.level * 100) / 100,
     emote: emotes.current,
+    hp: look.pitch,
+    hy: look.yaw,
   })
 }, 66)
 
@@ -259,8 +271,9 @@ net.onArrow = (id, origin, dir, power) => {
 }
 const destruction = new Destruction(effects, net)
 const shark = new Shark(scene, net, effects, remotes, health)
-// The castle garrison. Hosted by one client like the shark, and only ever a
-// problem for people who went through the portal.
+const mobs = new Mobs(scene, net, effects, remotes, health)
+// The castle garrison. Hosted by one client like the shark and the land mobs,
+// and only ever a problem for people who went through the portal.
 const skeletons = new Skeletons(scene, net, remotes, effects, health)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
@@ -338,6 +351,7 @@ effects.onOwnExplosion = (center) => {
   // Same rule as craters: only the rocket's owner scores the hit, so one
   // blast can't be counted once per client in the room.
   shark.blast(center)
+  mobs.blast(center)
   skeletons.blast(center)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
@@ -374,6 +388,95 @@ net.onFire = (id, origin, dir) => {
   sfx.rocket(distVol(from))
   effects.spawnRocket(id, from, new THREE.Vector3(...dir))
 }
+// Rocket travel and the map that aims it. Tab opens the map; clicking a
+// friend or the island you're not on straps a rocket to your chair and throws
+// you over there. See rocket.ts for why the flight itself sends nothing.
+const rocket = new RocketRide(scene, effects)
+const map = new GameMap(touch.active)
+rocket.livePos = (id) => remotes.getGroup(id)?.position
+rocket.onLaunch = () => {
+  emotes.stop()
+  // The rocket goes on the chair, so you're in the chair. Never yanks anyone
+  // off Ramsey — he gets to come along. Goes through equipRide so the ride
+  // wheel's selection follows along too.
+  if (ride === 'none') equipRide('wheelchair')
+  emotes.play('rocketfly')
+}
+// The hero pose is the whole reason for the trip, so it gets a moment where
+// movement can't cancel it — otherwise anyone still leaning on W (which is
+// most people, four seconds into a flight) snaps out of it on the first frame
+// and never sees the shot.
+const HERO_HOLD_MS = 1400
+let heroUntil = 0
+rocket.onLand = (pos) => {
+  emotes.play('hero')
+  heroUntil = performance.now() + HERO_HOLD_MS
+  effects.spawnImpact(pos)
+  sfx.impact()
+  net.sendLand(pos)
+  // Same rule the rockets follow: the traveller alone mints the world damage,
+  // so per-client divergence can never fork the terrain. No self-damage —
+  // sticking the landing is the whole point.
+  destruction.rocketCrater(pos)
+  building.blastDamage(pos)
+  shark.blast(pos)
+}
+net.onLand = (_id, at) => {
+  const pos = new THREE.Vector3(...at)
+  effects.spawnImpact(pos)
+  sfx.impact(distVol(pos, 110))
+  // Being someone's landing pad. Self-applied, exactly like blast knockback.
+  const d = player.group.position.distanceTo(pos)
+  if (d >= LAND_BLAST_RADIUS) return
+  const k = 1 - d / LAND_BLAST_RADIUS
+  const dir = player.group.position.clone().sub(pos)
+  dir.y = 0
+  if (dir.lengthSq() < 0.01) dir.set(0, 0, 1)
+  dir.normalize()
+  player.applyImpulse(dir.x * 22 * k, 8 + 10 * k, dir.z * 22 * k)
+  health.damage(LAND_BLAST_DAMAGE * k)
+}
+map.data = () => ({
+  me: {
+    x: player.group.position.x,
+    z: player.group.position.z,
+    ry: player.group.rotation.y,
+    color,
+    name: profile.name,
+  },
+  friends: remotes.list(),
+})
+// Rocket travel is island business. The shadow realm is 1800 units east and
+// the gate is how you leave it — a rocket out of there would fly a fifteen-
+// hundred-unit arc and quietly bypass the whole portal.
+function grounded(): boolean {
+  if (!inRealm(player.group.position.x, player.group.position.z)) return true
+  chat.addMessage('🚀', 'no launching from the realm — take the gate')
+  return false
+}
+map.onPickPlayer = (id) => {
+  const group = remotes.getGroup(id)
+  if (!group || !grounded()) return
+  // Never at someone who's in the realm either: the arc would drop you
+  // through the lava sea with no gate in sight.
+  if (inRealm(group.position.x, group.position.z)) {
+    chat.addMessage('🚀', `${remotes.nameOf(id)} is in the realm — take the gate`)
+    return
+  }
+  rocket.launch(player, { x: group.position.x, z: group.position.z, followId: id })
+}
+map.onPickIsland = (index) => {
+  if (grounded()) rocket.launch(player, landingSpotOn(index))
+}
+// Keyboard shortcut for the trip everyone actually wants: the other island,
+// no map required.
+function rocketToNextIsland(): void {
+  if (!grounded()) return
+  const here = nearestIsland(player.group.position.x, player.group.position.z)
+  const next = (here + 1) % ISLANDS.length
+  if (rocket.launch(player, landingSpotOn(next))) chat.addMessage('🚀', `to ${ISLANDS[next].name}!`)
+}
+
 cats.onPet = (index) => net.sendPet(index)
 net.onPet = (index) => cats.pet(index)
 net.onSlash = (id) => {
@@ -501,6 +604,7 @@ function attack(): void {
         return
       }
       if (shark.swing(player.group.position, player.group.rotation.y, 34)) return
+      if (mobs.swing(player.group.position, player.group.rotation.y, 34)) return
       const block = meleeBlockTarget()
       if (block) building.hit(block.gx, block.gy, block.gz, 1)
     }, SLASH_DURATION * 500)
@@ -527,6 +631,7 @@ function attack(): void {
       }
       // A shovel to the nose counts too, and beats digging a hole in the sea.
       if (shark.swing(player.group.position, player.group.rotation.y, 24)) return
+      if (mobs.swing(player.group.position, player.group.rotation.y, 24)) return
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
       destruction.dig(
@@ -604,7 +709,7 @@ function launchFireworks(): void {
 }
 window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
-  if (touch.active || chat.isOpen || emoteWheel.isOpen) return
+  if (touch.active || chat.isOpen || emoteWheel.isOpen || map.isOpen) return
   if (target !== document.body && target.tagName !== 'CANVAS') return
   // The first click grabs the mouse (both camera modes); later clicks attack.
   if (fp.claimClickForLock()) return
@@ -636,7 +741,7 @@ window.addEventListener('mouseup', () => {
 // first person owns it (it turns the player instead) or a wheel is sweeping.
 window.addEventListener('mousemove', (e) => {
   if (!document.pointerLockElement || fp.isActive) return
-  if (emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen) return
+  if (emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen) return
   gameCamera.addLook(e.movementX, e.movementY)
 })
 // Right-click is reserved for in-game actions; the chat input keeps the
@@ -706,7 +811,11 @@ if (profile.voice) {
 
 const chat = new Chat()
 shark.onDeath = () => chat.addMessage('🦈', 'blub…')
+mobs.onDeath = (name) =>
+  chat.addMessage(name === 'bear' ? '🐻' : '😵', name === 'bear' ? 'the bear is down' : 'gary will return')
 const bubbles = new Bubbles(camera, renderer.domElement)
+mobs.onSay = (group, text) => bubbles.show(group, text)
+const stripper = new Stripper(scene, bubbles)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
 chat.onSend = (text) => {
@@ -768,6 +877,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
   if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
+  if (e.code === 'KeyJ') rocketToNextIsland()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat)
@@ -846,11 +956,13 @@ function crossTo(gate: Gate): void {
   arrows,
   health,
   shark,
+  mobs,
   effects,
   music,
   building,
   blockGhost,
   cats,
+  stripper,
   fireworks,
   webcam,
   emotes,
@@ -859,12 +971,15 @@ function crossTo(gate: Gate): void {
   blocks,
   skeletons,
   faceBar,
+  rocket,
+  map,
   scene,
   camera,
   draw: () => renderer.render(scene, camera),
 }
 
 const clock = new THREE.Clock()
+let remoteTrailT = 0
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05)
 
@@ -872,9 +987,28 @@ renderer.setAnimationLoop(() => {
   music.setEnabled(settings.music && !sfx.muted)
   // The score follows you through the portal.
   music.setScore(shadow ? 'shadow' : 'island')
-  fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen // a wheel borrows the mouse
-  fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
+  // Any overlay borrows the mouse — the wheels and the travel map alike.
+  fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen
+  // No aiming down a scope while the rocket flies you; the chase cam sells it.
+  fp.setActive(
+    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active,
+    weapon,
+  )
   fp.update(dt)
+
+  // Head tracks where we're looking: the mouse pitch in first person (the
+  // body already owns the yaw there), and in third person a glance toward
+  // whatever the orbit camera is pointing at — so Q/E peeks and touch drags
+  // show up on the character instead of only moving the view. The sine
+  // shapes the glance: biggest when the view is square to the body, unwound
+  // to face-forward when the camera looks straight down the body's own
+  // heading (nobody cranes their neck a full half-turn).
+  const viewOffset = gameCamera.yaw + Math.PI - player.group.rotation.y
+  setLook(
+    player.group,
+    fp.isActive ? fp.pitch : 0,
+    fp.isActive ? 0 : GLANCE * Math.sin(viewOffset),
+  )
 
   player.update(
     dt,
@@ -888,6 +1022,10 @@ renderer.setAnimationLoop(() => {
     },
     gameCamera.yaw,
   )
+  // Straight after player.update, which left our position alone while flying:
+  // the arc writes it here, before anything else reads where we are — the
+  // gates below included, so a rocket can't be teleported out mid-arc.
+  rocket.update(dt, player)
   const gate = portals.update(dt, player.group.position)
   if (gate) crossTo(gate)
   const nowShadow = inRealm(player.group.position.x, player.group.position.z)
@@ -925,9 +1063,23 @@ renderer.setAnimationLoop(() => {
       ? Math.min(1, (performance.now() - bowDrawStart) / BOW_DRAW_MS)
       : 0,
   )
-  // Moving, jumping or dying drops you out of an emote.
-  emotes.update(player.moving || player.dead || keys.has('Space') || touch.jumpHeld)
+  // Moving, jumping or dying drops you out of an emote — except while the
+  // rocket owns you, and for a beat after it sets you down, where the pose is
+  // the payoff rather than something you idly triggered. Dying still cancels.
+  const posed = rocket.active || performance.now() < heroUntil
+  emotes.update(
+    player.dead || (!posed && (player.moving || keys.has('Space') || touch.jumpHeld)),
+  )
   bubbles.update()
+  map.update()
+  // Everyone else's exhaust, off the pose that already rides in `state`.
+  // Throttled to the same cadence rocket.ts uses for our own trail, so a
+  // 144Hz screen doesn't smoke twice as hard as a 60Hz one.
+  remoteTrailT -= dt
+  if (remoteTrailT <= 0) {
+    remoteTrailT = 0.04
+    for (const pos of remotes.flying()) effects.spawnTrail(pos)
+  }
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   fireworks.update(dt)
@@ -935,9 +1087,11 @@ renderer.setAnimationLoop(() => {
   // After the player and remotes have moved: the shark chases current
   // positions, and when it has you it overrides where you ended up.
   shark.update(dt, player)
+  mobs.update(dt, player)
   skeletons.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
+  stripper.update(dt, [player.group.position, ...remotes.targets().map(({ pos }) => pos)])
   gameCamera.update(dt, player, settings, fp)
   // After the player has settled: the ghost is aimed from where you actually
   // ended up this frame, so it never lags a step behind your feet.

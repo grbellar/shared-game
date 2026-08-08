@@ -7,6 +7,7 @@ import {
   setName,
   setFace,
   setEmote,
+  setLook,
   startSlash,
   popHead,
   type Pose,
@@ -71,12 +72,14 @@ export class Remotes {
       if (face) setFace(group, face)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
+    remote.color = p.color
     const pose = p.pose ?? 'stand'
     // Splash on the transition into water — but not for players who were
     // already swimming when we joined (the welcome replay).
     if (pose === 'swim' && remote.pose !== 'swim' && !isNew) this.onSplash(p.x, p.z)
     remote.pose = pose
     remote.group.userData.talk = p.talk ?? 0 // animateCharacter opens the mouth
+    setLook(remote.group, p.hp ?? 0, p.hy ?? 0)
     const weapon =
       p.weapon === 'gun' ||
       p.weapon === 'sword' ||
@@ -116,6 +119,28 @@ export class Remotes {
 
   getGroup(id: string): THREE.Group | undefined {
     return this.players.get(id)?.group
+  }
+
+  // Everyone in the room, for the map's pins.
+  list(): { id: string; x: number; z: number; color: string; name: string }[] {
+    return [...this.players.entries()].map(([id, r]) => ({
+      id,
+      x: r.group.position.x,
+      z: r.group.position.z,
+      color: r.color,
+      name: r.name,
+    }))
+  }
+
+  // Whoever is currently mid rocket-trip, so main.ts can smoke behind them.
+  // Derived entirely from the pose that already rides in `state` — a rocket
+  // flight costs the network nothing beyond the position stream.
+  flying(): THREE.Vector3[] {
+    const out: THREE.Vector3[] = []
+    for (const r of this.players.values()) {
+      if (r.emote === 'rocketfly') out.push(r.group.position)
+    }
+    return out
   }
 
   nameOf(id: string): string {

@@ -29,6 +29,9 @@ interface Puff {
   vel: THREE.Vector3
   spin: THREE.Vector3
   bounce: boolean
+  // Swell over the puff's life, as a multiple of its starting size. Dust
+  // billows; debris and smoke keep the size they were born at.
+  grow?: number
 }
 
 interface Explosion {
@@ -180,6 +183,14 @@ export class Effects {
       s.mesh.rotation.x += s.spin.x * dt
       s.mesh.rotation.y += s.spin.y * dt
       s.mesh.rotation.z += s.spin.z * dt
+      if (s.grow) {
+        s.mesh.scale.setScalar(1 + s.grow * (s.t / s.lifetime))
+        // Dust punches outward and stalls in a ring, instead of sailing off
+        // across the water at its launch speed.
+        const drag = Math.pow(0.08, dt)
+        s.vel.x *= drag
+        s.vel.z *= drag
+      }
       if (s.bounce) {
         const floor = Math.max(heightAt(s.mesh.position.x, s.mesh.position.z), 0) + 0.3
         if (s.mesh.position.y < floor && s.vel.y < 0) {
@@ -197,6 +208,67 @@ export class Effects {
   // Chunks of whatever just got destroyed, flying everywhere.
   spawnDebris(center: THREE.Vector3, color: number, count: number, power: number): void {
     this.burst(center, color, count, power)
+  }
+
+  // A single smoke puff — the exhaust trail behind someone under rocket power
+  // (rocket.ts for the local player, remotes for everyone else).
+  spawnTrail(pos: THREE.Vector3): void {
+    this.smoke(pos)
+  }
+
+  // Rocket travel touching down (rocket.ts). Deliberately NOT `explode`: it
+  // fires no onBlast, because the traveller walks away from their own landing
+  // and everybody else shoves themselves in main.ts — the same self-applied
+  // rule blast knockback has always followed.
+  spawnImpact(center: THREE.Vector3): void {
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1, 0),
+      new THREE.MeshLambertMaterial({
+        color: 0x662200,
+        emissive: 0xff7a1a,
+        flatShading: true,
+        transparent: true,
+      }),
+    )
+    mesh.position.copy(center)
+    this.scene.add(mesh)
+    this.explosions.push({ mesh, t: 0 })
+    this.burst(center, 0x6b4526, 14, 11) // dirt
+    this.burst(center, 0x333338, 8, 8) // scorch
+    this.dustCloud(center, 16)
+  }
+
+  // The billow a landing kicks up: fat pale cubes thrown out along the ground
+  // that swell and thin as they go. Much bigger and slower than rocket smoke,
+  // because the whole job of this cloud is to hang around long enough that the
+  // hero pose reads as a silhouette through it.
+  private dustCloud(center: THREE.Vector3, count: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.6
+      const speed = 3.5 + Math.random() * 4
+      const size = 0.5 + Math.random() * 0.7
+      const puff = new THREE.Mesh(
+        new THREE.BoxGeometry(size, size, size),
+        new THREE.MeshLambertMaterial({
+          color: 0xbfae8c,
+          transparent: true,
+          opacity: 0.75,
+          flatShading: true,
+        }),
+      )
+      puff.position.copy(center)
+      puff.position.y += 0.25
+      this.scene.add(puff)
+      this.puffs.push({
+        mesh: puff,
+        t: 0,
+        lifetime: 1.8 + Math.random() * 0.9,
+        vel: new THREE.Vector3(Math.sin(a) * speed, 1.2 + Math.random() * 1.6, Math.cos(a) * speed),
+        spin: new THREE.Vector3(0.6, 0.9, 0.4),
+        bounce: false,
+        grow: 1.6,
+      })
+    }
   }
 
   private explode(center: THREE.Vector3, ownerId: string): void {

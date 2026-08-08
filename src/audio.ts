@@ -261,6 +261,25 @@ class Sfx {
     this.noise('highpass', 2000, 4000, 0.04, 0.3 * v)
   }
 
+  // Rocket travel leaving the ground: an ignition crack, then a long roar
+  // climbing away from you as the motor burns out (see rocket.ts).
+  rocketLaunch(): void {
+    this.noise('highpass', 400, 1800, 0.08, 0.4)
+    this.noise('lowpass', 320, 90, 1.9, 0.5, 0.03, 8000)
+    this.tone('sawtooth', 70, 260, 1.6, 0.16, 0.03)
+    this.tone('square', 140, 520, 1.6, 0.07, 0.05)
+  }
+
+  // ...and coming back down on top of somebody. Heavier and dirtier than a
+  // rocket blast: a thud you feel before the debris rattles down.
+  impact(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sine', 130, 24, 0.9, 0.6 * v)
+    this.noise('lowpass', 3600, 40, 1, 0.85 * v, 0, 8000)
+    this.noise('bandpass', 900, 300, 0.5, 0.3 * v, 0.1)
+  }
+
   slash(vol = 1): void {
     this.noise('bandpass', 800, 4200, 0.13, 0.22 * vol)
   }
@@ -516,6 +535,24 @@ class Sfx {
   sharkHurt(vol = 1): void {
     this.noise('lowpass', 1200, 300, 0.14, 0.3 * vol)
     this.tone('sawtooth', 300, 140, 0.18, 0.16 * vol)
+  }
+
+  // Bear roar: a falling growl with a noisy throat.
+  roar(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 170, 65, 0.5, 0.28 * v)
+    this.tone('square', 95, 52, 0.5, 0.16 * v)
+    this.noise('lowpass', 750, 240, 0.45, 0.24 * v)
+  }
+
+  // Gary has spotted you. Gary is coming.
+  scream(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 590, 920, 0.3, 0.15 * v)
+    this.tone('sawtooth', 660, 310, 0.35, 0.13 * v, 0.28)
+    this.tone('square', 880, 1180, 0.12, 0.08 * v, 0.1)
   }
 
   // Big dumb death groan, then bubbles.

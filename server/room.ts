@@ -24,7 +24,10 @@ const GRID_XZ_MAX = 1400 // |gx|,|gz| cap — keep in sync with src/blocks.ts
 // which every client generates for itself. Roughly one entry per castle block
 // anyone has touched, so the cap is sized to let the whole thing come down.
 const WORLD_DMG_CAP = 5000
-const WORLD_XZ_MAX = 2000 // craters and world damage reach out to the realm
+// Craters and world damage reach out to the realm — and to the far rock at
+// x=280 (src/world.ts). Anything beyond this gets clamped somewhere nobody
+// asked for, which forks everyone's terrain.
+const WORLD_XZ_MAX = 2000
 // Skeleton roster cap: 5 packed numbers each (see src/skeletons.ts), with room
 // to grow the garrison without touching the server.
 const SKEL_MAX_FIELDS = 64 * 5
@@ -43,6 +46,15 @@ interface PlayerState {
   skin: string
   talk: number
   emote: string
+  hp: number // head pitch
+  hy: number // head yaw, offset from the body's facing
+}
+
+// Head aim limits, matching src/character.ts.
+function clampLook(v: unknown, limit: number): number {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(-limit, Math.min(limit, n))
 }
 
 // Real seconds per full in-game day. Keep in sync with src/daynight.ts.
@@ -130,6 +142,8 @@ export class GameRoom extends DurableObject<Env> {
         skin: String(msg.skin ?? 'none').slice(0, 12),
         talk: Math.max(0, Math.min(1, Number(msg.talk) || 0)),
         emote: String(msg.emote ?? 'none').slice(0, 12),
+        hp: clampLook(msg.hp, 1.2),
+        hy: clampLook(msg.hy, 1.0),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -361,6 +375,55 @@ export class GameRoom extends DurableObject<Env> {
       if (!Number.isInteger(i) || i < 0 || i > 63 || !Number.isFinite(dmg)) return
       this.broadcast(
         JSON.stringify({ t: 'skelhit', i, dmg: Math.max(0, Math.min(200, dmg)) }),
+        ws,
+      )
+    } else if (msg.t === 'land') {
+      // Rocket travel touching down. Relayed like `fire`: every client plays
+      // the impact, and each one shoves only itself. Nothing stored — the
+      // dust is gone in two seconds, so late joiners have nothing to catch up
+      // on. The crater it leaves comes through as an ordinary `crater`.
+      this.broadcast(
+        JSON.stringify({
+          t: 'land',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+        }),
+        ws,
+      )
+    } else if (msg.t === 'mob') {
+      // Land mobs (bear, gary): same host-streamed relay as the shark, one
+      // message per mob index. Nothing stored — late joiners catch the next
+      // tick.
+      const i = Number(msg.i)
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      const ry = Number(msg.ry)
+      const hp = Number(msg.hp)
+      if (![i, x, z, ry, hp].every(Number.isFinite)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'mob',
+          i: Math.max(0, Math.min(7, Math.floor(i))),
+          x,
+          z,
+          ry,
+          hp,
+          st: String(msg.st).slice(0, 8),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'mobhit') {
+      const i = Number(msg.i)
+      const dmg = Number(msg.dmg)
+      if (!Number.isFinite(i) || !Number.isFinite(dmg)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'mobhit',
+          i: Math.max(0, Math.min(7, Math.floor(i))),
+          dmg: Math.max(0, Math.min(200, dmg)),
+        }),
         ws,
       )
     }
