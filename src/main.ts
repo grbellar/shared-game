@@ -6,6 +6,7 @@ import { Remotes } from './remotes'
 import { GameCamera } from './camera'
 import { initSettings, setSetting } from './settings'
 import { Webcam } from './webcam'
+import { FaceBar } from './facebar'
 import { TouchControls } from './touch'
 import { Chat } from './chat'
 import { Bubbles } from './bubbles'
@@ -87,8 +88,10 @@ function renameCharacter(raw: string): string {
   return profile.name
 }
 const webcam = new Webcam()
+const faceBar = new FaceBar()
 webcam.onFrame = (dataUrl) => {
   setFace(player.group, dataUrl)
+  faceBar.set('me', dataUrl, profile.name)
   net.sendFace(dataUrl)
 }
 const settings = initSettings(
@@ -105,19 +108,26 @@ const settings = initSettings(
   },
   { current: profile.name, onChange: renameCharacter },
   (key, value) => {
-    if (key !== 'webcamFace') return
-    if (value) {
-      // Prompts for the camera. Denied (or no camera) flips the switch back.
-      void webcam.start().then((ok) => {
-        if (!ok) setSetting('webcamFace', false)
-      })
-    } else {
-      webcam.stop()
-      setFace(player.group, null)
-      net.sendFace('')
+    if (key === 'webcamBar') {
+      // Display-only: the strip shows whoever is broadcasting, whether or not
+      // your own camera is on.
+      faceBar.setEnabled(value)
+    } else if (key === 'webcamFace') {
+      if (value) {
+        // Prompts for the camera. Denied (or no camera) flips the switch back.
+        void webcam.start().then((ok) => {
+          if (!ok) setSetting('webcamFace', false)
+        })
+      } else {
+        webcam.stop()
+        setFace(player.group, null)
+        faceBar.remove('me')
+        net.sendFace('')
+      }
     }
   },
 )
+faceBar.setEnabled(settings.webcamBar)
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
@@ -138,7 +148,14 @@ net.onWelcome = (players, craters, blocks, faces) => {
     voice.peerJoined(p.id)
   })
   // Our own face reappears for everyone else on the next captured frame.
-  faces.forEach((f) => remotes.setFace(f.id, f.d))
+  // Remote ids are minted fresh on reconnect, so the strip starts over too —
+  // our own tile survives, since it's keyed 'me' and refreshed by the capture
+  // loop rather than the network.
+  faceBar.clear()
+  faces.forEach((f) => {
+    remotes.setFace(f.id, f.d)
+    faceBar.set(f.id, f.d, remotes.nameOf(f.id))
+  })
   // Catch up on world damage. Silent: no debris bursts, and reconnect
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
@@ -152,9 +169,14 @@ net.onState = (p) => {
 }
 net.onLeave = (id) => {
   remotes.remove(id)
+  faceBar.remove(id)
   voice.peerLeft(id)
 }
-net.onFace = (id, dataUrl) => remotes.setFace(id, dataUrl)
+net.onFace = (id, dataUrl) => {
+  remotes.setFace(id, dataUrl)
+  if (dataUrl) faceBar.set(id, dataUrl, remotes.nameOf(id))
+  else faceBar.remove(id)
+}
 net.connect()
 
 type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
@@ -690,6 +712,7 @@ settings.onClockChange = (fromToggle) => {
   fireworks,
   webcam,
   emotes,
+  faceBar,
   scene,
   camera,
   draw: () => renderer.render(scene, camera),

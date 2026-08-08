@@ -116,6 +116,10 @@ export class Remotes {
     return this.players.get(id)?.group
   }
 
+  nameOf(id: string): string {
+    return this.players.get(id)?.name ?? '???'
+  }
+
   // Paint a webcam frame on a player's head; '' turns their camera off.
   setFace(id: string, dataUrl: string): void {
     if (dataUrl) this.faces.set(id, dataUrl)
