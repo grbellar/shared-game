@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { heightAt, propInPath } from './world'
+import { blockAtPoint, type BlockSpec } from './blocks'
 import { sfx } from './audio'
 
 // The sniper rifle's two halves: the scope (zoom, overlay, breathing sway)
@@ -18,7 +19,16 @@ export interface Hit {
   point: THREE.Vector3
   /** Player id when the round found somebody, null otherwise. */
   id: string | null
-  kind: 'player' | 'ground' | 'prop' | 'sky'
+  kind: 'player' | 'ground' | 'prop' | 'block' | 'sky'
+  /** The built block the round stopped in, when kind is 'block'. */
+  block?: BlockSpec
+}
+
+// Whether built blocks stop the round. Opt-in: the sniper has always shot
+// straight through a fort and changing that is its owner's call, but the
+// fifty is supposed to eat walls, so it asks for them.
+export interface HitOpts {
+  blocks?: boolean
 }
 
 // March the ray until it meets terrain, a prop, or the range limit, then see
@@ -27,6 +37,7 @@ export function hitscan(
   origin: THREE.Vector3,
   dir: THREE.Vector3,
   targets: { id: string; pos: THREE.Vector3 }[],
+  opts: HitOpts = {},
 ): Hit {
   const p = new THREE.Vector3()
   const at = (t: number): THREE.Vector3 => p.copy(dir).multiplyScalar(t).add(origin)
@@ -36,8 +47,28 @@ export function hitscan(
   let worldT = RANGE
   let kind: Hit['kind'] = 'sky'
   let prev = 0.4
+  let blockHit: BlockSpec | undefined
   for (let t = 0.4; t <= RANGE; t += MARCH) {
     at(t)
+    if (opts.blocks) {
+      // Finer than the terrain march: cells are 1.5 across and a 1-unit step
+      // can skip clean through a single block.
+      let found: BlockSpec | undefined
+      for (let s = 0; s < MARCH; s += 0.35) {
+        const q = at(t - MARCH + s)
+        found = blockAtPoint(q.x, q.y, q.z)
+        if (found) {
+          worldT = t - MARCH + s
+          break
+        }
+      }
+      at(t)
+      if (found) {
+        blockHit = found
+        kind = 'block'
+        break
+      }
+    }
     if (propInPath(p)) {
       worldT = t
       kind = 'prop'
@@ -77,6 +108,9 @@ export function hitscan(
     point: at(bestT).clone(),
     id: bestId,
     kind: bestId ? 'player' : kind,
+    // Only when the block is what actually stopped it — a player standing in
+    // front of a wall takes the round instead.
+    block: bestId ? undefined : blockHit,
   }
 }
 

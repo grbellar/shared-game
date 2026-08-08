@@ -197,10 +197,13 @@ split as blast knockback.
   through it, so what you see outlined is exactly what the click acts on.
 - `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
   world-generated blocks. Replayed onto a freshly regenerated castle.
-- client→server `mg`: one round from the M2 fifty cal — muzzle and where it
-  stopped. Hitscan, not a projectile: only the SHOOTER marches the line
-  (`fifty.ts`) and mints what it broke, through the ordinary `hit` / `bhit` /
-  `crater` messages. This one exists purely so everyone draws the tracer
+- client→server `mg`: one round from the M2 fifty cal — it kills anything it
+  touches (players at MAX_HP, mobs/skeletons/the shark outright, any block in
+  one round). It borrows the sniper's `hitscan` rather than carrying its own
+  ray, with `{blocks: true}` so built walls stop it; the sniper's own rounds
+  still pass through them, which is its owner's call to change. The message carries muzzle and where the
+  round stopped. Only the SHOOTER resolves the hit and mints what it broke,
+  through the ordinary `hit` / `bhit` / `crater` messages. This one exists purely so everyone draws the tracer
   landing in the same place; per-client aim drift must never mint a second,
   contradictory hit. Nothing stored — a tracer is gone in a tenth of a second.
 - client→server `meck`: a Meckie was picked up or set down, `{i, x, z, by}`

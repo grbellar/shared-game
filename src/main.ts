@@ -23,10 +23,7 @@ import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
-import {
-  traceShot, muzzleOf,
-  FIFTY_RPM, FIFTY_PLAYER_DAMAGE, FIFTY_BLOCK_DAMAGE, FIFTY_CRATER,
-} from './fifty'
+import { FIFTY_RPM, FIFTY_BLOCK_DAMAGE, FIFTY_LETHAL, FIFTY_CRATER } from './fifty'
 import { FirstPersonAim } from './firstperson'
 import { Scope, ScopeInput, hitscan } from './sniper'
 import { Minimap } from './minimap'
@@ -904,23 +901,40 @@ function attack(): void {
     const dir = fp.isActive
       ? fp.aimDir(new THREE.Vector3())
       : new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry)).normalize()
-    const from = muzzleOf(player.group.position, dir)
-    // Only the shooter traces. Everyone else just draws the tracer we send,
-    // so nobody's slightly-different idea of where we were aiming can mint a
-    // second, contradictory hit.
-    const hit = traceShot(from, dir, [...remotes.targets()], 'me')
-    effects.spawnTracer(from, hit.point)
-    effects.spawnMuzzleFlash(from)
-    net.sendFifty(from, hit.point)
-    if (hit.player) {
-      net.sendHit(hit.player, FIFTY_PLAYER_DAMAGE)
+    const origin = fp.isActive
+      ? fp.eyePosition(new THREE.Vector3())
+      : player.group.position.clone().add(new THREE.Vector3(0, 1.75, 0))
+    // One ray over everything, the sniper's, so the ordering decides what's
+    // in front — plus blocks, which the fifty is meant to eat.
+    const hit = hitscan(
+      origin,
+      dir,
+      [...remotes.targets(), ...shark.targets(), ...mobs.targets(), ...skeletons.targets()],
+      { blocks: true },
+    )
+    const muzzle = origin.clone().addScaledVector(dir, 1.4)
+    effects.spawnMuzzleFlash(muzzle)
+    effects.spawnTracer(muzzle, hit.point)
+    net.sendFifty(muzzle, hit.point)
+    // It kills anything it touches. Living things die outright; blocks come
+    // apart whatever they're made of.
+    if (hit.id === SHARK_TARGET_ID) {
+      shark.shot(FIFTY_LETHAL)
+      sfx.hitmark()
+    } else if (hit.id?.startsWith(MOB_TARGET_PREFIX)) {
+      mobs.shot(hit.id, FIFTY_LETHAL)
+      sfx.hitmark()
+    } else if (hit.id?.startsWith(SKEL_TARGET_PREFIX)) {
+      skeletons.shot(hit.id, FIFTY_LETHAL)
+      sfx.hitmark()
+    } else if (hit.id) {
+      // A player still gets to announce their own death — attackers only ever
+      // send damage. MAX_HP from full health is one round, one kill.
+      net.sendHit(hit.id, MAX_HP)
       sfx.hitmark()
     } else if (hit.block) {
-      // Anything, one round: full hp in a single bhit.
       building.hit(hit.block.gx, hit.block.gy, hit.block.gz, FIFTY_BLOCK_DAMAGE)
-    } else {
-      // Into the dirt. Sustained fire is what flattens ground, so each round
-      // only takes a small bite — but it does take one, and it's synced.
+    } else if (hit.kind !== 'sky') {
       if (
         now - lastBulletCrater > BULLET_CRATER_MS &&
         hit.point.y <= Math.max(heightAt(hit.point.x, hit.point.z), 0) + 0.3
@@ -928,11 +942,9 @@ function attack(): void {
         lastBulletCrater = now
         destruction.bite(hit.point.x, hit.point.z, FIFTY_CRATER)
       }
-      // Dirt kicks up on the shots that don't dig, but only every third
-      // round: seven fresh meshes fourteen times a second is what actually
-      // costs, not the crater.
-      if (++bulletSpark % 3 === 0) effects.spawnDebris(hit.point, 0x6b4526, 3, 5)
-      shark.blast(hit.point)
+      if (++bulletSpark % 3 === 0) {
+        effects.spawnDebris(hit.point, hit.kind === 'prop' ? 0x4a7a35 : 0x6b4526, 3, 5)
+      }
     }
   } else if (weapon === 'firework' && now - lastAttack > 450) {
     lastAttack = now
@@ -1313,8 +1325,6 @@ function crossTo(gate: Gate): void {
   camera,
   attack,
   scope,
-  // Pure function; handy for working out what a shot actually met.
-  traceShot,
   draw: () => renderer.render(scene, camera),
 }
 
