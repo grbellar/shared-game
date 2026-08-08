@@ -18,6 +18,9 @@ TDD, code-review and verification ceremonies) and go straight to code.
      do a quick two-tab check on `npm run dev`. Anything else: build passes →
      ship. (This narrows the two-tab rule under "Rules for contributors" to
      protocol changes only while the jam is on.)
+- Start by syncing with `origin/main` and end by pushing to it — see "Sync
+  before you start" and "Land your own work" under "Rules for contributors".
+  Both apply doubly during the jam: nobody is waiting to review you.
 - Commit small and straight to `main`.
 - Need it live right now? Run `npm run deploy` locally, then push. Otherwise
   just push — GitHub Actions deploys `main`. Never sit and watch CI.
@@ -74,7 +77,7 @@ build) is the only gate.
     own seed, so digging can never shift where the trees are.
   - `cheats.ts` — chat cheat codes. They ride the existing chat relay, so
     both ends parse the text and toggle together — no new message type.
-  - `hud.ts` / `killboard.ts` — the banner, the event ticker, and the N-key
+  - `hud.ts` / `killboard.ts` — the banner, the event ticker, and the I-key
     scoreboard (Tab is the map).
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
@@ -303,6 +306,21 @@ should send `hit`, never `kill`.
 
 ## Rules for contributors (LLM or otherwise)
 
+- **Sync before you start.** First thing in any task, before reading or
+  editing anything: `git fetch origin && git rebase origin/main`. Several
+  agents land features on `main` in the same afternoon, so a session that
+  starts from a stale base writes conflicts it didn't need to. Don't ask
+  first — just do it. If the rebase conflicts, resolve it and carry on.
+  Expect `main` to move again while you work; re-sync before you land.
+- **Land your own work.** When the build passes and the change does what was
+  asked, ship it — don't stop and wait for a human to merge. From a worktree:
+  `git fetch origin && git rebase origin/main && git push origin HEAD:main`.
+  There's no branch protection, and pushing `main` triggers the deploy
+  Action. Say what you shipped afterwards; don't ask permission before.
+  Open a PR (`git push origin HEAD:feat/<name>` + `gh pr merge`) only when
+  you're genuinely unsure the change is right, or the user asked for one.
+  Never touch the shared main checkout at `/Users/nic/Sites/shared-game` —
+  a hook refuses it. Everything lands through `origin`.
 - `npm run build` must pass before you commit.
 - Small, focused commits: `type: short description` (feat/fix/refactor/chore).
 - Don't rewrite systems that work — extend them. Surgical changes.

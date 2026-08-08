@@ -15,7 +15,7 @@ export interface PlayerState {
   color: string
   name: string
   pose: Pose
-  weapon: string // 'none' | 'gun' | 'sword' | 'shovel' | 'firework'
+  weapon: string // 'none' | 'gun' | 'sniper' | 'sword' | 'shovel' | 'firework'
   ride: string // 'none' | 'wheelchair' | 'ramsey'
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
@@ -67,6 +67,7 @@ type ServerMsg =
   | { t: 'leave'; id: string }
   | { t: 'chat'; id: string; name: string; text: string }
   | { t: 'fire'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+  | { t: 'snipe'; id: string; x: number; y: number; z: number; ex: number; ey: number; ez: number }
   | { t: 'slash'; id: string }
   | { t: 'hit'; id: string; victim: string; dmg: number }
   | { t: 'kill'; victim: string; killer: string; killerName: string; victimName: string }
@@ -104,6 +105,10 @@ export class Net {
   onLeave: (id: string) => void = () => {}
   onChat: (id: string, name: string, text: string) => void = () => {}
   onFire: (id: string, origin: [number, number, number], dir: [number, number, number]) => void =
+    () => {}
+  // Sniper tracer: muzzle point and where the round stopped. Hitscan is
+  // resolved entirely by the shooter; this is the show everyone else sees.
+  onSnipe: (id: string, from: [number, number, number], to: [number, number, number]) => void =
     () => {}
   onSlash: (id: string) => void = () => {}
   // Only fires when the hit was aimed at us — you apply your own damage.
@@ -173,6 +178,10 @@ export class Net {
         if (msg.id !== this.id) this.onChat(msg.id, msg.name, msg.text)
       } else if (msg.t === 'fire') {
         if (msg.id !== this.id) this.onFire(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz])
+      } else if (msg.t === 'snipe') {
+        if (msg.id !== this.id) {
+          this.onSnipe(msg.id, [msg.x, msg.y, msg.z], [msg.ex, msg.ey, msg.ez])
+        }
       } else if (msg.t === 'slash') {
         if (msg.id !== this.id) this.onSlash(msg.id)
       } else if (msg.t === 'hit') {
@@ -263,6 +272,16 @@ export class Net {
     if (!this.connected) return
     this.ws!.send(
       JSON.stringify({ t: 'fire', x: origin.x, y: origin.y, z: origin.z, dx: dir.x, dy: dir.y, dz: dir.z }),
+    )
+  }
+
+  sendSnipe(
+    from: { x: number; y: number; z: number },
+    to: { x: number; y: number; z: number },
+  ): void {
+    if (!this.connected) return
+    this.ws!.send(
+      JSON.stringify({ t: 'snipe', x: from.x, y: from.y, z: from.z, ex: to.x, ey: to.y, ez: to.z }),
     )
   }
 

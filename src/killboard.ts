@@ -1,4 +1,4 @@
-// Kills and deaths for the room, held N to view (Tab is the map).
+// Kills and deaths for the room, held I to view (Tab is the map, N is the sniper).
 //
 // The room owns the tally (server/room.ts counts `kill` messages and
 // broadcasts a `score` list) so every board agrees and late joiners see the

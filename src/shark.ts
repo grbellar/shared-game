@@ -199,6 +199,11 @@ function buildPrompt(): HTMLDivElement {
   return el
 }
 
+// The id the shark answers to inside a target list, matching the convention
+// skeletons and mobs use. Can't collide with a shooter's id: server ids are
+// hex uuid slices and ours is 'me'.
+export const SHARK_TARGET_ID = 'shark'
+
 export class Shark {
   onDeath: () => void = () => {}
   private group: THREE.Group
@@ -300,6 +305,19 @@ export class Shark {
     if (Math.abs(wrapAngle(Math.atan2(to.x, to.z) - yaw)) > 1.3) return false
     this.hit(dmg)
     return true
+  }
+
+  // Where a bullet can find it, in the shape hitscan wants. Empty once it's
+  // dead so rounds pass through the carcass.
+  targets(): { id: string; pos: THREE.Vector3 }[] {
+    return this.st === 'dead' ? [] : [{ id: SHARK_TARGET_ID, pos: this.group.position }]
+  }
+
+  // A hitscan round from the local player connected. Same ownership rule as
+  // swing(): the shooter mints the damage and tells the room.
+  shot(dmg: number): void {
+    if (this.st === 'dead') return
+    this.hit(dmg)
   }
 
   // Mashing keys while it has hold of you. Hurts it a little; any hit at all
