@@ -8,18 +8,21 @@ export interface PlayerState {
   ry: number
   color: string
   name: string
+  gun: boolean
 }
 
 type ServerMsg =
   | { t: 'welcome'; id: string; players: PlayerState[] }
   | { t: 'state'; p: PlayerState }
   | { t: 'leave'; id: string }
+  | { t: 'chat'; id: string; name: string; text: string }
 
 export class Net {
   id: string | null = null
   onWelcome: (players: PlayerState[]) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
+  onChat: (id: string, name: string, text: string) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -40,6 +43,8 @@ export class Net {
         if (msg.p.id !== this.id) this.onState(msg.p)
       } else if (msg.t === 'leave') {
         this.onLeave(msg.id)
+      } else if (msg.t === 'chat') {
+        if (msg.id !== this.id) this.onChat(msg.id, msg.name, msg.text)
       }
     }
     ws.onclose = () => {
@@ -55,5 +60,10 @@ export class Net {
   sendState(state: Omit<PlayerState, 'id'>): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'state', ...state }))
+  }
+
+  sendChat(text: string): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'chat', text }))
   }
 }

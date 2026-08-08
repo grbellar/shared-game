@@ -60,6 +60,50 @@
         height: 44px;
         background: rgba(255, 255, 255, 0.35);
       }
+      .chat-bubble {
+        position: fixed;
+        transform: translate(-50%, -100%);
+        background: rgba(255, 255, 255, 0.95);
+        color: #111;
+        border: 2px solid #111;
+        font: 13px monospace;
+        padding: 4px 8px;
+        max-width: 280px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: none;
+      }
+      #chat-log {
+        position: fixed;
+        left: calc(env(safe-area-inset-left) + 12px);
+        bottom: 40px;
+        color: #fff;
+        font: 12px monospace;
+        text-shadow: 0 1px 2px #000;
+        pointer-events: none;
+      }
+      #chat-input {
+        position: fixed;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 36px;
+        width: min(70vw, 400px);
+        display: none;
+        background: rgba(0, 0, 0, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        color: #fff;
+        font: 14px monospace;
+        padding: 6px 10px;
+        outline: none;
+      }
+      #chat-open {
+        position: fixed;
+        top: calc(env(safe-area-inset-top) + 8px);
+        right: calc(env(safe-area-inset-right) + 12px);
+        font-size: 22px;
+        opacity: 0.8;
+      }
       #touch-jump {
         position: fixed;
         right: calc(env(safe-area-inset-right) + 24px);
@@ -81,7 +125,7 @@
   </head>
   <body>
     <div id="status"></div>
-    <div id="hint">WASD move &middot; Space jump &middot; Q/E rotate camera</div>
+    <div id="hint">WASD move &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; G bazooka</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

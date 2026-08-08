@@ -50,7 +50,42 @@ export function animateCharacter(group: THREE.Group, walkPhase: number, moving: 
   limbs.legL.rotation.x = swing
   limbs.legR.rotation.x = -swing
   limbs.armL.rotation.x = -swing * 0.7
-  limbs.armR.rotation.x = swing * 0.7
+  // Gun arm is held straight out in front; otherwise it swings.
+  limbs.armR.rotation.x = group.userData.gun ? -Math.PI / 2 : swing * 0.7
+}
+
+// Attach or remove the bazooka: a big tube resting on the right shoulder,
+// pointing forward (+Z). Synced over the network via the `gun` flag in
+// PlayerState. The raised right arm (see animateCharacter) holds it up.
+export function setGun(group: THREE.Group, has: boolean): void {
+  const existing = group.getObjectByName('gun')
+  group.userData.gun = has
+  if (has && !existing) {
+    const gun = new THREE.Group()
+    gun.name = 'gun'
+    const olive = new THREE.MeshLambertMaterial({ color: 0x55603a, flatShading: true })
+    const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+    const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
+
+    const along = (geo: THREE.CylinderGeometry) => geo.rotateX(Math.PI / 2) // +Y -> +Z
+    const tube = new THREE.Mesh(along(new THREE.CylinderGeometry(0.2, 0.2, 2.2, 8)), olive)
+    const muzzle = new THREE.Mesh(along(new THREE.CylinderGeometry(0.32, 0.22, 0.4, 8)), dark)
+    muzzle.position.z = 1.25
+    const exhaust = new THREE.Mesh(along(new THREE.CylinderGeometry(0.22, 0.3, 0.35, 8)), dark)
+    exhaust.position.z = -1.2
+    const band = new THREE.Mesh(along(new THREE.CylinderGeometry(0.22, 0.22, 0.16, 8)), red)
+    band.position.z = 0.75
+    const sight = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.22), dark)
+    sight.position.set(0, 0.28, 0.25)
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 0.1), dark)
+    grip.position.set(0, -0.32, 0.35)
+
+    gun.add(tube, muzzle, exhaust, band, sight, grip)
+    gun.position.set(0.38, 1.8, 0.1)
+    group.add(gun)
+  } else if (!has && existing) {
+    group.remove(existing)
+  }
 }
 
 function makeNameTag(name: string): THREE.Sprite {

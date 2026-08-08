@@ -10,6 +10,7 @@ interface PlayerState {
   ry: number
   color: string
   name: string
+  gun: boolean
 }
 
 // Dumb relay: clients send their own state, the room broadcasts it to
@@ -51,9 +52,15 @@ export class GameRoom extends DurableObject<Env> {
         ry: Number(msg.ry) || 0,
         color: String(msg.color).slice(0, 16),
         name: String(msg.name).slice(0, 24),
+        gun: Boolean(msg.gun),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
+    } else if (msg.t === 'chat') {
+      const text = String(msg.text).slice(0, 120)
+      if (!text) return
+      const name = this.states.get(att.id)?.name ?? 'someone'
+      this.broadcast(JSON.stringify({ t: 'chat', id: att.id, name, text }), ws)
     }
   }
 

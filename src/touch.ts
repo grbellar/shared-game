@@ -34,7 +34,9 @@ export class TouchControls {
     jump.addEventListener('pointercancel', () => (this.jumpHeld = false))
 
     window.addEventListener('pointerdown', (e) => {
-      if ((e.target as HTMLElement).id === 'touch-jump') return
+      // Only grab pointers that start on the game itself, not UI elements.
+      const target = e.target as HTMLElement
+      if (target !== document.body && target.tagName !== 'CANVAS') return
       if (e.clientX < window.innerWidth / 2 && this.stickId === null) {
         this.stickId = e.pointerId
         this.origin = { x: e.clientX, y: e.clientY }
