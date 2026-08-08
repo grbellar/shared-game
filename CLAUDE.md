@@ -83,10 +83,18 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 - client→server `slash`: katana swing (relayed for the animation). The
   attacker detects hits and sends `kill` with the victim's id; the server
   relays it to everyone, and each client plays the decapitation locally.
+- client→server `crater`: a bowl carved out of the terrain (rocket blast or
+  shovel dig), `{x, z, r, d}`. Only the rocket's owner mints its crater (so
+  per-client sim divergence can't fork the world). The server stores a capped
+  list and replays it in `welcome`; `world.heightAt` subtracts craters as an
+  order-independent clamped sum, and prop destruction (trees/rocks caught in
+  a crater) is derived from craters, never messaged. See `destruction.ts`.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world
-content, keep it deterministic or sync it through the room.
+content, keep it deterministic or sync it through the room. Terrain damage is
+the one synced mutation: craters live in `welcome` replay, and placement code
+must keep using `baseHeightAt` so the prop PRNG streams never shift.
 
 ## Art direction: N64
 
