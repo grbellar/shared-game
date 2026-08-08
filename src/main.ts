@@ -28,6 +28,7 @@ import { Minimap } from './minimap'
 import { Health } from './health'
 import { Shark } from './shark'
 import { Cats } from './cats'
+import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
 import { ItemWheel } from './itemwheel'
@@ -692,6 +693,7 @@ if (profile.voice) {
 const chat = new Chat()
 shark.onDeath = () => chat.addMessage('🦈', 'blub…')
 const bubbles = new Bubbles(camera, renderer.domElement)
+const stripper = new Stripper(scene, bubbles)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
 chat.onSend = (text) => {
@@ -836,6 +838,7 @@ function crossTo(gate: Gate): void {
   building,
   blockGhost,
   cats,
+  stripper,
   fireworks,
   webcam,
   emotes,
@@ -919,6 +922,7 @@ renderer.setAnimationLoop(() => {
   shark.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
+  stripper.update(dt, [player.group.position, ...remotes.targets().map(({ pos }) => pos)])
   gameCamera.update(dt, player, settings, fp)
   // After the player has settled: the ghost is aimed from where you actually
   // ended up this frame, so it never lags a step behind your feet.
