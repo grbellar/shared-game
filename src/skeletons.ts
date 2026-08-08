@@ -141,8 +141,10 @@ interface Skel {
   netZ: number
   netY: number
   netYaw: number
-  // Per-skeleton cooldown so one telegraphed swing can only bite us once.
-  struckAt: number
+  // Has this swing already landed on us? Latched per strike rather than timed
+  // off the wall clock: the sim runs on dt, and in a throttled tab a
+  // wall-clock cooldown expires mid-swing and lets one blow hit three times.
+  struck: boolean
 }
 
 export class Skeletons {
@@ -180,7 +182,7 @@ export class Skeletons {
         netZ: post.z,
         netY: post.y,
         netYaw: 0,
-        struckAt: -99,
+        struck: false,
       })
     }
 
@@ -440,16 +442,13 @@ export class Skeletons {
   // same rule blast knockback follows — so nobody's health moves because of
   // somebody else's laggy simulation.
   private applyToMe(s: Skel, player: Player): void {
-    if (s.st !== 'strike' || player.dead) return
+    if (s.st !== 'strike' || player.dead || s.struck) return
     // Land the blow at the end of the wind-up, once per swing.
-    const swung = s.timer <= RECOVER
-    if (!swung) return
-    const now = performance.now()
-    if (now - s.struckAt < (WINDUP + RECOVER) * 1000) return
+    if (s.timer > RECOVER) return
     const p = player.group.position
     if (Math.hypot(p.x - s.x, p.z - s.z) > REACH_R) return
     if (Math.abs(p.y - s.y) > 2.4) return
-    s.struckAt = now
+    s.struck = true
     this.health.damage(STRIKE_DAMAGE)
     sfx.boneHit()
     player.applyImpulse(Math.sin(s.yaw) * 5, 3, Math.cos(s.yaw) * 5)
@@ -459,7 +458,10 @@ export class Skeletons {
     if (s.st === st) return
     s.st = st
     s.group.visible = st !== 'dead'
-    if (st === 'strike') s.timer = WINDUP + RECOVER
+    if (st === 'strike') {
+      s.timer = WINDUP + RECOVER
+      s.struck = false // a fresh swing gets a fresh chance to land
+    }
   }
 
   private render(dt: number, s: Skel): void {
