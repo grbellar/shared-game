@@ -228,7 +228,8 @@ function buildWheelchair(): THREE.Group {
 
 // Big tube resting on the right shoulder, pointing forward (+Z). The raised
 // right arm (see animateCharacter) holds it up.
-function buildBazooka(): THREE.Group {
+// Exported for firstperson.ts, which shows a second copy as the view model.
+export function buildBazooka(): THREE.Group {
   {
     const gun = new THREE.Group()
     gun.name = 'weapon'
@@ -257,7 +258,7 @@ function buildBazooka(): THREE.Group {
 
 // Katana held in the right hand, blade extending past the hand (local -Y),
 // so it hangs at the side and follows the arm during a slash.
-function buildKatana(): THREE.Group {
+export function buildKatana(): THREE.Group {
   const sword = new THREE.Group()
   sword.name = 'weapon'
   const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
@@ -279,7 +280,7 @@ function buildKatana(): THREE.Group {
 
 // Garden shovel in the right hand, blade past the fist (local -Y) like the
 // katana, so the same overhead chop reads as a dig.
-function buildShovel(): THREE.Group {
+export function buildShovel(): THREE.Group {
   const shovel = new THREE.Group()
   shovel.name = 'weapon'
   const wood = new THREE.MeshLambertMaterial({ color: 0x8a5a2b, flatShading: true })

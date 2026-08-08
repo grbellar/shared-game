@@ -38,6 +38,8 @@ fitCanvas()
 
 const scene = new THREE.Scene()
 const camera = new THREE.PerspectiveCamera(70, VIEW_W / VIEW_H, 0.1, 500)
+// In the scene graph so camera children (the first-person view model) render.
+scene.add(camera)
 createWorld(scene)
 
 const player = new Player(scene, color, name)
@@ -129,6 +131,7 @@ function attack(): void {
   if (weapon === 'gun' && now - lastAttack > 800) {
     lastAttack = now
     sfx.rocket()
+    fp.kick()
     const ry = player.group.rotation.y
     // Third person lobs slightly upward; first person fires along the crosshair.
     const dir = fp.isActive
@@ -142,6 +145,7 @@ function attack(): void {
   } else if (weapon === 'sword' && now - lastAttack > 500) {
     lastAttack = now
     sfx.slash()
+    fp.swing()
     startSlash(player.group)
     net.sendSlash()
     // Check for a hit at the midpoint of the swing.
@@ -163,6 +167,7 @@ function attack(): void {
   } else if (weapon === 'shovel' && now - lastAttack > 600) {
     lastAttack = now
     sfx.slash(0.5)
+    fp.swing()
     startSlash(player.group)
     net.sendSlash()
     // Scoop at the bottom of the swing: the aimed ground point in first
@@ -254,7 +259,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 
 const gameCamera = new GameCamera(camera)
-const fp = new FirstPersonAim(player, renderer.domElement)
+const fp = new FirstPersonAim(player, renderer.domElement, camera)
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
@@ -265,7 +270,8 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05)
 
   gameCamera.addYaw(touch.consumeYaw())
-  fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active)
+  fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
+  fp.update(dt)
 
   player.update(
     dt,
