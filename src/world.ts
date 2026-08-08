@@ -44,7 +44,7 @@ let worldScene: THREE.Scene | null = null
 // loops) must use this — never the crater-adjusted heightAt — so the seeded
 // PRNG streams stay identical on every client no matter what has been
 // blown up by the time someone joins.
-function baseHeightAt(x: number, z: number): number {
+export function baseHeightAt(x: number, z: number): number {
   let h =
     Math.sin(x * 0.05) * Math.cos(z * 0.05) * 3 +
     Math.sin(x * 0.021 + 1.7) * Math.cos(z * 0.017 - 0.4) * 6 +
@@ -148,7 +148,9 @@ export function propInPath(p: THREE.Vector3): boolean {
 }
 
 // Deterministic PRNG so tree/rock placement matches on every client.
-function mulberry32(seed: number): () => number {
+// Exported for other world content (treasure.ts) — always give new content
+// its own seed so the existing prop streams don't shift.
+export function mulberry32(seed: number): () => number {
   let a = seed
   return () => {
     a |= 0
@@ -206,16 +208,10 @@ function buildTree(): THREE.Group {
   return tree
 }
 
+// Sky colour, fog and lights live in sky.ts (the sun is shootable, so it
+// needs to own its own palette). Create a Sky alongside this.
 export function createWorld(scene: THREE.Scene): void {
   worldScene = scene
-  const sky = new THREE.Color(0x9fd4ea)
-  scene.background = sky
-  scene.fog = new THREE.Fog(sky, 40, 150)
-
-  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x5a7a4a, 0.9))
-  const sun = new THREE.DirectionalLight(0xfff2cc, 1.4)
-  sun.position.set(40, 60, 20)
-  scene.add(sun)
 
   scene.add(buildTerrain())
 
