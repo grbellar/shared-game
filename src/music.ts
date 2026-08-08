@@ -26,7 +26,7 @@ class Music {
   private nextBar = 0
   private chordI = 0
   private melodyI = 4
-  private masterGain = 0.16
+  private masterGain = 0.13
 
   constructor() {
     const unlock = (): void => {
