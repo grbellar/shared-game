@@ -244,14 +244,15 @@ export function setRide(group: THREE.Group, ride: string): void {
   }
 }
 
-// Ramsey: a loyal guy on all fours you ride like a horse. White tee, jeans,
-// and his signature flat-top army cap. His back lines up with the rider's
-// seat; limbs pivot at the shoulder/hip so he can bound (see animateCharacter).
+// Ramsey: a loyal guy on all fours you ride like a horse. Dark gray tee,
+// black pants, and his signature flat-top army cap. His back lines up with
+// the rider's seat; limbs pivot at the shoulder/hip so he can bound (see
+// animateCharacter).
 function buildRamsey(): THREE.Group {
   const ramsey = new THREE.Group()
   ramsey.name = 'ride'
-  const tee = new THREE.MeshLambertMaterial({ color: 0xcfc9b8 })
-  const jeans = new THREE.MeshLambertMaterial({ color: 0x3d4f73 })
+  const tee = new THREE.MeshLambertMaterial({ color: 0x4a4a50 })
+  const jeans = new THREE.MeshLambertMaterial({ color: 0x1a1a1e })
   const skin = new THREE.MeshLambertMaterial({ color: 0xe0b088 })
 
   // Horizontal torso, back at seat height (the rider's hips sit at 0.6).
