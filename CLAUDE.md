@@ -146,6 +146,11 @@ split as blast knockback.
   damage accumulates in a separate map — that's how the castle stays broken
   (see The shadow realm). Relaying is safe precisely because a hit on nothing
   is a no-op.
+  The builder's right-click is the one exception to chewing through hp: it
+  sends the block's whole remaining hp as one `bhit`, so the tool that builds
+  also unbuilds in a click. `building.aim()` is the single source of truth for
+  what's targeted — the ghost preview (`blockghost.ts`) and both clicks all go
+  through it, so what you see outlined is exactly what the click acts on.
 - `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
   world-generated blocks. Replayed onto a freshly regenerated castle.
 - client→server `pet`: someone petted a cat, `{cat: index}`; relayed with the

@@ -124,7 +124,7 @@
         right: calc(env(safe-area-inset-right) + 12px);
         font-size: 22px;
       }
-      #touch-jump, #touch-fire {
+      #touch-jump, #touch-fire, #touch-break {
         position: fixed;
         right: calc(env(safe-area-inset-right) + 24px);
         bottom: calc(env(safe-area-inset-bottom) + 32px);
@@ -143,6 +143,14 @@
       }
       #touch-fire {
         bottom: calc(env(safe-area-inset-bottom) + 120px);
+      }
+      /* The builder's eraser: stacked above fire, and only shown while the
+         builder is equipped (main.ts toggles it). */
+      #touch-break {
+        display: none;
+        bottom: calc(env(safe-area-inset-bottom) + 208px);
+        border-color: rgba(255, 156, 42, 0.7);
+        color: #ff9c2a;
       }
       #welcome {
         position: fixed;
@@ -209,7 +217,7 @@
     <div id="status"></div>
     <div id="flash"></div>
     <div id="realm-banner"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; &larr;/&rarr; camera &middot; E items &middot; Q ride &middot; Enter chat &middot; V voice &middot; G bazooka &middot; H katana &middot; F shovel &middot; B bow (hold click) &middot; T build (1-4 material) &middot; K firework (L to launch) &middot; R wheelchair &middot; Y ramsey &middot; P pet cat &middot; X emotes &middot; click attack</div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; &larr;/&rarr; camera &middot; E items &middot; Q ride &middot; Enter chat &middot; V voice &middot; G bazooka &middot; H katana &middot; F shovel &middot; B bow (hold click) &middot; T build (1-4 material, right-click breaks) &middot; K firework (L to launch) &middot; R wheelchair &middot; Y ramsey &middot; P pet cat &middot; X emotes &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
