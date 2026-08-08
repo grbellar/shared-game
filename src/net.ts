@@ -18,7 +18,14 @@ export interface PlayerState {
 }
 
 type ServerMsg =
-  | { t: 'welcome'; id: string; players: PlayerState[]; craters?: Crater[] }
+  | {
+      t: 'welcome'
+      id: string
+      players: PlayerState[]
+      craters?: Crater[]
+      clock?: { hours: number; running: boolean }
+    }
+  | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
   | { t: 'leave'; id: string }
   | { t: 'chat'; id: string; name: string; text: string }
@@ -47,6 +54,7 @@ export class Net {
     dir: [number, number, number],
     power: number,
   ) => void = () => {}
+  onClock: (hours: number, running: boolean) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -63,6 +71,10 @@ export class Net {
       if (msg.t === 'welcome') {
         this.id = msg.id
         this.onWelcome(msg.players, msg.craters ?? [])
+        if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
+      } else if (msg.t === 'clock') {
+        // No self-echo check needed: the server never echoes to the sender.
+        this.onClock(msg.hours, msg.running)
       } else if (msg.t === 'state') {
         if (msg.p.id !== this.id) this.onState(msg.p)
       } else if (msg.t === 'leave') {
@@ -152,5 +164,10 @@ export class Net {
         p: power,
       }),
     )
+  }
+
+  sendClock(hours: number, running: boolean): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'clock', hours, running }))
   }
 }

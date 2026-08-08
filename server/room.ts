@@ -23,6 +23,9 @@ interface PlayerState {
   talk: number
 }
 
+// Real seconds per full in-game day. Keep in sync with src/daynight.ts.
+const DAY_LENGTH_S = 600
+
 // Dumb relay: clients send their own state, the room broadcasts it to
 // everyone else. No server authority — this is a game between friends.
 export class GameRoom extends DurableObject<Env> {
@@ -32,6 +35,15 @@ export class GameRoom extends DurableObject<Env> {
   // World damage (blast craters, shovel digs), replayed to late joiners in
   // `welcome`. In-memory like `states`: hibernation heals the island.
   private craters: Crater[] = []
+  // The shared day/night clock: time-of-day in hours anchored to this DO's
+  // wall clock. Scrubs/pauses re-anchor it; late joiners get the advanced
+  // value in `welcome`. In-memory: hibernation resets to mid-morning.
+  private clock = { hours: 10, atMs: Date.now(), running: true }
+
+  private clockHours(): number {
+    if (!this.clock.running) return this.clock.hours
+    return (this.clock.hours + ((Date.now() - this.clock.atMs) / 1000) * (24 / DAY_LENGTH_S)) % 24
+  }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
@@ -43,7 +55,13 @@ export class GameRoom extends DurableObject<Env> {
     server.serializeAttachment({ id })
     this.ctx.acceptWebSocket(server)
     server.send(
-      JSON.stringify({ t: 'welcome', id, players: [...this.states.values()], craters: this.craters }),
+      JSON.stringify({
+        t: 'welcome',
+        id,
+        players: [...this.states.values()],
+        craters: this.craters,
+        clock: { hours: this.clockHours(), running: this.clock.running },
+      }),
     )
     return new Response(null, { status: 101, webSocket: client })
   }
@@ -144,6 +162,18 @@ export class GameRoom extends DurableObject<Env> {
         }
         break
       }
+    } else if (msg.t === 'clock') {
+      const hours = Number(msg.hours)
+      if (!Number.isFinite(hours)) return
+      this.clock = {
+        hours: ((hours % 24) + 24) % 24,
+        atMs: Date.now(),
+        running: msg.running === true,
+      }
+      this.broadcast(
+        JSON.stringify({ t: 'clock', hours: this.clock.hours, running: this.clock.running }),
+        ws,
+      )
     }
   }
 

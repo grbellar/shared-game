@@ -2,15 +2,17 @@ import * as THREE from 'three'
 import type { Settings } from './settings'
 
 // Day/night cycle: sun, moon, stars, and all the sky/fog/light color math.
-// The clock lives in settings.timeOfDay (hours, 0-24) so the settings slider
-// can scrub it; when settings.clockRun is on, update() advances it. Purely
-// cosmetic and local — never synced, so friends can live at different hours.
+// Time is SHARED across the room: the server keeps an anchored clock, and
+// every scrub/pause is broadcast (net 'clock' message). Locally the clock is
+// an anchor (hours at a performance.now() timestamp), not a per-frame
+// accumulator — background-tab rAF throttling can't drift it. update()
+// mirrors the derived value into settings.timeOfDay for the settings UI.
 //
 // Sky geometry rides along with the camera (a sky at infinity, N64 style),
 // with fog disabled on its materials so the fog wall never swallows the sun.
 
 const SKY_RADIUS = 300
-const DAY_LENGTH_S = 600 // real seconds per full in-game day
+const DAY_LENGTH_S = 600 // real seconds per full in-game day; also in server/room.ts
 
 const DAY_SKY = new THREE.Color(0x9fd4ea)
 const NIGHT_SKY = new THREE.Color(0x0b1026)
@@ -56,6 +58,9 @@ export class DayNight {
   private hemi: THREE.HemisphereLight
   private dirLight: THREE.DirectionalLight
   private sky = new THREE.Color()
+  private anchorHours: number | null = null
+  private anchorMs = 0
+  private running = true
 
   constructor(private scene: THREE.Scene) {
     // world.ts creates and names these; we take over driving them.
@@ -105,11 +110,28 @@ export class DayNight {
     scene.add(this.group)
   }
 
-  update(dt: number, settings: Settings, camPos: THREE.Vector3): void {
-    if (settings.clockRun) {
-      settings.timeOfDay = (settings.timeOfDay + (dt * 24) / DAY_LENGTH_S) % 24
-    }
-    const t = ((settings.timeOfDay % 24) + 24) % 24
+  // Re-anchor the clock: local scrubs/toggles and network 'clock' messages
+  // both land here. Everyone anchoring the same hours within network latency
+  // of each other is what keeps the room in sync.
+  setClock(hours: number, running: boolean): void {
+    this.anchorHours = ((hours % 24) + 24) % 24
+    this.anchorMs = performance.now()
+    this.running = running
+  }
+
+  // The live clock, straight from the anchor. Public because pausing needs
+  // the true current time even when a throttled tab's UI mirror is stale.
+  now(): number {
+    if (this.anchorHours === null) return 10
+    if (!this.running) return this.anchorHours
+    return (this.anchorHours + ((performance.now() - this.anchorMs) / 1000) * (24 / DAY_LENGTH_S)) % 24
+  }
+
+  update(settings: Settings, camPos: THREE.Vector3): void {
+    // First frame: seed from persisted settings until the welcome clock lands.
+    if (this.anchorHours === null) this.setClock(settings.timeOfDay, settings.clockRun)
+    const t = this.now()
+    settings.timeOfDay = t
 
     // 6:00 sunrise on the east horizon, 12:00 zenith, 18:00 sunset.
     const theta = ((t - 6) / 24) * Math.PI * 2

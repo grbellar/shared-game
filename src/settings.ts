@@ -7,10 +7,14 @@ export interface Settings {
   firstPerson: boolean
   clockRun: boolean // day/night cycle advances on its own
   timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
+  // Fired when the USER scrubs the time slider or flips the clock toggle
+  // (not when the network updates them) — main.ts broadcasts the new clock.
+  // fromToggle distinguishes "freeze/unfreeze now" from "jump to this time".
+  onClockChange?: (fromToggle: boolean) => void
 }
 
 // Keys makeRow may bind — the boolean toggles only.
-type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings]
+type BoolKey = { [K in keyof Settings]-?: Settings[K] extends boolean ? K : never }[keyof Settings]
 
 const STORAGE_KEY = 'shared-game.settings'
 
@@ -162,6 +166,7 @@ export function initSettings(): Settings {
       settings[key] = !settings[key]
       persist(settings)
       sync()
+      if (key === 'clockRun') settings.onClockChange?.(true)
       // Drop focus so Space stays the jump key instead of re-clicking the switch.
       toggle.blur()
     })
@@ -205,6 +210,7 @@ export function initSettings(): Settings {
   slider.addEventListener('input', () => {
     settings.timeOfDay = parseFloat(slider.value) % 24
     persist(settings)
+    settings.onClockChange?.(false)
   })
   // Drop focus after a scrub so WASD/Space go back to being game keys.
   slider.addEventListener('change', () => slider.blur())

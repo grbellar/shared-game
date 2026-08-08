@@ -341,6 +341,21 @@ const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
 const daynight = new DayNight(scene)
 
+// The day/night clock is shared: the room's clock arrives in welcome (and on
+// every scrub by anyone), and our own scrubs/toggles broadcast back.
+net.onClock = (hours, running) => {
+  settings.timeOfDay = hours
+  settings.clockRun = running
+  daynight.setClock(hours, running)
+}
+settings.onClockChange = (fromToggle) => {
+  // A pause/resume freezes the CURRENT moment — take it from the anchor, not
+  // the settings mirror, which goes stale in rAF-throttled background tabs.
+  if (fromToggle) settings.timeOfDay = daynight.now()
+  daynight.setClock(settings.timeOfDay, settings.clockRun)
+  net.sendClock(settings.timeOfDay, settings.clockRun)
+}
+
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
 ;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows }
@@ -378,7 +393,7 @@ renderer.setAnimationLoop(() => {
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   remotes.update(dt)
   gameCamera.update(dt, keys, player, settings, fp)
-  daynight.update(dt, settings, camera.position)
+  daynight.update(settings, camera.position)
 
   renderer.render(scene, camera)
 })
