@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createCharacter, animateCharacter, type Pose } from './character'
+import { createCharacter, animateCharacter, setGun, type Pose } from './character'
 import type { PlayerState } from './net'
 
 interface Remote {
@@ -7,6 +7,7 @@ interface Remote {
   target: { x: number; y: number; z: number; ry: number }
   walkPhase: number
   pose: Pose
+  gun: boolean
 }
 
 // Renders and interpolates the other players in the room.
@@ -26,11 +27,25 @@ export class Remotes {
       group.position.set(p.x, p.y, p.z)
       group.rotation.y = p.ry
       this.scene.add(group)
-      remote = { group, target: { x: p.x, y: p.y, z: p.z, ry: p.ry }, walkPhase: 0, pose: 'stand' }
+      remote = {
+        group,
+        target: { x: p.x, y: p.y, z: p.z, ry: p.ry },
+        walkPhase: 0,
+        pose: 'stand',
+        gun: false,
+      }
       this.players.set(p.id, remote)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
     remote.pose = p.pose ?? 'stand'
+    if (remote.gun !== p.gun) {
+      remote.gun = p.gun
+      setGun(remote.group, p.gun)
+    }
+  }
+
+  getGroup(id: string): THREE.Group | undefined {
+    return this.players.get(id)?.group
   }
 
   remove(id: string): void {

@@ -3,6 +3,10 @@ import { createWorld } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
+import { TouchControls } from './touch'
+import { Chat } from './chat'
+import { Bubbles } from './bubbles'
+import { setGun } from './character'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -42,6 +46,8 @@ net.onState = (p) => remotes.upsert(p)
 net.onLeave = (id) => remotes.remove(id)
 net.connect()
 
+let hasGun = false
+
 setInterval(() => {
   net.sendState({
     x: player.group.position.x,
@@ -51,8 +57,22 @@ setInterval(() => {
     color,
     name,
     pose: player.pose,
+    gun: hasGun,
   })
 }, 66)
+
+const chat = new Chat()
+const bubbles = new Bubbles(camera, renderer.domElement)
+chat.onSend = (text) => {
+  net.sendChat(text)
+  bubbles.show(player.group, text)
+  chat.addMessage(name, text)
+}
+net.onChat = (id, senderName, text) => {
+  const group = remotes.getGroup(id)
+  if (group) bubbles.show(group, text)
+  chat.addMessage(senderName, text)
+}
 
 const status = document.getElementById('status')!
 setInterval(() => {
@@ -63,8 +83,19 @@ setInterval(() => {
 }, 500)
 
 const keys = new Set<string>()
-window.addEventListener('keydown', (e) => keys.add(e.code))
+window.addEventListener('keydown', (e) => {
+  keys.add(e.code)
+  if (e.code === 'Enter' && !chat.isOpen) {
+    e.preventDefault()
+    chat.open()
+  }
+  if (e.code === 'KeyG') {
+    hasGun = !hasGun
+    setGun(player.group, hasGun)
+  }
+})
 window.addEventListener('keyup', (e) => keys.delete(e.code))
+const touch = new TouchControls()
 
 let camYaw = 0
 const CAM_OFFSET = new THREE.Vector3()
@@ -77,8 +108,20 @@ renderer.setAnimationLoop(() => {
 
   if (keys.has('KeyQ')) camYaw += 2.2 * dt
   if (keys.has('KeyE')) camYaw -= 2.2 * dt
+  camYaw += touch.consumeYaw()
 
-  player.update(dt, keys, camYaw)
+  player.update(
+    dt,
+    {
+      f: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF,
+      s: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS,
+      jump: keys.has('Space') || touch.jumpHeld,
+      crouch: keys.has('KeyC'),
+      sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+    },
+    camYaw,
+  )
+  bubbles.update()
   remotes.update(dt)
 
   CAM_OFFSET.set(Math.sin(camYaw) * 9, 6, Math.cos(camYaw) * 9)

@@ -8,6 +8,14 @@ const JUMP_VELOCITY = 11
 const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
 
+export interface PlayerInput {
+  f: number
+  s: number
+  jump: boolean
+  crouch: boolean
+  sprint: boolean
+}
+
 export class Player {
   group: THREE.Group
   pose: Pose = 'stand'
@@ -22,28 +30,33 @@ export class Player {
     scene.add(this.group)
   }
 
-  update(dt: number, keys: Set<string>, camYaw: number): void {
+  update(dt: number, input: PlayerInput, camYaw: number): void {
     const swimming = this.pose === 'swim'
-    const crouching = !swimming && keys.has('KeyC')
-    const sprinting = !crouching && (keys.has('ShiftLeft') || keys.has('ShiftRight'))
-    let speed = SPEED * (swimming ? 0.6 : crouching ? 0.45 : 1)
-    if (sprinting) speed *= 1.6
+    const crouching = !swimming && input.crouch
+    const sprinting = !crouching && input.sprint
+    let speedMul = swimming ? 0.6 : crouching ? 0.45 : 1
+    if (sprinting) speedMul *= 1.6
 
-    const fwd = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0)
-    const strafe = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0)
+    let { f, s } = input
+    const mag = Math.hypot(f, s)
 
     let moving = 0
-    if (fwd !== 0 || strafe !== 0) {
+    if (mag > 0.15) {
+      if (mag > 1) {
+        f /= mag
+        s /= mag
+      }
       // Camera sits behind the player at +camYaw, so forward is -camYaw.
       const fx = -Math.sin(camYaw)
       const fz = -Math.cos(camYaw)
-      let dx = fx * fwd - fz * strafe
-      let dz = fz * fwd + fx * strafe
+      let dx = fx * f - fz * s
+      let dz = fz * f + fx * s
       const len = Math.hypot(dx, dz)
       dx /= len
       dz /= len
-      this.group.position.x += dx * speed * dt
-      this.group.position.z += dz * speed * dt
+      const analog = Math.min(mag, 1)
+      this.group.position.x += dx * SPEED * speedMul * analog * dt
+      this.group.position.z += dz * SPEED * speedMul * analog * dt
       // Face the direction of travel, taking the short way around.
       const target = Math.atan2(dx, dz)
       const delta = Math.atan2(
@@ -51,8 +64,8 @@ export class Player {
         Math.cos(target - this.group.rotation.y),
       )
       this.group.rotation.y += delta * Math.min(1, 12 * dt)
-      moving = 1
-      let cadence = swimming ? 7 : crouching ? 8 : 11
+      moving = analog
+      let cadence = (swimming ? 7 : crouching ? 8 : 11) * analog
       if (sprinting) cadence *= 1.5
       this.walkPhase += dt * cadence
     } else if (swimming) {
@@ -86,7 +99,7 @@ export class Player {
         this.onGround = false
       }
     }
-    if (keys.has('Space') && this.onGround) {
+    if (input.jump && this.onGround) {
       this.velY = JUMP_VELOCITY
       this.onGround = false
     }
