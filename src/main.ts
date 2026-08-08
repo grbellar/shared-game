@@ -349,6 +349,11 @@ window.addEventListener('mouseup', () => {
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
 })
+// Right-click is reserved for in-game actions; the chat input keeps the
+// browser menu so paste still works.
+window.addEventListener('contextmenu', (e) => {
+  if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault()
+})
 if (touch.active) {
   const fire = document.createElement('div')
   fire.id = 'touch-fire'
