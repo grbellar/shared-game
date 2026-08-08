@@ -38,6 +38,8 @@ interface PlayerState {
   y: number
   z: number
   ry: number
+  rx: number // pitch — nonzero only for the X-wing (see src/xwing.ts)
+  rz: number // roll
   color: string
   name: string
   pose: 'stand' | 'crouch' | 'swim'
@@ -50,7 +52,8 @@ interface PlayerState {
   hy: number // head yaw, offset from the body's facing
 }
 
-// Head aim limits, matching src/character.ts.
+// A finite angle inside ±limit, or 0. Used for head aim (limits matching
+// src/character.ts) and for the X-wing's pitch and roll.
 function clampLook(v: unknown, limit: number): number {
   const n = Number(v)
   if (!Number.isFinite(n)) return 0
@@ -134,6 +137,10 @@ export class GameRoom extends DurableObject<Env> {
         y: Number(msg.y) || 0,
         z: Number(msg.z) || 0,
         ry: Number(msg.ry) || 0,
+        // Clamped to the flight model's own limits in src/xwing.ts, so a
+        // bad number can't hand anyone an inside-out character.
+        rx: clampLook(msg.rx, 1.6),
+        rz: clampLook(msg.rz, 1.6),
         color: String(msg.color).slice(0, 16),
         name: String(msg.name).slice(0, 24),
         pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
@@ -196,6 +203,20 @@ export class GameRoom extends DurableObject<Env> {
           dy: Number(msg.dy) || 0,
           dz: Number(msg.dz) || 0,
           p: Math.max(0, Math.min(1, Number(msg.p) || 0)),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'laser') {
+      this.broadcast(
+        JSON.stringify({
+          t: 'laser',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          dx: Number(msg.dx) || 0,
+          dy: Number(msg.dy) || 0,
+          dz: Number(msg.dz) || 0,
         }),
         ws,
       )

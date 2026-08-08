@@ -1,15 +1,18 @@
 import * as THREE from 'three'
 import { createCharacter, animateCharacter, type Pose } from './character'
-import { heightAt } from './world'
+import { heightAt, WATER_LEVEL } from './world'
 import { blockFloorAt, wallAt } from './blocks'
 import { sfx } from './audio'
 
 const SPEED = 9
 const RIDE_SPEED = 16 // wheelchair beats walking
 const RAMSEY_SPEED = 19 // and four limbs beat two wheels
+const TAXI_SPEED = 12 // an X-wing still parked on its skids, trundling about
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
-export const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
+// Sea level lives in world.ts (it's a fact about the terrain); re-exported
+// here because this is where the rest of the game already imports it from.
+export { WATER_LEVEL }
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
 
 // A random dry-land spot so players don't stack on one point. Rejection
@@ -41,7 +44,7 @@ export class Player {
   moving = false // movement input this frame? The follow cam only recenters while true.
   pose: Pose = 'stand'
   dead = false
-  ride: 'none' | 'wheelchair' | 'ramsey' = 'none'
+  ride: 'none' | 'wheelchair' | 'ramsey' | 'xwing' = 'none'
   // Something has hold of you (the shark) — input is ignored and whatever
   // grabbed you owns your position until it lets go.
   grabbed = false
@@ -49,6 +52,11 @@ export class Player {
   // being dragged out to sea. Gravity, input and collision are all suspended
   // — rocket.ts writes the position every frame until you land.
   flying = false
+  // At the controls of an X-wing that has left the ground (xwing.ts). Same
+  // suspension as `flying`, but it's a separate flag because a rocket trip
+  // is something that happens *to* you and a flight is something you steer —
+  // the camera and the follow-cam want to tell them apart.
+  piloting = false
   // Called when the respawn timer puts you back on the island.
   onRespawn: () => void = () => {}
   // Fired when we hit water hard enough to splash (main.ts spawns the effect).
@@ -124,6 +132,18 @@ export class Player {
       return
     }
 
+    // Flying the X-wing: xwing.ts owns the position and all three rotation
+    // axes this frame. `moving` stays true so the follow cam swings in behind
+    // the ship instead of hanging off whatever heading we took off on.
+    if (this.piloting && !this.dead) {
+      this.velX = this.velY = this.velZ = 0
+      this.moving = true
+      this.pose = 'stand'
+      this.walkPhase += dt * 3
+      animateCharacter(this.group, dt, this.walkPhase, 0, 'stand')
+      return
+    }
+
     // Clamped in a shark's mouth: it drives the position, you just flail.
     if (this.grabbed && !this.dead) {
       this.velX = this.velY = this.velZ = 0
@@ -164,7 +184,13 @@ export class Player {
       dz /= len
       const analog = Math.min(mag, 1)
       const moveSpeed =
-        this.ride === 'ramsey' ? RAMSEY_SPEED : this.ride === 'wheelchair' ? RIDE_SPEED : SPEED
+        this.ride === 'ramsey'
+          ? RAMSEY_SPEED
+          : this.ride === 'wheelchair'
+            ? RIDE_SPEED
+            : this.ride === 'xwing'
+              ? TAXI_SPEED
+              : SPEED
       this.tryMove(dx * moveSpeed * speedMul * analog * dt, dz * moveSpeed * speedMul * analog * dt)
       // Face the direction of travel, taking the short way around —
       // unless the mouse owns the facing (first-person strafe).
@@ -246,7 +272,7 @@ export class Player {
       else if (moving > 0.15 && this.onGround) {
         if (this.ride === 'wheelchair') sfx.squeak()
         else if (this.ride === 'ramsey') sfx.gallop()
-        else sfx.step()
+        else if (this.ride !== 'xwing') sfx.step() // a parked fighter has no feet
       }
     }
     this.wasFloating = floating

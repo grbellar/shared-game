@@ -67,6 +67,8 @@ build) is the only gate.
     onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
     overlay that aims it — the islands drawn straight out of `baseHeightAt`,
     with a clickable pin per player.
+  - `xwing.ts` — the X-wing: the model, and the arcade flight model that flies
+    it. `lasers.ts` is its cannons. See "Flying" below.
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
   `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
@@ -85,7 +87,10 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 
 - server→client `welcome`: your id + everyone's last known state
 - client→server `state`: your position/rotation/color/name/weapon/ride/skin/
-  talk/emote/head aim (~15x/sec). `emote` is the radial-menu pose you're
+  talk/emote/head aim (~15x/sec). Rotation is `ry` (yaw) plus `rx`/`rz`
+  (pitch and roll), which are zero for anything on its feet and exist for the
+  X-wing — a fighter that banks flat on everyone else's screen looks like
+  it's sliding sideways. `emote` is the radial-menu pose you're
   playing (see `emotes.ts`); it rides in `state` rather than being its own
   message, so late joiners see a dance already in progress. Each client
   animates it off its own clock. Two poses aren't on the wheel at all:
@@ -110,6 +115,11 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   relayed with the archer's id. Every client simulates the same ballistic
   arc (`arrows.ts`); hits are cosmetic (arrows embed in terrain, props, and
   players) and each client applies arrow knockback to itself only.
+- client→server `laser`: one trigger pull of the X-wing's cannons — origin
+  and direction, relayed with the shooter's id. Every client fans the same
+  four bolts off that one origin (`fireCannons` in `main.ts`), so a burst
+  costs one message. Only the shooter resolves hits, and players are damaged
+  through `hit` like any other weapon. See `lasers.ts`.
 - client→server `clock`: a scrub or pause of the shared day/night clock,
   `{hours, running}`. The server re-anchors its room clock (replayed to late
   joiners in `welcome`) and relays it to everyone else; each client re-anchors
@@ -252,6 +262,38 @@ reconnects can't disagree about it.
   check in `wallAt` will refuse the climb. That's why the keep's four flights
   spiral around different inner walls instead of stacking, and why the
   rampart's inner lane skips the stair footprints.
+
+## Flying
+
+The X-wing is a **ride** (`ride: 'xwing'`), which is what makes it nearly free
+over the wire: the model, the seated pilot and the saved loadout all travel on
+the field the wheelchair already used, and your position streams ~15x/sec, so
+remotes watch a whole flight without a single message of their own. Only pitch
+and roll had to be added (`rx`/`rz`, above).
+
+Everything else about how a ship *looks* is derived rather than sent, the same
+way the world is:
+
+- **Airborne** is `y > ground + 2.2`, computed per client from the
+  deterministic terrain (`airborneAt`). Nobody can disagree about it.
+- **S-foils** open when a ship is airborne and close when it parks, eased in
+  `animateCharacter`. That's why there is no "lock S-foils" message.
+- **Engine glow** tracks throttle, which remotes read off how fast the ship is
+  actually moving.
+
+Two things to know before touching it:
+
+- `clearEmotePose` zeroes `group.rotation.x` every frame (emotes tilt the whole
+  group forward). `animateCharacter` saves and restores the flight pitch around
+  it — without that, a remote fighter's dive is wiped one line after
+  `remotes.ts` interpolates it in.
+- Rocket travel and a flight both borrow `scene.fog.far` and both put it back,
+  so whichever grabbed it second would restore the other's inflated value and
+  leave the fog wall stuck open. Every `rocket.launch` therefore goes through
+  `launchRocket` in `main.ts`, which grounds the fighter first.
+
+Crashing is self-inflicted and unsynced: the wreck is cosmetic, the damage is
+your own, and everyone else already watched you fall out of the sky.
 
 ## Health
 

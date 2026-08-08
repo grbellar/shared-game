@@ -36,6 +36,8 @@ import { EmoteWheel } from './emotewheel'
 import { ItemWheel } from './itemwheel'
 import { GameMap } from './map'
 import { RocketRide, DESTINATIONS, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
+import { XWingFlight, airborneAt } from './xwing'
+import { Lasers } from './lasers'
 import {
   setWeapon,
   setRide,
@@ -210,7 +212,7 @@ net.onFace = (id, dataUrl) => {
 net.connect()
 
 type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
-type Ride = 'none' | 'wheelchair' | 'ramsey'
+type Ride = 'none' | 'wheelchair' | 'ramsey' | 'xwing'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
 let ride = profile.ride as Ride
@@ -247,6 +249,11 @@ setInterval(() => {
     y: player.group.position.y,
     z: player.group.position.z,
     ry: player.group.rotation.y,
+    // Only ever nonzero in the X-wing, and the only reason the message has
+    // them at all — a banking fighter that reads level to everyone else
+    // looks like it's sliding sideways through the sky.
+    rx: player.group.rotation.x,
+    rz: player.group.rotation.z,
     color,
     name: profile.name,
     pose: player.pose,
@@ -301,11 +308,17 @@ function equipWeapon(next: Weapon): void {
   saveLoadout()
 }
 function equipRide(next: Ride): void {
+  // Climbing out of a ship that's still in the air is allowed — you just
+  // fall. What isn't allowed is leaving the flight model running without a
+  // ship attached to it.
+  if (ride === 'xwing' && next !== 'xwing') xwing.stop(player.group)
   ride = next
   setRide(player.group, ride)
   player.ride = ride
+  player.piloting = false
   sfx.equip(ride !== 'none')
   if (ride === 'ramsey') sfx.ramseyMount()
+  if (ride === 'xwing') chat.addMessage('🛩️', 'space to take off · WS pitch · AD bank · click to fire')
   saveLoadout()
 }
 
@@ -334,6 +347,7 @@ const rideWheel = new ItemWheel(
     { id: 'none', icon: '🚶', label: 'on foot' },
     { id: 'wheelchair', icon: '🦽', label: 'R wheelchair' },
     { id: 'ramsey', icon: '🧍', label: 'Y ramsey' },
+    { id: 'xwing', icon: '🛩️', label: 'Z x-wing' },
   ],
   () => ride,
   (id) => equipRide(id as Ride),
@@ -448,14 +462,25 @@ map.data = () => ({
 })
 // The castle counts as a destination like anywhere else — the gate is still
 // the scenic route, the rocket is the fast one.
+// Every rocket trip goes through here, because the fighter has to be on the
+// ground before the arc starts: both of them borrow the scene's fog distance
+// and put it back afterwards, and whichever one grabs it second would
+// otherwise restore the other one's inflated value and leave the fog wall
+// permanently open. Grounding first also stops the flight model quietly
+// steering you while rocket.ts writes your position.
+function launchRocket(dest: { x: number; z: number; followId?: string }): boolean {
+  xwing.stop(player.group)
+  player.piloting = false
+  return rocket.launch(player, dest)
+}
 map.onPickPlayer = (id) => {
   const group = remotes.getGroup(id)
   if (!group) return
-  rocket.launch(player, { x: group.position.x, z: group.position.z, followId: id })
+  launchRocket({ x: group.position.x, z: group.position.z, followId: id })
 }
 map.onPickDest = (index) => {
   const dest = DESTINATIONS[index]
-  if (dest && rocket.launch(player, dest.spot())) chat.addMessage('🚀', `to ${dest.name}!`)
+  if (dest && launchRocket(dest.spot())) chat.addMessage('🚀', `to ${dest.name}!`)
 }
 // Keyboard shortcut, no map required: J cycles to the next place that isn't
 // this one — island, island, castle, round again.
@@ -464,6 +489,77 @@ function rocketToNextIsland(): void {
   const here = DESTINATIONS.findIndex((d) => d.here(p.x, p.z))
   const next = (here + 1) % DESTINATIONS.length
   map.onPickDest(next)
+}
+
+// The X-wing. Mounting it is just a ride (see equipRide); this is the part
+// that flies. Everything it does to the world on the way down happens here —
+// xwing.ts only ever decides that the flight ended and how badly.
+const xwing = new XWingFlight(scene)
+const CRASH_DAMAGE = 45
+xwing.onTouchdown = () => {
+  chat.addMessage('🛩️', 'down safe')
+}
+xwing.onCrash = (pos, kind) => {
+  if (kind === 'water') {
+    // Ditching. Wet, undignified, survivable.
+    effects.spawnSplash(pos.x, pos.z)
+    sfx.splash()
+  } else {
+    effects.spawnImpact(pos)
+    effects.spawnDebris(pos, 0xd8d4c6, 16, 9)
+    sfx.explosion()
+    health.damage(CRASH_DAMAGE)
+  }
+  // No message and no crater: the wreck is cosmetic and self-inflicted, and
+  // everyone else already watched the ship fall out of the sky in the
+  // position stream. Climb out either way — you don't fly it home from here.
+  equipRide('none')
+}
+
+// Cannon fire. Bolts are cosmetic on every screen except the shooter's,
+// which is where the damage is decided — the same split rockets and arrows
+// already use.
+const lasers = new Lasers(scene)
+const LASER_DAMAGE = 22
+lasers.solidAt = (p) => blockAtPoint(p.x, p.y, p.z) !== undefined
+lasers.onImpact = (pos, yaw, ownerId, hitId) => {
+  effects.spawnDebris(pos, 0xff6a2a, 4, 7)
+  if (ownerId !== 'me') return
+  if (hitId) {
+    // Just the damage — the victim decides whether that was fatal, exactly
+    // like a katana hit.
+    net.sendHit(hitId, LASER_DAMAGE)
+    sfx.hitmark()
+    return
+  }
+  if (skeletons.swing(pos, yaw, LASER_DAMAGE)) {
+    sfx.hitmark()
+    return
+  }
+  if (shark.swing(pos, yaw, LASER_DAMAGE)) return
+  if (mobs.swing(pos, yaw, LASER_DAMAGE)) return
+  const block = blockAtPoint(pos.x, pos.y, pos.z)
+  if (block) building.hit(block.gx, block.gy, block.gz, 1)
+}
+net.onLaser = (id, origin, dir) => {
+  const from = new THREE.Vector3(...origin)
+  sfx.laser(distVol(from, 90))
+  fireCannons(id, from, new THREE.Vector3(...dir))
+}
+// Four bolts from four wingtips, fanned off one origin and direction so a
+// burst costs one message. Every client builds the identical spread.
+const CANNON_SPREAD = 3.4
+function fireCannons(ownerId: string, origin: THREE.Vector3, dir: THREE.Vector3): void {
+  const right = new THREE.Vector3(dir.z, 0, -dir.x).normalize()
+  for (const sx of [-1, 1]) {
+    for (const sy of [0.6, -0.6]) {
+      const from = origin
+        .clone()
+        .addScaledVector(right, sx * CANNON_SPREAD)
+        .add(new THREE.Vector3(0, sy, 0))
+      lasers.spawn(ownerId, from, dir)
+    }
+  }
 }
 
 cats.onPet = (index) => net.sendPet(index)
@@ -544,12 +640,33 @@ function meleeBlockTarget(): BlockSpec | undefined {
   return undefined
 }
 
+// At the controls of an airborne fighter, which overrides whatever is in
+// your hands: the trigger is the cannons and nothing else.
+function inCockpit(): boolean {
+  return ride === 'xwing' && xwing.airborne
+}
+
 let lastAttack = 0
 const SWORD_DAMAGE = 55 // two clean swings takes a head off
 function attack(): void {
   if (player.dead) return
   const now = performance.now()
   emotes.stop() // no waving mid-rocket
+  if (inCockpit()) {
+    if (now - lastAttack < 180) return
+    lastAttack = now
+    // Straight down the nose, from just past it — with pitch and roll on the
+    // group, the ship's own forward vector is the only thing that reads right.
+    const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(player.group.quaternion).normalize()
+    // The click lands between frames, so the matrix is a frame stale — and a
+    // frame of an 88-unit-per-second ship is a whole ship-length of error.
+    player.group.updateMatrixWorld()
+    const origin = player.group.localToWorld(new THREE.Vector3(0, 1.15, 4.6))
+    sfx.laser()
+    fireCannons('me', origin, dir)
+    net.sendLaser(origin, dir)
+    return
+  }
   if (weapon === 'gun' && now - lastAttack > 800) {
     lastAttack = now
     sfx.rocket()
@@ -715,7 +832,7 @@ window.addEventListener('mousedown', (e) => {
     if (e.button === 2 && weapon === 'builder') breakBlock()
     return
   }
-  if (weapon === 'bow') {
+  if (weapon === 'bow' && !inCockpit()) {
     bowDrawStart = performance.now()
     sfx.bowDraw()
     return
@@ -866,6 +983,13 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
   if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
+  // Z, not X: X already opens the emote wheel.
+  if (e.code === 'KeyZ') equipRide(ride === 'xwing' ? 'none' : 'xwing')
+  // Space is the throttle once you're strapped in: it lights the engines
+  // from a standstill, and boosts (in the flight input below) after that.
+  if (e.code === 'Space' && ride === 'xwing' && !xwing.airborne && !player.dead && !e.repeat) {
+    xwing.takeoff(player.group)
+  }
   if (e.code === 'KeyJ') rocketToNextIsland()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
@@ -962,6 +1086,8 @@ function crossTo(gate: Gate): void {
   faceBar,
   rocket,
   map,
+  xwing,
+  lasers,
   scene,
   camera,
   draw: () => renderer.render(scene, camera),
@@ -978,9 +1104,10 @@ renderer.setAnimationLoop(() => {
   music.setScore(shadow ? 'shadow' : 'island')
   // Any overlay borrows the mouse — the wheels and the travel map alike.
   fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen
-  // No aiming down a scope while the rocket flies you; the chase cam sells it.
+  // No aiming down a scope while the rocket flies you, or from the cockpit;
+  // the chase cam sells both.
   fp.setActive(
-    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active,
+    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active && ride !== 'xwing',
     weapon,
   )
   fp.update(dt)
@@ -999,22 +1126,56 @@ renderer.setAnimationLoop(() => {
     fp.isActive ? 0 : GLANCE * Math.sin(viewOffset),
   )
 
+  // Killed, or caught by the shark, mid-flight: hand control back before
+  // anything else this frame gets to write our position.
+  if (xwing.airborne && (player.dead || player.grabbed)) xwing.stop(player.group)
+  // Touch has no space bar, so the jump pad doubles as the throttle.
+  if (ride === 'xwing' && !xwing.airborne && touch.jumpHeld && !player.dead) {
+    xwing.takeoff(player.group)
+  }
+  player.piloting = xwing.airborne
+
+  const stickF = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF
+  const stickS = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS
+  const boost = keys.has('Space') || touch.jumpHeld
   player.update(
     dt,
     {
-      f: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF,
-      s: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS,
-      jump: keys.has('Space') || touch.jumpHeld,
+      f: stickF,
+      s: stickS,
+      // Space belongs to the throttle while you're strapped in — otherwise
+      // taking off would also make the parked fighter hop.
+      jump: ride === 'xwing' ? false : boost,
       crouch: keys.has('KeyC'),
       sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'),
       strafe: fp.isActive,
     },
     gameCamera.yaw,
   )
-  // Straight after player.update, which left our position alone while flying:
-  // the arc writes it here, before anything else reads where we are — the
-  // gates below included, so a rocket can't be teleported out mid-arc.
+  // Straight after player.update, which left our position alone while it's
+  // flying us. W/S is the stick (push forward to dive), A/D banks, Space is
+  // the throttle and Shift the airbrake.
+  xwing.update(
+    dt,
+    {
+      pitch: -stickF,
+      roll: stickS,
+      boost,
+      brake: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+    },
+    player.group,
+  )
+  // ...and then the arc writes it, before anything else reads where we are —
+  // the gates below included, so a rocket can't be teleported out mid-arc.
   rocket.update(dt, player)
+  // Our own S-foils and exhaust, off the same two facts remotes.ts derives
+  // them from for everyone else (see xwing.ts).
+  if (ride === 'xwing') {
+    const p = player.group.position
+    player.group.userData.airborne = xwing.airborne || airborneAt(p.x, p.y, p.z)
+    player.group.userData.throttle = xwing.throttle
+  }
+  gameCamera.pullBack(ride === 'xwing' ? (xwing.airborne ? 13 : 8) : 0)
   const gate = portals.update(dt, player.group.position)
   if (gate) crossTo(gate)
   const nowShadow = inRealm(player.group.position.x, player.group.position.z)
@@ -1071,6 +1232,7 @@ renderer.setAnimationLoop(() => {
   }
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
+  lasers.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   fireworks.update(dt)
   remotes.update(dt)
   // After the player and remotes have moved: the shark chases current
