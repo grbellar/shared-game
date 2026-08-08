@@ -9,6 +9,7 @@ export interface Settings {
   timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
   music: boolean
   webcamFace: boolean
+  webcamBar: boolean
   // Fired when the USER scrubs the time slider or flips the clock toggle
   // (not when the network updates them) — main.ts broadcasts the new clock.
   // fromToggle distinguishes "freeze/unfreeze now" from "jump to this time".
@@ -51,6 +52,9 @@ function load(): Settings {
       // Never restored from storage: the camera is opt-in every session, so
       // reloading the page can't silently reopen a webcam.
       webcamFace: false,
+      // The strip only displays frames others already sent, so it's safe to
+      // remember — unlike the camera above, it never turns on your hardware.
+      webcamBar: obj.webcamBar === true,
     }
   } catch {
     return {
@@ -60,6 +64,7 @@ function load(): Settings {
       timeOfDay: 10,
       music: true,
       webcamFace: false,
+      webcamBar: false,
     }
   }
 }
@@ -378,6 +383,7 @@ export function initSettings(
     slider,
     makeRow('settings-music-label', 'music', 'music'),
     makeRow('settings-webcam-label', 'my webcam on my head', 'webcamFace'),
+    makeRow('settings-webcam-bar-label', 'webcam strip along the top', 'webcamBar'),
   )
   document.body.append(gear, panel)
 

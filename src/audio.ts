@@ -13,6 +13,8 @@ class Sfx {
   private masterGain = 0.5
   private mutedFlag = false
   private squeakHigh = false
+  private sharkNext = 0
+  private sharkLow = false
 
   constructor() {
     const unlock = () => {
@@ -433,6 +435,58 @@ class Sfx {
         0.12 + Math.random() * 0.8,
       )
     }
+  }
+
+  // --- shark ---
+
+  // The two-note stalking motif. Call it every frame with 0..1 closeness and
+  // it schedules its own notes: the gap between them collapses as the shark
+  // closes in. 0 (or not calling it) stops the theme.
+  sharkTension(t: number): void {
+    if (!this.ctx || !this.out) return
+    if (t <= 0.02) {
+      this.sharkNext = 0
+      return
+    }
+    const now = this.ctx.currentTime
+    // Restart the pulse when it's been silent (or the clock ran away).
+    if (this.sharkNext === 0 || this.sharkNext > now + 1.5) this.sharkNext = now
+    if (now < this.sharkNext) return
+    const gap = 0.62 - 0.5 * t // ~0.6s at the edge of hearing, ~0.12s on top of you
+    this.sharkNext = now + gap
+    this.sharkLow = !this.sharkLow
+    // The classic menacing half-step, an octave below the cellos.
+    const f = this.sharkLow ? 49 : 51.9
+    const vol = 0.16 + 0.5 * t
+    this.tone('sawtooth', f, f * 0.985, Math.min(0.4, gap * 1.15), vol)
+    this.tone('triangle', f * 2, f * 1.96, Math.min(0.28, gap * 0.9), vol * 0.3)
+  }
+
+  // Jaws closing on you.
+  chomp(vol = 1): void {
+    this.noise('lowpass', 1800, 200, 0.18, 0.42 * vol)
+    this.tone('square', 150, 55, 0.16, 0.28 * vol)
+    this.noise('bandpass', 2800, 900, 0.05, 0.22 * vol, 0.05)
+  }
+
+  // Water churning while it drags you out.
+  thrash(vol = 1): void {
+    this.noise('lowpass', 2400, 400, 0.3, 0.28 * vol)
+    this.tone('sine', 240, 90, 0.2, 0.12 * vol)
+  }
+
+  // A weapon connecting with the shark.
+  sharkHurt(vol = 1): void {
+    this.noise('lowpass', 1200, 300, 0.14, 0.3 * vol)
+    this.tone('sawtooth', 300, 140, 0.18, 0.16 * vol)
+  }
+
+  // Big dumb death groan, then bubbles.
+  sharkDie(vol = 1): void {
+    this.tone('sawtooth', 200, 38, 0.8, 0.24 * vol)
+    this.noise('lowpass', 900, 110, 0.7, 0.3 * vol)
+    this.tone('sine', 700, 1300, 0.09, 0.08 * vol, 0.5)
+    this.tone('sine', 620, 1150, 0.09, 0.07 * vol, 0.68)
   }
 
   // --- ui ---

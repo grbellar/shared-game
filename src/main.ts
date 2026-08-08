@@ -6,6 +6,7 @@ import { Remotes } from './remotes'
 import { GameCamera } from './camera'
 import { initSettings, setSetting } from './settings'
 import { Webcam } from './webcam'
+import { FaceBar } from './facebar'
 import { TouchControls } from './touch'
 import { Chat } from './chat'
 import { Bubbles } from './bubbles'
@@ -23,9 +24,11 @@ import { initBuildHud } from './buildhud'
 import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
+import { Shark } from './shark'
 import { Cats } from './cats'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
+import { ItemWheel } from './itemwheel'
 import {
   setWeapon,
   setRide,
@@ -94,8 +97,10 @@ function renameCharacter(raw: string): string {
   return profile.name
 }
 const webcam = new Webcam()
+const faceBar = new FaceBar()
 webcam.onFrame = (dataUrl) => {
   setFace(player.group, dataUrl)
+  faceBar.set('me', dataUrl, profile.name)
   net.sendFace(dataUrl)
 }
 const settings = initSettings(
@@ -112,19 +117,26 @@ const settings = initSettings(
   },
   { current: profile.name, onChange: renameCharacter },
   (key, value) => {
-    if (key !== 'webcamFace') return
-    if (value) {
-      // Prompts for the camera. Denied (or no camera) flips the switch back.
-      void webcam.start().then((ok) => {
-        if (!ok) setSetting('webcamFace', false)
-      })
-    } else {
-      webcam.stop()
-      setFace(player.group, null)
-      net.sendFace('')
+    if (key === 'webcamBar') {
+      // Display-only: the strip shows whoever is broadcasting, whether or not
+      // your own camera is on.
+      faceBar.setEnabled(value)
+    } else if (key === 'webcamFace') {
+      if (value) {
+        // Prompts for the camera. Denied (or no camera) flips the switch back.
+        void webcam.start().then((ok) => {
+          if (!ok) setSetting('webcamFace', false)
+        })
+      } else {
+        webcam.stop()
+        setFace(player.group, null)
+        faceBar.remove('me')
+        net.sendFace('')
+      }
     }
   },
 )
+faceBar.setEnabled(settings.webcamBar)
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
@@ -145,7 +157,14 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces) => {
     voice.peerJoined(p.id)
   })
   // Our own face reappears for everyone else on the next captured frame.
-  faces.forEach((f) => remotes.setFace(f.id, f.d))
+  // Remote ids are minted fresh on reconnect, so the strip starts over too —
+  // our own tile survives, since it's keyed 'me' and refreshed by the capture
+  // loop rather than the network.
+  faceBar.clear()
+  faces.forEach((f) => {
+    remotes.setFace(f.id, f.d)
+    faceBar.set(f.id, f.d, remotes.nameOf(f.id))
+  })
   // Catch up on world damage. Silent: no debris bursts, and reconnect
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
@@ -161,9 +180,14 @@ net.onState = (p) => {
 }
 net.onLeave = (id) => {
   remotes.remove(id)
+  faceBar.remove(id)
   voice.peerLeft(id)
 }
-net.onFace = (id, dataUrl) => remotes.setFace(id, dataUrl)
+net.onFace = (id, dataUrl) => {
+  remotes.setFace(id, dataUrl)
+  if (dataUrl) faceBar.set(id, dataUrl, remotes.nameOf(id))
+  else faceBar.remove(id)
+}
 net.connect()
 
 type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
@@ -224,11 +248,62 @@ net.onArrow = (id, origin, dir, power) => {
   arrows.spawn(id, from, new THREE.Vector3(...dir), power)
 }
 const destruction = new Destruction(effects, net)
+const shark = new Shark(scene, net, effects, remotes, health)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
 buildHud.setMaterial(material)
 buildHud.setVisible(weapon === 'builder')
+
+// Everything equip goes through these two, whether it came from a hotkey or
+// a wheel wedge — so the sound, the build HUD, and the saved loadout can
+// never drift apart.
+function equipWeapon(next: Weapon): void {
+  weapon = next
+  bowDrawStart = -1
+  setWeapon(player.group, weapon)
+  sfx.equip(weapon !== 'none')
+  buildHud.setVisible(weapon === 'builder')
+  saveLoadout()
+}
+function equipRide(next: Ride): void {
+  ride = next
+  setRide(player.group, ride)
+  player.ride = ride
+  sfx.equip(ride !== 'none')
+  if (ride === 'ramsey') sfx.ramseyMount()
+  saveLoadout()
+}
+
+// Item wheels: hold E and sweep for what's in your hand, hold Q for how you
+// get around. Tap instead to pin the wheel open and click. The single-key
+// toggles below still work for muscle memory.
+new ItemWheel(
+  'KeyE',
+  'hand',
+  [
+    { id: 'none', icon: '✋', label: 'empty' },
+    { id: 'gun', icon: '🚀', label: 'G bazooka' },
+    { id: 'sword', icon: '🗡️', label: 'H katana' },
+    { id: 'shovel', icon: '⛏️', label: 'F shovel' },
+    { id: 'bow', icon: '🏹', label: 'B bow' },
+    { id: 'builder', icon: '🧱', label: 'T builder' },
+    { id: 'firework', icon: '🎆', label: 'K firework' },
+  ],
+  () => weapon,
+  (id) => equipWeapon(id as Weapon),
+)
+new ItemWheel(
+  'KeyQ',
+  'ride',
+  [
+    { id: 'none', icon: '🚶', label: 'on foot' },
+    { id: 'wheelchair', icon: '🦽', label: 'R wheelchair' },
+    { id: 'ramsey', icon: '🧍', label: 'Y ramsey' },
+  ],
+  () => ride,
+  (id) => equipRide(id as Ride),
+)
 player.onSplash = (x, z) => effects.spawnSplash(x, z)
 remotes.onSplash = (x, z) => {
   effects.spawnSplash(x, z)
@@ -239,6 +314,9 @@ effects.solidAt = (p) => blockAtPoint(p.x, p.y, p.z) !== undefined
 effects.onOwnExplosion = (center) => {
   destruction.rocketCrater(center)
   building.blastDamage(center)
+  // Same rule as craters: only the rocket's owner scores the hit, so one
+  // blast can't be counted once per client in the room.
+  shark.blast(center)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
@@ -396,6 +474,7 @@ function attack(): void {
           return
         }
       }
+      if (shark.swing(player.group.position, player.group.rotation.y, 34)) return
       const block = meleeBlockTarget()
       if (block) building.hit(block.gx, block.gy, block.gz, 1)
     }, SLASH_DURATION * 500)
@@ -414,6 +493,8 @@ function attack(): void {
         building.hit(block.gx, block.gy, block.gz, 2)
         return
       }
+      // A shovel to the nose counts too, and beats digging a hole in the sea.
+      if (shark.swing(player.group.position, player.group.rotation.y, 24)) return
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
       destruction.dig(
@@ -531,6 +612,7 @@ if (profile.voice) {
 }
 
 const chat = new Chat()
+shark.onDeath = () => chat.addMessage('🦈', 'blub…')
 const bubbles = new Bubbles(camera, renderer.domElement)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
@@ -563,76 +645,34 @@ setInterval(() => {
 }, 500)
 
 const keys = new Set<string>()
+const MASH_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'])
+let mashCount = 0
 window.addEventListener('keydown', (e) => {
   keys.add(e.code)
+  // Being dragged off by the shark: mash to fight your way out. Held keys
+  // don't count, so it has to be actual panic.
+  if (shark.draggingMe && !e.repeat && MASH_KEYS.has(e.code) && ++mashCount >= 4) {
+    mashCount = 0
+    shark.struggle()
+  }
   if (e.code === 'Enter' && !chat.isOpen) {
     e.preventDefault()
     chat.open()
   }
-  if (e.code === 'KeyG') {
-    weapon = weapon === 'gun' ? 'none' : 'gun'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyH') {
-    weapon = weapon === 'sword' ? 'none' : 'sword'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyF') {
-    weapon = weapon === 'shovel' ? 'none' : 'shovel'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyB') {
-    weapon = weapon === 'bow' ? 'none' : 'bow'
-    bowDrawStart = -1
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyT') {
-    weapon = weapon === 'builder' ? 'none' : 'builder'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(weapon === 'builder')
-    saveLoadout()
-  }
+  if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
+  if (e.code === 'KeyH') equipWeapon(weapon === 'sword' ? 'none' : 'sword')
+  if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
+  if (e.code === 'KeyB') equipWeapon(weapon === 'bow' ? 'none' : 'bow')
+  if (e.code === 'KeyT') equipWeapon(weapon === 'builder' ? 'none' : 'builder')
   if (weapon === 'builder' && /^Digit[1-4]$/.test(e.code)) {
     material = Number(e.code.slice(5)) - 1
     buildHud.setMaterial(material)
     saveLoadout()
   }
-  if (e.code === 'KeyK') {
-    weapon = weapon === 'firework' ? 'none' : 'firework'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
+  if (e.code === 'KeyK') equipWeapon(weapon === 'firework' ? 'none' : 'firework')
   if (e.code === 'KeyL') launchFireworks()
-  if (e.code === 'KeyR') {
-    ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
-    setRide(player.group, ride)
-    player.ride = ride
-    sfx.equip(ride !== 'none')
-    saveLoadout()
-  }
-  if (e.code === 'KeyY') {
-    ride = ride === 'ramsey' ? 'none' : 'ramsey'
-    setRide(player.group, ride)
-    player.ride = ride
-    sfx.equip(ride !== 'none')
-    if (ride === 'ramsey') sfx.ramseyMount()
-    saveLoadout()
-  }
+  if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
+  if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat)
@@ -709,6 +749,7 @@ function crossTo(gate: Gate): void {
   voice,
   arrows,
   health,
+  shark,
   effects,
   music,
   building,
@@ -719,6 +760,7 @@ function crossTo(gate: Gate): void {
   portals,
   gameCamera,
   blocks,
+  faceBar,
   scene,
   camera,
   draw: () => renderer.render(scene, camera),
@@ -790,6 +832,10 @@ renderer.setAnimationLoop(() => {
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   fireworks.update(dt)
   remotes.update(dt)
+  // After the player and remotes have moved: the shark chases current
+  // positions, and when it has you it overrides where you ended up.
+  shark.update(dt, player)
+  if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
   gameCamera.update(dt, keys, player, settings, fp)
   daynight.update(settings, camera.position, shadow ? 1 : 0)

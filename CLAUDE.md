@@ -119,6 +119,21 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   list and replays it in `welcome`; `world.heightAt` subtracts craters as an
   order-independent clamped sum, and prop destruction (trees/rocks caught in
   a crater) is derived from craters, never messaged. See `destruction.ts`.
+- client→server `shark`: the shark's `{x, z, ry, hp, st, grab}`, ~10x/sec.
+  Only ONE client sends it — the lowest player id in the room hosts the sim
+  and everyone else interpolates the stream (see `shark.ts`). It can't be
+  deterministic like the terrain, because it chases player positions that
+  arrive at different times on every client. A client that hears nothing for
+  2s assumes the elected host is running a build without the shark and falls
+  back to simulating privately (without broadcasting) — otherwise one stale
+  tab holding the lowest id makes the shark invisible for the whole room.
+- client→server `sharkhit`: damage dealt to the shark, relayed so the host can
+  apply it. Only the attacker sends — for rockets that means the owner only,
+  the same rule as craters, or one blast counts once per client in the room.
+
+What the shark does *to you* (bites, being dragged, the theme music) is
+decided locally on your own client and goes through `health.damage`, the same
+split as blast knockback.
 - client→server `bplace`: a built block, `{gx, gy, gz, m}` (grid cell +
   material). The server stores blocks in a Map keyed by cell (first placement
   wins, capped — over the cap it evicts the oldest by broadcasting a killing
@@ -142,9 +157,12 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   (`{d}`), sent ~5x/sec while the gear-panel toggle is on; `''` means the
   camera went off. The server validates the prefix and size, keeps the last
   frame per player for `welcome` replay, and relays it with the sender's id.
-  Clients paint it on the front face of that character's head. Opt-in every
-  session — the setting is deliberately never restored from localStorage. See
-  `webcam.ts` and `setFace` in `character.ts`.
+  Clients paint it on the front face of that character's head, and optionally
+  in a strip of squares along the top (`facebar.ts`, a second renderer over the
+  same frames — no extra traffic). The camera is opt-in every session: that
+  setting is deliberately never restored from localStorage, while the
+  display-only strip toggle is. See `webcam.ts` and `setFace` in
+  `character.ts`.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world
