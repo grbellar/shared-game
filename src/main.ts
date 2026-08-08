@@ -69,6 +69,7 @@ import { sfx } from './audio'
 import { Voice } from './voice'
 import { music } from './music'
 import { JumpScares } from './jumpscares'
+import { initPhysics, stepPhysics } from './physics'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -104,6 +105,9 @@ createRealm(scene)
 // The castle is a world block seeder, not a snapshot: initBlocks builds it
 // now and rebuilds it on every welcome, before the room's damage replays.
 initBlocks(scene, buildCastle)
+// Rigid-body physics for debris (physics.ts). Async — the WASM loads in the
+// background and effects.ts falls back to fake puffs until it's ready.
+void initPhysics(scene)
 const portals = new Portals(scene)
 
 const player = new Player(scene, color, profile.name)
@@ -1606,6 +1610,7 @@ renderer.setAnimationLoop(() => {
     ...skeletons.targets(),
     ...mobs.targets(),
   ])
+  stepPhysics(dt)
   arrows.update(dt, [
     ...remotes.stickTargets(),
     { id: 'me', group: player.group },
