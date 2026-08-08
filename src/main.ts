@@ -676,6 +676,7 @@ chat.onSend = (text) => {
   bubbles.show(player.group, text)
   startJabber(player.group, jabberFor(text))
   chat.addMessage(profile.name, text)
+  minimap.talkLocal()
 }
 net.onChat = (id, senderName, text) => {
   sfx.chat()
@@ -685,6 +686,7 @@ net.onChat = (id, senderName, text) => {
     startJabber(group, jabberFor(text))
   }
   chat.addMessage(senderName, text)
+  minimap.talk(id)
 }
 
 const status = document.getElementById('status')!
