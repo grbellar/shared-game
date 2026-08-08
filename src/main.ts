@@ -327,7 +327,16 @@ setBuildUi(weapon === 'builder')
 // Everything equip goes through these two, whether it came from a hotkey or
 // a wheel wedge — so the sound, the build HUD, and the saved loadout can
 // never drift apart.
+// Anything that ends a burst: swapping weapons, dying, losing focus, or an
+// overlay eating the mouseup. A stuck `firing` means the gun never stops, and
+// that is its own kind of hang.
+function ceaseFire(): void {
+  firing = false
+}
+window.addEventListener('blur', ceaseFire)
+
 function equipWeapon(next: Weapon): void {
+  ceaseFire()
   weapon = next
   bowDrawStart = -1
   // Putting the rifle away puts the scope away with it, latched or not.
@@ -719,6 +728,14 @@ function meleeBlockTarget(): BlockSpec | undefined {
 }
 
 let lastAttack = 0
+// Bullets chew the ground, but a crater is expensive: world.addCraters walks
+// every vertex of every terrain tile and recomputes its normals, and it also
+// costs a network message the whole room has to replay. One per round at the
+// fifty's rate of fire locks the game up. Gate them to roughly the shovel's
+// cadence — sustained fire still digs, it just digs at a sane rate.
+const BULLET_CRATER_MS = 500
+let lastBulletCrater = 0
+let bulletSpark = 0
 // Trigger held down. Only the M2 uses it; everything else is click-per-shot.
 let firing = false
 const SWORD_DAMAGE = 55 // two clean swings takes a head off
@@ -895,7 +912,6 @@ function attack(): void {
     effects.spawnTracer(from, hit.point)
     effects.spawnMuzzleFlash(from)
     net.sendFifty(from, hit.point)
-    effects.spawnDebris(hit.point, 0xffd27f, 3, 4)
     if (hit.player) {
       net.sendHit(hit.player, FIFTY_PLAYER_DAMAGE)
       sfx.hitmark()
@@ -905,9 +921,17 @@ function attack(): void {
     } else {
       // Into the dirt. Sustained fire is what flattens ground, so each round
       // only takes a small bite — but it does take one, and it's synced.
-      if (hit.point.y <= Math.max(heightAt(hit.point.x, hit.point.z), 0) + 0.3) {
+      if (
+        now - lastBulletCrater > BULLET_CRATER_MS &&
+        hit.point.y <= Math.max(heightAt(hit.point.x, hit.point.z), 0) + 0.3
+      ) {
+        lastBulletCrater = now
         destruction.bite(hit.point.x, hit.point.z, FIFTY_CRATER)
       }
+      // Dirt kicks up on the shots that don't dig, but only every third
+      // round: seven fresh meshes fourteen times a second is what actually
+      // costs, not the crater.
+      if (++bulletSpark % 3 === 0) effects.spawnDebris(hit.point, 0x6b4526, 3, 5)
       shark.blast(hit.point)
     }
   } else if (weapon === 'firework' && now - lastAttack > 450) {
@@ -1267,6 +1291,7 @@ function crossTo(gate: Gate): void {
   effects,
   music,
   building,
+  destruction,
   blockGhost,
   cats,
   meckies,
@@ -1424,7 +1449,8 @@ renderer.setAnimationLoop(() => {
     { id: 'me', group: player.group },
     ...skeletons.stickTargets(),
   ])
-  if (firing && weapon === 'm2' && !player.dead) attack()
+  if (firing && (weapon !== 'm2' || player.dead || chat.isOpen || map.isOpen)) ceaseFire()
+  if (firing && weapon === 'm2') attack()
   fireworks.update(dt)
   remotes.update(dt)
   // After the player and remotes have moved: the shark chases current

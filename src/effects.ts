@@ -57,6 +57,19 @@ interface Beam {
   grow: number
 }
 
+// Take a mesh out of the scene AND free what it holds on the GPU. Every
+// transient here mints its own geometry and material, so dropping the scene
+// reference alone leaks both — invisible until something spawns them fast
+// (the fifty, at fourteen rounds a second), at which point it degrades until
+// the frame gives out.
+function discard(scene: THREE.Scene, mesh: THREE.Mesh): void {
+  scene.remove(mesh)
+  mesh.geometry.dispose()
+  const mat = mesh.material
+  if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
+  else mat.dispose()
+}
+
 export class Effects {
   // Toggled by cheats.ts: every burst and fireball goes highlighter-coloured.
   paintball = false
@@ -201,7 +214,7 @@ export class Effects {
       const e = this.explosions[i]
       e.t += dt / EXPLOSION_TIME
       if (e.t >= 1) {
-        this.scene.remove(e.mesh)
+        discard(this.scene, e.mesh)
         this.explosions.splice(i, 1)
         continue
       }
@@ -214,7 +227,7 @@ export class Effects {
       const r = this.splashRings[i]
       r.t += dt / SPLASH_RING_TIME
       if (r.t >= 1) {
-        this.scene.remove(r.mesh)
+        discard(this.scene, r.mesh)
         this.splashRings.splice(i, 1)
         continue
       }
@@ -227,8 +240,7 @@ export class Effects {
       const b = this.beams[i]
       b.t += dt / b.life
       if (b.t >= 1) {
-        this.scene.remove(b.mesh)
-        b.mesh.geometry.dispose()
+        discard(this.scene, b.mesh)
         this.beams.splice(i, 1)
         continue
       }
@@ -241,7 +253,7 @@ export class Effects {
       const s = this.puffs[i]
       s.t += dt
       if (s.t >= s.lifetime) {
-        this.scene.remove(s.mesh)
+        discard(this.scene, s.mesh)
         this.puffs.splice(i, 1)
         continue
       }

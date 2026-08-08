@@ -8,6 +8,7 @@ import {
   buildKatana,
   buildShovel,
   buildSniper,
+  buildM2,
   SLASH_DURATION,
 } from './character'
 import { buildArrow } from './arrows'
@@ -47,7 +48,15 @@ const VIEW_POSES: Record<
   bow: { pos: [0.38, -0.34, -0.9], rot: [0, 0, 0.3], hand: [0, -0.02, 0] },
   builder: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12], hand: [0.05, 0, -0.4] },
   firework: { pos: [0.44, -0.34, -0.6], rot: [1.5, 0, 0.12], hand: [0.05, 0, -0.4] },
+  // Also built pointing +Z, so it flips like the bazooka. Sat low and close:
+  // it's a big lump of a gun and it would otherwise eat the whole screen.
+  m2: { pos: [0.36, -0.46, -0.75], rot: [0, Math.PI, 0] },
 }
+// Any weapon without an entry above. A missing pose used to be a TypeError
+// thrown out of setActive — which runs at the top of the game loop, so it took
+// the rest of the frame with it. A weapon nobody has posed yet should look
+// wrong, not cost a frame.
+const DEFAULT_VIEW_POSE = VIEW_POSES.gun
 const BOW_VIEW_SCALE = 0.85
 
 export class FirstPersonAim {
@@ -162,22 +171,24 @@ export class FirstPersonAim {
   // arm and weapon chop together around the hand.
   private buildHeld(weapon: string): THREE.Group {
     const held = new THREE.Group()
-    const pose = VIEW_POSES[weapon]
+    const pose = VIEW_POSES[weapon] ?? DEFAULT_VIEW_POSE
     held.position.set(...pose.pos)
     const model =
       weapon === 'gun'
         ? buildBazooka()
-        : weapon === 'sniper'
-          ? buildSniper()
-          : weapon === 'sword'
-            ? buildKatana()
-            : weapon === 'shovel'
-              ? buildShovel()
-              : weapon === 'builder'
-                ? buildBuilder()
-                : weapon === 'firework'
-                  ? buildFirework()
-                  : buildBow()
+        : weapon === 'm2'
+          ? buildM2()
+          : weapon === 'sniper'
+            ? buildSniper()
+            : weapon === 'sword'
+              ? buildKatana()
+              : weapon === 'shovel'
+                ? buildShovel()
+                : weapon === 'builder'
+                  ? buildBuilder()
+                  : weapon === 'firework'
+                    ? buildFirework()
+                    : buildBow()
     model.position.set(0, 0, 0) // strip the shoulder-mount offset baked into buildBazooka
     model.rotation.set(...pose.rot)
     held.add(model)
