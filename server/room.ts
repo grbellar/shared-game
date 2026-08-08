@@ -223,8 +223,17 @@ export class GameRoom extends DurableObject<Env> {
       // The victim announces their own death (see Health in CLAUDE.md), so
       // the sender IS the victim and `by` is whoever they say finished them.
       // Deaths to lava, sharks and gravity arrive with no `by` at all.
-      const victim = String(msg.victim).slice(0, 16)
-      const killer = msg.by === undefined ? '' : String(msg.by).slice(0, 16)
+      //
+      // The victim is taken from the socket, never from the payload: this is
+      // the one message that mutates stored room state (the killboard), so a
+      // stale or buggy client must not be able to announce somebody else's
+      // death or hang a kill on a player who isn't here.
+      const victim = att.id
+      if (String(msg.victim).slice(0, 16) !== victim) return
+      const by = msg.by === undefined ? '' : String(msg.by).slice(0, 16)
+      // An unknown killer id can't score — you can only be killed by someone
+      // in the room, and unbacked ids would push real players off the board.
+      const killer = this.states.has(by) ? by : ''
       const victimName = this.states.get(victim)?.name ?? 'someone'
       const killerName = killer ? (this.states.get(killer)?.name ?? 'someone') : ''
       this.broadcast(
