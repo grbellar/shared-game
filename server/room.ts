@@ -19,7 +19,11 @@ interface Block {
 
 const BLOCK_HP = [2, 4, 6, 8] // keep in sync with MATERIALS in src/blocks.ts
 const BLOCK_CAP = 1500
-const GRID_XZ_MAX = 110 // |gx|,|gz| cap — keep in sync with src/blocks.ts
+const GRID_XZ_MAX = 240 // |gx|,|gz| cap — keep in sync with src/blocks.ts
+// How far out world edits may reach, in world units. Has to cover every
+// island in src/world.ts (the far rock runs out to x=350) or craters out
+// there get silently clamped somewhere else and fork everyone's terrain.
+const EDIT_XZ_MAX = 380
 
 interface PlayerState {
   id: string
@@ -179,8 +183,8 @@ export class GameRoom extends DurableObject<Env> {
       if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(r) || !Number.isFinite(d))
         return
       const c: Crater = {
-        x: Math.max(-170, Math.min(170, x)),
-        z: Math.max(-170, Math.min(170, z)),
+        x: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, x)),
+        z: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, z)),
         r: Math.max(0.5, Math.min(8, r)),
         d: Math.max(0.1, Math.min(4, d)),
       }
@@ -271,8 +275,8 @@ export class GameRoom extends DurableObject<Env> {
         JSON.stringify({
           t: 'fw',
           id: att.id,
-          x: Math.max(-170, Math.min(170, x)),
-          z: Math.max(-170, Math.min(170, z)),
+          x: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, x)),
+          z: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, z)),
           c: Math.max(0, Math.min(15, c)),
         }),
         ws,
@@ -319,6 +323,21 @@ export class GameRoom extends DurableObject<Env> {
       const dmg = Number(msg.dmg)
       if (!Number.isFinite(dmg)) return
       this.broadcast(JSON.stringify({ t: 'sharkhit', dmg: Math.max(0, Math.min(200, dmg)) }), ws)
+    } else if (msg.t === 'land') {
+      // Rocket travel touching down. Relayed like `fire`: every client plays
+      // the impact, and each one shoves only itself. Nothing stored — the
+      // dust is gone in two seconds, so late joiners have nothing to catch up
+      // on. The crater it leaves comes through as an ordinary `crater`.
+      this.broadcast(
+        JSON.stringify({
+          t: 'land',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+        }),
+        ws,
+      )
     }
   }
 

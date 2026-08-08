@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createWorld } from './world'
+import { createWorld, landingSpotOn, nearestIsland, ISLANDS } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
@@ -24,6 +24,8 @@ import { Shark } from './shark'
 import { Cats } from './cats'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
+import { GameMap } from './map'
+import { RocketRide, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
 import {
   setWeapon,
   setRide,
@@ -291,6 +293,82 @@ net.onFire = (id, origin, dir) => {
   sfx.rocket(distVol(from))
   effects.spawnRocket(id, from, new THREE.Vector3(...dir))
 }
+// Rocket travel and the map that aims it. Tab opens the map; clicking a
+// friend or the island you're not on straps a rocket to your chair and throws
+// you over there. See rocket.ts for why the flight itself sends nothing.
+const rocket = new RocketRide(scene, effects)
+const map = new GameMap(touch.active)
+rocket.livePos = (id) => remotes.getGroup(id)?.position
+rocket.onLaunch = () => {
+  emotes.stop()
+  // The rocket goes on the chair, so you're in the chair. Never yanks anyone
+  // off Ramsey — he gets to come along.
+  if (ride === 'none') {
+    ride = 'wheelchair'
+    setRide(player.group, ride)
+    player.ride = ride
+    saveLoadout()
+  }
+  emotes.play('rocketfly')
+}
+// The hero pose is the whole reason for the trip, so it gets a moment where
+// movement can't cancel it — otherwise anyone still leaning on W (which is
+// most people, four seconds into a flight) snaps out of it on the first frame
+// and never sees the shot.
+const HERO_HOLD_MS = 1400
+let heroUntil = 0
+rocket.onLand = (pos) => {
+  emotes.play('hero')
+  heroUntil = performance.now() + HERO_HOLD_MS
+  effects.spawnImpact(pos)
+  sfx.impact()
+  net.sendLand(pos)
+  // Same rule the rockets follow: the traveller alone mints the world damage,
+  // so per-client divergence can never fork the terrain. No self-damage —
+  // sticking the landing is the whole point.
+  destruction.rocketCrater(pos)
+  building.blastDamage(pos)
+  shark.blast(pos)
+}
+net.onLand = (_id, at) => {
+  const pos = new THREE.Vector3(...at)
+  effects.spawnImpact(pos)
+  sfx.impact(distVol(pos, 110))
+  // Being someone's landing pad. Self-applied, exactly like blast knockback.
+  const d = player.group.position.distanceTo(pos)
+  if (d >= LAND_BLAST_RADIUS) return
+  const k = 1 - d / LAND_BLAST_RADIUS
+  const dir = player.group.position.clone().sub(pos)
+  dir.y = 0
+  if (dir.lengthSq() < 0.01) dir.set(0, 0, 1)
+  dir.normalize()
+  player.applyImpulse(dir.x * 22 * k, 8 + 10 * k, dir.z * 22 * k)
+  health.damage(LAND_BLAST_DAMAGE * k)
+}
+map.data = () => ({
+  me: {
+    x: player.group.position.x,
+    z: player.group.position.z,
+    ry: player.group.rotation.y,
+    color,
+    name: profile.name,
+  },
+  friends: remotes.list(),
+})
+map.onPickPlayer = (id) => {
+  const group = remotes.getGroup(id)
+  if (!group) return
+  rocket.launch(player, { x: group.position.x, z: group.position.z, followId: id })
+}
+map.onPickIsland = (index) => rocket.launch(player, landingSpotOn(index))
+// Keyboard shortcut for the trip everyone actually wants: the other island,
+// no map required.
+function rocketToNextIsland(): void {
+  const here = nearestIsland(player.group.position.x, player.group.position.z)
+  const next = (here + 1) % ISLANDS.length
+  if (rocket.launch(player, landingSpotOn(next))) chat.addMessage('🚀', `to ${ISLANDS[next].name}!`)
+}
+
 cats.onPet = (index) => net.sendPet(index)
 net.onPet = (index) => cats.pet(index)
 net.onSlash = (id) => {
@@ -480,7 +558,7 @@ function launchFireworks(): void {
 }
 window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
-  if (touch.active || chat.isOpen || emoteWheel.isOpen) return
+  if (touch.active || chat.isOpen || emoteWheel.isOpen || map.isOpen) return
   if (target !== document.body && target.tagName !== 'CANVAS') return
   // In first person the first click grabs the mouse; later clicks attack.
   if (fp.claimClickForLock()) return
@@ -661,6 +739,7 @@ window.addEventListener('keydown', (e) => {
     if (ride === 'ramsey') sfx.ramseyMount()
     saveLoadout()
   }
+  if (e.code === 'KeyJ') rocketToNextIsland()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat)
@@ -713,19 +792,26 @@ settings.onClockChange = (fromToggle) => {
   webcam,
   emotes,
   faceBar,
+  rocket,
+  map,
   scene,
   camera,
   draw: () => renderer.render(scene, camera),
 }
 
 const clock = new THREE.Clock()
+let remoteTrailT = 0
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05)
 
   gameCamera.addYaw(touch.consumeYaw())
   music.setEnabled(settings.music && !sfx.muted)
-  fp.paused = emoteWheel.isOpen // the wheel borrows the mouse
-  fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
+  fp.paused = emoteWheel.isOpen || map.isOpen // both borrow the mouse
+  // No aiming down a scope while the rocket flies you; the chase cam sells it.
+  fp.setActive(
+    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active,
+    weapon,
+  )
   fp.update(dt)
 
   player.update(
@@ -740,6 +826,9 @@ renderer.setAnimationLoop(() => {
     },
     gameCamera.yaw,
   )
+  // Straight after player.update, which left our position alone while flying:
+  // the arc writes it here, before anything else reads where we are.
+  rocket.update(dt, player)
   health.update(dt)
   voice.update(dt)
   player.group.userData.talk = voice.level // our own mouth flaps too
@@ -749,9 +838,23 @@ renderer.setAnimationLoop(() => {
       ? Math.min(1, (performance.now() - bowDrawStart) / BOW_DRAW_MS)
       : 0,
   )
-  // Moving, jumping or dying drops you out of an emote.
-  emotes.update(player.moving || player.dead || keys.has('Space') || touch.jumpHeld)
+  // Moving, jumping or dying drops you out of an emote — except while the
+  // rocket owns you, and for a beat after it sets you down, where the pose is
+  // the payoff rather than something you idly triggered. Dying still cancels.
+  const posed = rocket.active || performance.now() < heroUntil
+  emotes.update(
+    player.dead || (!posed && (player.moving || keys.has('Space') || touch.jumpHeld)),
+  )
   bubbles.update()
+  map.update()
+  // Everyone else's exhaust, off the pose that already rides in `state`.
+  // Throttled to the same cadence rocket.ts uses for our own trail, so a
+  // 144Hz screen doesn't smoke twice as hard as a 60Hz one.
+  remoteTrailT -= dt
+  if (remoteTrailT <= 0) {
+    remoteTrailT = 0.04
+    for (const pos of remotes.flying()) effects.spawnTrail(pos)
+  }
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   fireworks.update(dt)

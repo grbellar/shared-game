@@ -249,6 +249,25 @@ class Sfx {
     this.noise('highpass', 2000, 4000, 0.04, 0.3 * v)
   }
 
+  // Rocket travel leaving the ground: an ignition crack, then a long roar
+  // climbing away from you as the motor burns out (see rocket.ts).
+  rocketLaunch(): void {
+    this.noise('highpass', 400, 1800, 0.08, 0.4)
+    this.noise('lowpass', 320, 90, 1.9, 0.5, 0.03, 8000)
+    this.tone('sawtooth', 70, 260, 1.6, 0.16, 0.03)
+    this.tone('square', 140, 520, 1.6, 0.07, 0.05)
+  }
+
+  // ...and coming back down on top of somebody. Heavier and dirtier than a
+  // rocket blast: a thud you feel before the debris rattles down.
+  impact(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sine', 130, 24, 0.9, 0.6 * v)
+    this.noise('lowpass', 3600, 40, 1, 0.85 * v, 0, 8000)
+    this.noise('bandpass', 900, 300, 0.5, 0.3 * v, 0.1)
+  }
+
   slash(vol = 1): void {
     this.noise('bandpass', 800, 4200, 0.13, 0.22 * vol)
   }

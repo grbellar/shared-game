@@ -12,7 +12,9 @@ import { heightAt } from './world'
 // never derived from terrain — a crater dug under a block leaves it floating.
 
 export const BLOCK = 1.5 // under the ~2.0 jump apex, so one block is climbable
-export const GRID_XZ_MAX = 110 // |gx|,|gz| cap; keep in sync with server/room.ts
+// |gx|,|gz| cap; keep in sync with server/room.ts. Wide enough to cover every
+// island in world.ts — the far rock reaches x=350, which is cell 233.
+export const GRID_XZ_MAX = 240
 export const GY_MIN = -8
 export const GY_MAX = 40
 // One shared step threshold: floors up to STEP above the feet auto-step you

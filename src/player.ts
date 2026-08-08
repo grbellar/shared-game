@@ -45,6 +45,10 @@ export class Player {
   // Something has hold of you (the shark) — input is ignored and whatever
   // grabbed you owns your position until it lets go.
   grabbed = false
+  // Under rocket power (rocket.ts): same deal, but flying an arc instead of
+  // being dragged out to sea. Gravity, input and collision are all suspended
+  // — rocket.ts writes the position every frame until you land.
+  flying = false
   // Called when the respawn timer puts you back on the island.
   onRespawn: () => void = () => {}
   // Fired when we hit water hard enough to splash (main.ts spawns the effect).
@@ -98,6 +102,18 @@ export class Player {
   }
 
   update(dt: number, input: PlayerInput, camYaw: number): void {
+    // Riding a rocket: rocket.ts has already written where we are this frame,
+    // so just keep the rig ticking over (the flight pose is an emote, and the
+    // wheelchair's wheels should absolutely still be spinning up there).
+    if (this.flying && !this.dead) {
+      this.velX = this.velY = this.velZ = 0
+      this.moving = false
+      this.pose = 'stand'
+      this.walkPhase += dt * 3
+      animateCharacter(this.group, dt, this.walkPhase, 0, 'stand')
+      return
+    }
+
     // Clamped in a shark's mouth: it drives the position, you just flail.
     if (this.grabbed && !this.dead) {
       this.velX = this.velY = this.velZ = 0

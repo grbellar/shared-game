@@ -549,7 +549,9 @@ export class Shark {
     // Latching needs us to actually be at its mouth; once latched we stay
     // latched, since from then on the shark is the thing moving us. Without
     // the range check a respawn mid-grab would yank us back out to sea.
-    const down = player.dead || this.health.dead
+    // Under rocket power you're out of reach, and it must not keep a latch it
+    // already had — otherwise it tows the launch straight back into the sea.
+    const down = player.dead || this.health.dead || player.flying
     let gotMe =
       this.grabId === this.myId && !down && (this.wasGrabbingMe || flat < GRAB_R + 3)
 

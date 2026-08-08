@@ -25,8 +25,26 @@ export const EMOTES: EmoteDef[] = [
   { id: 'bow', icon: '🙇', label: 'bow', seconds: 2.4 },
 ]
 
+// How long a rocket trip takes, in two halves. These live here rather than in
+// rocket.ts because the flight POSE animates off them — it has to know when
+// you stop climbing and start diving — and this way the pose module never
+// imports the system that triggers it. rocket.ts flies the same numbers.
+export const ROCKET_ASCENT_S = 1.9
+export const ROCKET_DESCENT_S = 2.3
+export const ROCKET_FLIGHT_S = ROCKET_ASCENT_S + ROCKET_DESCENT_S
+
+// Poses the wheel never offers, played by a system instead of a player. They
+// still ride PlayerState.emote like any other emote, which is the whole point:
+// remotes replay a launch and a landing with no new message and no new code.
+export const POSES: EmoteDef[] = [
+  // A shade longer than the flight, so the pose can't lapse on the frame
+  // before touchdown and drop you into a walk cycle at 90 metres up.
+  { id: 'rocketfly', icon: '🚀', label: 'liftoff', seconds: ROCKET_FLIGHT_S + 0.4 },
+  { id: 'hero', icon: '🦸', label: 'landing', seconds: 2.8 },
+]
+
 export function emoteById(id: string): EmoteDef | undefined {
-  return EMOTES.find((e) => e.id === id)
+  return EMOTES.find((e) => e.id === id) ?? POSES.find((e) => e.id === id)
 }
 
 // Channels only emotes touch. animateCharacter rewrites limb rotations and
@@ -137,6 +155,54 @@ export function applyEmote(
     if (legs) {
       rig.legL.rotation.x = 0
       rig.legR.rotation.x = 0
+    }
+  } else if (id === 'rocketfly') {
+    // Strapped to the rocket: arms pinned back along the body, legs pressed
+    // together, and the whole character pitched — nose up off the pad, easing
+    // over the top, then diving at whatever you aimed at. Positive group X
+    // leans back (the bow emote hinges forward with negative), and the phase
+    // comes off the emote clock, so remotes fly the identical arc on their own
+    // timer without a single byte crossing the wire.
+    const climbing = t < ROCKET_ASCENT_S
+    const u = climbing
+      ? t / ROCKET_ASCENT_S
+      : Math.min(1, (t - ROCKET_ASCENT_S) / ROCKET_DESCENT_S)
+    group.rotation.x = climbing ? 0.9 - 0.55 * u : 0.35 - 1.25 * u
+    const shake = Math.sin(t * 26) * 0.05 // engine rattle
+    rig.body.rotation.z = shake
+    rig.head.rotation.x = -0.25
+    rig.armL.rotation.x = 0.95 + shake
+    rig.armR.rotation.x = 0.95 - shake
+    rig.armL.rotation.z = -0.2
+    rig.armR.rotation.z = 0.2
+    if (legs) {
+      rig.legL.rotation.x = 0.15
+      rig.legR.rotation.x = 0.15
+      rig.legL.rotation.z = 0.04
+      rig.legR.rotation.z = -0.04
+    }
+  } else if (id === 'hero') {
+    // The superhero landing, held while the dust clears. Two beats: dropped
+    // into the crater with a fist planted in the dirt, then chest up and both
+    // arms flung wide. In the chair the legs stay seated, which is the joke —
+    // you can absolutely stick a three-point landing sitting down.
+    const land = Math.max(0, 1 - t / 0.75) // 1 on impact, gone by 0.75s
+    const up = Math.min(1, Math.max(0, (t - 0.6) / 0.6))
+    rig.body.position.y -= 0.34 * land
+    rig.head.position.y -= 0.36 * land
+    rig.body.rotation.x = -0.5 * land + 0.2 * up
+    rig.head.rotation.x = -0.55 * land + 0.35 * up
+    // Right fist drives into the ground and stays low; left sweeps back on
+    // impact, then both open out into the pose.
+    rig.armR.rotation.x = 0.2 - 0.15 * land
+    rig.armR.rotation.z = 0.1 + 0.75 * up
+    rig.armL.rotation.x = 1.05 * land + 0.2 * up
+    rig.armL.rotation.z = -0.1 - 0.75 * up
+    if (legs) {
+      rig.legL.rotation.x = -1.2 * land
+      rig.legR.rotation.x = 0.4 * land
+      rig.legL.rotation.z = 0
+      rig.legR.rotation.z = 0
     }
   }
 }

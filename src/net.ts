@@ -55,6 +55,7 @@ type ServerMsg =
   | { t: 'face'; id: string; d: string }
   | { t: 'shark'; x: number; z: number; ry: number; hp: number; st: string; grab: string }
   | { t: 'sharkhit'; dmg: number }
+  | { t: 'land'; id: string; x: number; y: number; z: number }
 
 export class Net {
   id: string | null = null
@@ -90,6 +91,8 @@ export class Net {
   onFace: (id: string, dataUrl: string) => void = () => {}
   onShark: (s: SharkNetState) => void = () => {}
   onSharkHit: (dmg: number) => void = () => {}
+  // Somebody's rocket trip touching down near us.
+  onLand: (id: string, pos: [number, number, number]) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -159,6 +162,8 @@ export class Net {
         })
       } else if (msg.t === 'sharkhit') {
         this.onSharkHit(msg.dmg)
+      } else if (msg.t === 'land') {
+        if (msg.id !== this.id) this.onLand(msg.id, [msg.x, msg.y, msg.z])
       }
     }
     ws.onclose = () => {
@@ -217,6 +222,14 @@ export class Net {
   sendSharkHit(dmg: number): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'sharkhit', dmg }))
+  }
+
+  // Rocket travel touching down. The flight itself needs no message — the
+  // position stream and the pose in `state` already carry it — but the impact
+  // has to land on the same frame for everyone, so it gets its own.
+  sendLand(pos: { x: number; y: number; z: number }): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'land', x: pos.x, y: pos.y, z: pos.z }))
   }
 
   // Voice-chat signaling (offer/answer/ICE), relayed to one target peer.
