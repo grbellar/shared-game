@@ -176,7 +176,7 @@ class Sfx {
     const filter = this.ctx.createBiquadFilter()
     filter.type = 'bandpass'
     filter.frequency.value = formant
-    filter.Q.value = 2.2
+    filter.Q.value = 1.4 // wide enough to keep some body; the peak makes up the rest
     const g = this.ctx.createGain()
     g.gain.setValueAtTime(0.001, t0)
     g.gain.exponentialRampToValueAtTime(peak, t0 + 0.03)
@@ -196,22 +196,22 @@ class Sfx {
     const r = Math.random()
     if (r < 0.3) {
       // Winded two-puff pant: "hh-hh".
-      this.noise('bandpass', 1100, 700, 0.07, 0.07)
-      this.noise('bandpass', 900, 600, 0.09, 0.06, 0.12)
-    } else if (r < 0.42) {
+      this.noise('bandpass', 1100, 700, 0.08, 0.16)
+      this.noise('bandpass', 900, 600, 0.1, 0.14, 0.12)
+    } else if (r < 0.5) {
       // Effort grunt: "ugh".
-      this.voice(150 + Math.random() * 40, 75, 480, 0.16, 0.5)
-    } else if (r < 0.46) {
+      this.voice(160 + Math.random() * 50, 80, 480, 0.2, 1.5)
+    } else if (r < 0.58) {
       // He has opinions about this arrangement.
-      this.voice(115, 95, 420, 0.5, 0.4)
-      this.voice(95, 58, 380, 0.35, 0.35, 0.5)
+      this.voice(125, 100, 430, 0.5, 1.2)
+      this.voice(100, 60, 380, 0.4, 1.1, 0.5)
     }
   }
 
   // The "oof" of taking a rider's full weight on your back.
   ramseyMount(): void {
-    this.voice(170, 70, 520, 0.22, 0.55, 0.12)
-    this.noise('bandpass', 1000, 600, 0.08, 0.08, 0.12)
+    this.voice(180, 75, 520, 0.25, 1.5, 0.12)
+    this.noise('bandpass', 1000, 600, 0.09, 0.15, 0.12)
   }
 
   splash(vol = 1): void {
