@@ -34,7 +34,7 @@ createWorld(scene)
 
 const player = new Player(scene, color, name)
 const remotes = new Remotes(scene)
-initSettings()
+const settings = initSettings()
 
 const net = new Net()
 net.onWelcome = (players) => {
@@ -76,7 +76,7 @@ renderer.setAnimationLoop(() => {
 
   player.update(dt, keys, gameCamera.yaw)
   remotes.update(dt)
-  gameCamera.update(dt, keys, player)
+  gameCamera.update(dt, keys, player, settings)
 
   renderer.render(scene, camera)
 })

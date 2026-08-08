@@ -9,6 +9,7 @@ const WATER_LEVEL = -0.6 // you float waist-deep instead of sinking forever
 
 export class Player {
   group: THREE.Group
+  moving = false // WASD input this frame? The follow cam only recenters while true.
   private velY = 0
   private onGround = false
   private walkPhase = 0
@@ -62,6 +63,7 @@ export class Player {
       this.onGround = false
     }
 
+    this.moving = moving === 1
     animateCharacter(this.group, this.walkPhase, moving)
   }
 }
