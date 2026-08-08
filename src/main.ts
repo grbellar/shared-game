@@ -55,7 +55,7 @@ net.onState = (p) => remotes.upsert(p)
 net.onLeave = (id) => remotes.remove(id)
 net.connect()
 
-let weapon: 'none' | 'gun' | 'sword' = 'none'
+let weapon: 'none' | 'gun' | 'sword' | 'shovel' = 'none'
 let ride: 'none' | 'wheelchair' = 'none'
 
 setInterval(() => {
@@ -137,6 +137,18 @@ function attack(): void {
         }
       }
     }, SLASH_DURATION * 500)
+  } else if (weapon === 'shovel' && now - lastAttack > 600) {
+    lastAttack = now
+    startSlash(player.group)
+    net.sendSlash()
+    // Scoop out the ground in front at the bottom of the swing.
+    setTimeout(() => {
+      const ry = player.group.rotation.y
+      destruction.dig(
+        player.group.position.x + Math.sin(ry) * 1.6,
+        player.group.position.z + Math.cos(ry) * 1.6,
+      )
+    }, SLASH_DURATION * 500)
   }
 }
 window.addEventListener('mousedown', (e) => {
@@ -190,6 +202,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyH') {
     weapon = weapon === 'sword' ? 'none' : 'sword'
+    setWeapon(player.group, weapon)
+  }
+  if (e.code === 'KeyF') {
+    weapon = weapon === 'shovel' ? 'none' : 'shovel'
     setWeapon(player.group, weapon)
   }
   if (e.code === 'KeyR') {

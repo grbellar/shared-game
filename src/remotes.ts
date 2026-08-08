@@ -49,7 +49,8 @@ export class Remotes {
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
     remote.pose = p.pose ?? 'stand'
-    const weapon = p.weapon === 'gun' || p.weapon === 'sword' ? p.weapon : 'none'
+    const weapon =
+      p.weapon === 'gun' || p.weapon === 'sword' || p.weapon === 'shovel' ? p.weapon : 'none'
     if (remote.weapon !== weapon) {
       remote.weapon = weapon
       setWeapon(remote.group, weapon)

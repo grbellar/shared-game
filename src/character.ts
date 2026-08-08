@@ -113,10 +113,11 @@ export function animateCharacter(
     if (gun) gun.position.y = 1.8 - 0.3 * crouch
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
-  } else if (weapon === 'sword') {
+  } else if (weapon === 'sword' || weapon === 'shovel') {
     const t = (performance.now() - ((group.userData.attackStart as number) ?? 0)) / 1000
     if (t < SLASH_DURATION) {
       // Overhead chop: wind up behind the head, slice down past the knees.
+      // Doubles as the shovel's dig scoop.
       rig.armR.rotation.x = -2.8 + (t / SLASH_DURATION) * 3.6
       rig.armR.rotation.z = 0
     } else if (!riding) {
@@ -142,17 +143,20 @@ export function popHead(group: THREE.Group): THREE.Vector3 | null {
   return group.position.clone().add(new THREE.Vector3(0, 1.95, 0))
 }
 
-// Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand), or
-// 'none'. Synced over the network via the `weapon` field in PlayerState.
+// Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand),
+// 'shovel' (also right hand), or 'none'. Synced over the network via the
+// `weapon` field in PlayerState.
 export function setWeapon(group: THREE.Group, weapon: string): void {
   const existing = group.getObjectByName('weapon')
   if (existing) existing.parent!.remove(existing)
   group.userData.weapon = weapon
+  const armR = (group.userData.rig as { armR: THREE.Mesh }).armR
   if (weapon === 'gun') {
     group.add(buildBazooka())
   } else if (weapon === 'sword') {
-    const armR = (group.userData.rig as { armR: THREE.Mesh }).armR
     armR.add(buildKatana())
+  } else if (weapon === 'shovel') {
+    armR.add(buildShovel())
   }
 }
 
@@ -271,6 +275,28 @@ function buildKatana(): THREE.Group {
   tip.rotation.x = 0.22
   sword.add(handle, guard, blade, tip)
   return sword
+}
+
+// Garden shovel in the right hand, blade past the fist (local -Y) like the
+// katana, so the same overhead chop reads as a dig.
+function buildShovel(): THREE.Group {
+  const shovel = new THREE.Group()
+  shovel.name = 'weapon'
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8a5a2b, flatShading: true })
+  const steel = new THREE.MeshLambertMaterial({ color: 0x9aa0a8, flatShading: true })
+
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.08, 0.09), wood)
+  grip.position.y = -0.4
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.05, 0.07), wood)
+  shaft.position.y = -0.95
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.42, 0.06), steel)
+  blade.position.set(0, -1.62, 0.03)
+  blade.rotation.x = 0.16
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.06), steel)
+  tip.position.set(0, -1.86, 0.07)
+  tip.rotation.x = 0.16
+  shovel.add(grip, shaft, blade, tip)
+  return shovel
 }
 
 function makeNameTag(name: string): THREE.Sprite {

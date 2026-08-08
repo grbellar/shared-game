@@ -12,7 +12,7 @@ export interface PlayerState {
   color: string
   name: string
   pose: Pose
-  weapon: string // 'none' | 'gun' | 'sword'
+  weapon: string // 'none' | 'gun' | 'sword' | 'shovel'
   ride: string // 'none' | 'wheelchair'
 }
 
