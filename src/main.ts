@@ -3,6 +3,7 @@ import { createWorld } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
+import { GameCamera } from './camera'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -65,27 +66,15 @@ const keys = new Set<string>()
 window.addEventListener('keydown', (e) => keys.add(e.code))
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 
-let camYaw = 0
-const CAM_OFFSET = new THREE.Vector3()
-const CAM_TARGET = new THREE.Vector3()
-camera.position.set(0, 12, 14)
+const gameCamera = new GameCamera(camera)
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05)
 
-  if (keys.has('KeyQ')) camYaw += 2.2 * dt
-  if (keys.has('KeyE')) camYaw -= 2.2 * dt
-
-  player.update(dt, keys, camYaw)
+  player.update(dt, keys, gameCamera.yaw)
   remotes.update(dt)
-
-  CAM_OFFSET.set(Math.sin(camYaw) * 9, 6, Math.cos(camYaw) * 9)
-  CAM_TARGET.copy(player.group.position).add(CAM_OFFSET)
-  camera.position.lerp(CAM_TARGET, Math.min(1, 8 * dt))
-  CAM_TARGET.copy(player.group.position)
-  CAM_TARGET.y += 2
-  camera.lookAt(CAM_TARGET)
+  gameCamera.update(dt, keys, player)
 
   renderer.render(scene, camera)
 })
