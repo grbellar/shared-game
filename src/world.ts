@@ -36,6 +36,7 @@ const MAX_DIG = 5
 
 const craters: Crater[] = []
 const craterKeys = new Set<string>()
+let revision = 0
 const props: Prop[] = []
 const terrainGeos: THREE.BufferGeometry[] = []
 let worldScene: THREE.Scene | null = null
@@ -86,6 +87,12 @@ export function heightAt(x: number, z: number): number {
   return baseHeightAt(x, z) - Math.min(dig, MAX_DIG)
 }
 
+// Bumped whenever the terrain shape changes. Anything caching a picture of
+// the island (the minimap) watches this instead of wiring up a callback.
+export function terrainVersion(): number {
+  return revision
+}
+
 const DIRT = new THREE.Color(0x6b4526)
 const ZERO = new THREE.Vector2(0, 0)
 
@@ -103,6 +110,7 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
   }
   if (fresh.length === 0) return []
   craters.push(...fresh)
+  revision++
 
   for (const geo of terrainGeos) {
     const pos = geo.attributes.position

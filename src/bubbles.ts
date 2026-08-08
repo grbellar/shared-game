@@ -9,7 +9,10 @@ interface Bubble {
   expires: number
 }
 
-const LIFETIME_MS = 6000
+// How long a message hangs over someone's head. The minimap's talking
+// indicator runs off the same clock, so the blip stops pinging exactly when
+// the bubble pops.
+export const LIFETIME_MS = 6000
 const MAX_DISTANCE = 80
 
 export class Bubbles {
