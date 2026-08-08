@@ -129,11 +129,10 @@ export function animateCharacter(
 
   // Weapon overrides for the right arm.
   const weapon = group.userData.weapon as string | undefined
-  if (weapon === 'gun') {
-    // Bazooka arm holds the tube steady out front, and the tube itself
-    // follows the shoulder down through a squat.
-    const gun = group.getObjectByName('weapon')
-    if (gun) gun.position.y = 1.8 - 0.3 * crouch
+  if (weapon === 'gun' || weapon === 'bow') {
+    // Held steady out front, following the shoulder down through a squat.
+    const held = group.getObjectByName('weapon')
+    if (held) held.position.y = (weapon === 'gun' ? 1.8 : 1.5) - 0.3 * crouch
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
   } else if (weapon === 'sword' || weapon === 'shovel') {
@@ -186,6 +185,13 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
     armR.add(buildKatana())
   } else if (weapon === 'shovel') {
     armR.add(buildShovel())
+  } else if (weapon === 'bow') {
+    const bow = buildBow()
+    // The bow is built facing -Z (camera-space for the first-person view);
+    // the character faces +Z, so spin it around and hold it out front.
+    bow.rotation.y = Math.PI
+    bow.position.set(0.3, 1.5, 0.35)
+    group.add(bow)
   }
 }
 
@@ -327,6 +333,34 @@ export function buildShovel(): THREE.Group {
   tip.rotation.x = 0.16
   shovel.add(grip, shaft, blade, tip)
   return shovel
+}
+
+// Vertical bow facing -Z: limbs curve forward, string spans the tips. The
+// nock point (middle string vertex) slides toward +Z as it's drawn —
+// userData carries the string attribute and travel range so firstperson.ts
+// can animate the pull.
+export function buildBow(): THREE.Group {
+  const bow = new THREE.Group()
+  bow.name = 'weapon'
+  const wood = new THREE.MeshLambertMaterial({ color: 0x7a4f26, flatShading: true })
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.3, 0.09), wood)
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.06), wood)
+  upper.position.set(0, 0.42, -0.09)
+  upper.rotation.x = -0.3
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.06), wood)
+  lower.position.set(0, -0.42, -0.09)
+  lower.rotation.x = 0.3
+  const stringGeo = new THREE.BufferGeometry()
+  stringGeo.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute([0, 0.7, -0.18, 0, 0, -0.18, 0, -0.7, -0.18], 3),
+  )
+  const string = new THREE.Line(stringGeo, new THREE.LineBasicMaterial({ color: 0xe8e4d8 }))
+  bow.add(grip, upper, lower, string)
+  bow.userData.stringPos = stringGeo.attributes.position
+  bow.userData.nockRestZ = -0.18
+  bow.userData.nockPullZ = 0.32
+  return bow
 }
 
 function makeNameTag(name: string): THREE.Sprite {

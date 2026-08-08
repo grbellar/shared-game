@@ -27,6 +27,7 @@ type ServerMsg =
   | { t: 'kill'; victim: string }
   | { t: 'crater'; x: number; z: number; r: number; d: number }
   | { t: 'rtc'; from: string; data: unknown }
+  | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
 
 export class Net {
   id: string | null = null
@@ -40,6 +41,12 @@ export class Net {
   onKill: (victim: string) => void = () => {}
   onCrater: (c: Crater) => void = () => {}
   onRtc: (from: string, data: unknown) => void = () => {}
+  onArrow: (
+    id: string,
+    origin: [number, number, number],
+    dir: [number, number, number],
+    power: number,
+  ) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -74,6 +81,9 @@ export class Net {
       } else if (msg.t === 'rtc') {
         // Voice-chat signaling, already targeted at us by the server.
         this.onRtc(msg.from, msg.data)
+      } else if (msg.t === 'arrow') {
+        if (msg.id !== this.id)
+          this.onArrow(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz], msg.p)
       }
     }
     ws.onclose = () => {
@@ -122,5 +132,25 @@ export class Net {
   sendRtc(to: string, data: unknown): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'rtc', to, data }))
+  }
+
+  sendArrow(
+    origin: { x: number; y: number; z: number },
+    dir: { x: number; y: number; z: number },
+    power: number,
+  ): void {
+    if (!this.connected) return
+    this.ws!.send(
+      JSON.stringify({
+        t: 'arrow',
+        x: origin.x,
+        y: origin.y,
+        z: origin.z,
+        dx: dir.x,
+        dy: dir.y,
+        dz: dir.z,
+        p: power,
+      }),
+    )
   }
 }

@@ -83,6 +83,10 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 - client→server `slash`: katana swing (relayed for the animation). The
   attacker detects hits and sends `kill` with the victim's id; the server
   relays it to everyone, and each client plays the decapitation locally.
+- client→server `arrow`: a bow shot — origin, direction, and draw power;
+  relayed with the archer's id. Every client simulates the same ballistic
+  arc (`arrows.ts`); hits are cosmetic (arrows embed in terrain, props, and
+  players) and each client applies arrow knockback to itself only.
 - client→server `crater`: a bowl carved out of the terrain (rocket blast or
   shovel dig), `{x, z, r, d}`. Only the rocket's owner mints its crater (so
   per-client sim divergence can't fork the world). The server stores a capped

@@ -9,6 +9,7 @@ import { TouchControls } from './touch'
 import { Chat } from './chat'
 import { Bubbles } from './bubbles'
 import { Effects } from './effects'
+import { Arrows } from './arrows'
 import { Destruction } from './destruction'
 import { DayNight } from './daynight'
 import { FirstPersonAim } from './firstperson'
@@ -78,7 +79,7 @@ net.onLeave = (id) => {
 }
 net.connect()
 
-let weapon: 'none' | 'gun' | 'sword' | 'shovel' = 'none'
+let weapon: 'none' | 'gun' | 'sword' | 'shovel' | 'bow' = 'none'
 let ride: 'none' | 'wheelchair' = 'none'
 
 setInterval(() => {
@@ -97,6 +98,14 @@ setInterval(() => {
 }, 66)
 
 const effects = new Effects(scene)
+const arrows = new Arrows(scene)
+arrows.onHitMe = (vel) => player.applyImpulse(vel.x * 0.12, 2.5, vel.z * 0.12)
+arrows.onStick = (pos) => sfx.arrowStick(Math.max(0.25, distVol(pos, 60)))
+net.onArrow = (id, origin, dir, power) => {
+  const from = new THREE.Vector3(...origin)
+  sfx.bowShot(power * Math.max(0.2, distVol(from)))
+  arrows.spawn(id, from, new THREE.Vector3(...dir), power)
+}
 const destruction = new Destruction(effects, net)
 effects.onOwnExplosion = (center) => destruction.rocketCrater(center)
 net.onCrater = (c) => {
@@ -138,6 +147,27 @@ net.onKill = (victim) => {
     sfx.pop(group ? distVol(group.position) : 0.7)
     remotes.decapitate(victim, effects)
   }
+}
+
+// Bow: hold to draw, release to loose. Power scales with hold time.
+const BOW_DRAW_MS = 1100
+let bowDrawStart = -1
+function releaseBow(): void {
+  if (bowDrawStart < 0) return
+  const power = Math.max(0.2, Math.min(1, (performance.now() - bowDrawStart) / BOW_DRAW_MS))
+  bowDrawStart = -1
+  const ry = player.group.rotation.y
+  // First person looses along the crosshair; third person lobs gently up
+  // so the arc reads at mid range.
+  const dir = fp.isActive
+    ? fp.aimDir(new THREE.Vector3())
+    : new THREE.Vector3(Math.sin(ry), 0.1, Math.cos(ry)).normalize()
+  const origin = player.group.position
+    .clone()
+    .add(new THREE.Vector3(dir.x * 0.6, 1.6, dir.z * 0.6))
+  arrows.spawn('me', origin, dir, power)
+  net.sendArrow(origin, dir, power)
+  sfx.bowShot(power)
 }
 
 let lastAttack = 0
@@ -204,7 +234,16 @@ window.addEventListener('mousedown', (e) => {
   if (target !== document.body && target.tagName !== 'CANVAS') return
   // In first person the first click grabs the mouse; later clicks attack.
   if (fp.claimClickForLock()) return
+  if (weapon === 'bow') {
+    bowDrawStart = performance.now()
+    sfx.bowDraw()
+    return
+  }
   attack()
+})
+window.addEventListener('mouseup', () => {
+  if (weapon === 'bow') releaseBow()
+  else bowDrawStart = -1
 })
 if (touch.active) {
   const fire = document.createElement('div')
@@ -281,6 +320,12 @@ window.addEventListener('keydown', (e) => {
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
   }
+  if (e.code === 'KeyB') {
+    weapon = weapon === 'bow' ? 'none' : 'bow'
+    bowDrawStart = -1
+    setWeapon(player.group, weapon)
+    sfx.equip(weapon !== 'none')
+  }
   if (e.code === 'KeyR') {
     ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
     setRide(player.group, ride)
@@ -298,7 +343,7 @@ const daynight = new DayNight(scene)
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -323,8 +368,14 @@ renderer.setAnimationLoop(() => {
   voice.update(dt)
   player.group.userData.talk = voice.level // our own mouth flaps too
   voice.updateVolumes(player.group.position, (id) => remotes.getGroup(id)?.position)
+  fp.setDraw(
+    weapon === 'bow' && bowDrawStart >= 0
+      ? Math.min(1, (performance.now() - bowDrawStart) / BOW_DRAW_MS)
+      : 0,
+  )
   bubbles.update()
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
+  arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   remotes.update(dt)
   gameCamera.update(dt, keys, player, settings, fp)
   daynight.update(dt, settings, camera.position)

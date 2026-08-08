@@ -51,7 +51,9 @@ export class Remotes {
     remote.pose = p.pose ?? 'stand'
     remote.group.userData.talk = p.talk ?? 0 // animateCharacter opens the mouth
     const weapon =
-      p.weapon === 'gun' || p.weapon === 'sword' || p.weapon === 'shovel' ? p.weapon : 'none'
+      p.weapon === 'gun' || p.weapon === 'sword' || p.weapon === 'shovel' || p.weapon === 'bow'
+        ? p.weapon
+        : 'none'
     if (remote.weapon !== weapon) {
       remote.weapon = weapon
       setWeapon(remote.group, weapon)
@@ -82,6 +84,11 @@ export class Remotes {
   // Positions rockets can collide with.
   targets(): { id: string; pos: THREE.Vector3 }[] {
     return [...this.players.entries()].map(([id, r]) => ({ id, pos: r.group.position }))
+  }
+
+  // Groups arrows can stick into.
+  stickTargets(): { id: string; group: THREE.Group }[] {
+    return [...this.players.entries()].map(([id, r]) => ({ id, group: r.group }))
   }
 
   remove(id: string): void {

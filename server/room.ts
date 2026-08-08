@@ -97,6 +97,21 @@ export class GameRoom extends DurableObject<Env> {
       this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
     } else if (msg.t === 'kill') {
       this.broadcast(JSON.stringify({ t: 'kill', victim: String(msg.victim).slice(0, 16) }), ws)
+    } else if (msg.t === 'arrow') {
+      this.broadcast(
+        JSON.stringify({
+          t: 'arrow',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          dx: Number(msg.dx) || 0,
+          dy: Number(msg.dy) || 0,
+          dz: Number(msg.dz) || 0,
+          p: Math.max(0, Math.min(1, Number(msg.p) || 0)),
+        }),
+        ws,
+      )
     } else if (msg.t === 'crater') {
       const x = Number(msg.x)
       const z = Number(msg.z)

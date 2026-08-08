@@ -197,6 +197,24 @@ class Sfx {
     this.tone('square', 130, 55, 0.15, 0.08 * vol)
   }
 
+  // Wood-and-string creak of a bow coming to full draw.
+  bowDraw(): void {
+    this.noise('bandpass', 280, 850, 0.45, 0.09)
+    this.tone('sawtooth', 85, 140, 0.45, 0.045)
+  }
+
+  // String twang plus arrow whoosh; a fuller draw rings louder.
+  bowShot(vol = 1): void {
+    this.tone('triangle', 340, 70, 0.13, 0.3 * vol)
+    this.noise('highpass', 1200, 3200, 0.16, 0.14 * vol)
+  }
+
+  // Thunk of an arrow finding something to live in.
+  arrowStick(vol = 1): void {
+    this.tone('sine', 210, 60, 0.09, 0.28 * vol)
+    this.noise('lowpass', 900, 250, 0.06, 0.18 * vol)
+  }
+
   // Comedic decapitation pop.
   pop(vol = 1): void {
     this.tone('sine', 520, 70, 0.12, 0.35 * vol)
