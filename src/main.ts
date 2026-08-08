@@ -10,6 +10,7 @@ import { Chat } from './chat'
 import { Bubbles } from './bubbles'
 import { Effects } from './effects'
 import { Destruction } from './destruction'
+import { FirstPersonAim } from './firstperson'
 import { setWeapon, setRide, startSlash, popHead, SLASH_DURATION } from './character'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
@@ -111,7 +112,10 @@ function attack(): void {
   if (weapon === 'gun' && now - lastAttack > 800) {
     lastAttack = now
     const ry = player.group.rotation.y
-    const dir = new THREE.Vector3(Math.sin(ry), 0.06, Math.cos(ry)).normalize()
+    // Third person lobs slightly upward; first person fires along the crosshair.
+    const dir = fp.isActive
+      ? fp.aimDir(new THREE.Vector3())
+      : new THREE.Vector3(Math.sin(ry), 0.06, Math.cos(ry)).normalize()
     const origin = player.group.position
       .clone()
       .add(new THREE.Vector3(dir.x * 1.1, 1.8, dir.z * 1.1))
@@ -141,12 +145,15 @@ function attack(): void {
     lastAttack = now
     startSlash(player.group)
     net.sendSlash()
-    // Scoop out the ground in front at the bottom of the swing.
+    // Scoop at the bottom of the swing: the aimed ground point in first
+    // person (fall back to in-front when pointing at the sky), else just
+    // ahead of the feet.
     setTimeout(() => {
+      const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
       destruction.dig(
-        player.group.position.x + Math.sin(ry) * 1.6,
-        player.group.position.z + Math.cos(ry) * 1.6,
+        aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6,
+        aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6,
       )
     }, SLASH_DURATION * 500)
   }
@@ -155,6 +162,8 @@ window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
   if (touch.active || chat.isOpen) return
   if (target !== document.body && target.tagName !== 'CANVAS') return
+  // In first person the first click grabs the mouse; later clicks attack.
+  if (fp.claimClickForLock()) return
   attack()
 })
 if (touch.active) {
@@ -217,16 +226,18 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 
 const gameCamera = new GameCamera(camera)
+const fp = new FirstPersonAim(player, renderer.domElement)
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05)
 
   gameCamera.addYaw(touch.consumeYaw())
+  fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active)
 
   player.update(
     dt,
@@ -236,13 +247,14 @@ renderer.setAnimationLoop(() => {
       jump: keys.has('Space') || touch.jumpHeld,
       crouch: keys.has('KeyC'),
       sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+      strafe: fp.isActive,
     },
     gameCamera.yaw,
   )
   bubbles.update()
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   remotes.update(dt)
-  gameCamera.update(dt, keys, player, settings)
+  gameCamera.update(dt, keys, player, settings, fp)
 
   renderer.render(scene, camera)
 })

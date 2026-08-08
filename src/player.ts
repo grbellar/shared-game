@@ -15,6 +15,9 @@ export interface PlayerInput {
   jump: boolean
   crouch: boolean
   sprint: boolean
+  // First-person: keep facing under mouse control instead of turning
+  // toward the direction of travel.
+  strafe?: boolean
 }
 
 export class Player {
@@ -89,13 +92,16 @@ export class Player {
       const moveSpeed = this.riding ? RIDE_SPEED : SPEED
       this.group.position.x += dx * moveSpeed * speedMul * analog * dt
       this.group.position.z += dz * moveSpeed * speedMul * analog * dt
-      // Face the direction of travel, taking the short way around.
-      const target = Math.atan2(dx, dz)
-      const delta = Math.atan2(
-        Math.sin(target - this.group.rotation.y),
-        Math.cos(target - this.group.rotation.y),
-      )
-      this.group.rotation.y += delta * Math.min(1, 12 * dt)
+      // Face the direction of travel, taking the short way around —
+      // unless the mouse owns the facing (first-person strafe).
+      if (!input.strafe) {
+        const target = Math.atan2(dx, dz)
+        const delta = Math.atan2(
+          Math.sin(target - this.group.rotation.y),
+          Math.cos(target - this.group.rotation.y),
+        )
+        this.group.rotation.y += delta * Math.min(1, 12 * dt)
+      }
       moving = analog
       let cadence = (swimming ? 7 : crouching ? 8 : 11) * analog
       if (sprinting) cadence *= 1.5

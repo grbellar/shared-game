@@ -4,6 +4,7 @@
 
 export interface Settings {
   cameraFollow: boolean
+  firstPerson: boolean
 }
 
 const STORAGE_KEY = 'shared-game.settings'
@@ -12,9 +13,9 @@ function load(): Settings {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')
     const obj = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<string, unknown>
-    return { cameraFollow: obj.cameraFollow === true }
+    return { cameraFollow: obj.cameraFollow === true, firstPerson: obj.firstPerson === true }
   } catch {
-    return { cameraFollow: false }
+    return { cameraFollow: false, firstPerson: false }
   }
 }
 
@@ -68,6 +69,9 @@ export function initSettings(): Settings {
       justify-content: space-between;
       gap: 10px;
     }
+    .settings-row + .settings-row {
+      margin-top: 6px;
+    }
     .settings-switch {
       flex: none;
       width: 34px;
@@ -112,39 +116,44 @@ export function initSettings(): Settings {
   title.id = 'settings-title'
   title.textContent = 'settings'
 
-  const row = document.createElement('div')
-  row.className = 'settings-row'
+  const makeRow = (id: string, text: string, key: keyof Settings): HTMLDivElement => {
+    const row = document.createElement('div')
+    row.className = 'settings-row'
 
-  const label = document.createElement('span')
-  label.id = 'settings-camera-follow-label'
-  label.textContent = 'camera always behind me'
+    const label = document.createElement('span')
+    label.id = id
+    label.textContent = text
 
-  const toggle = document.createElement('button')
-  toggle.type = 'button'
-  toggle.className = 'settings-switch'
-  toggle.setAttribute('role', 'switch')
-  toggle.setAttribute('aria-labelledby', label.id)
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'settings-switch'
+    toggle.setAttribute('role', 'switch')
+    toggle.setAttribute('aria-labelledby', label.id)
 
-  const knob = document.createElement('span')
-  knob.className = 'settings-knob'
-  toggle.appendChild(knob)
+    const knob = document.createElement('span')
+    knob.className = 'settings-knob'
+    toggle.appendChild(knob)
 
-  const sync = (): void => {
-    toggle.classList.toggle('on', settings.cameraFollow)
-    toggle.setAttribute('aria-checked', String(settings.cameraFollow))
-  }
-  sync()
-
-  toggle.addEventListener('click', () => {
-    settings.cameraFollow = !settings.cameraFollow
-    persist(settings)
+    const sync = (): void => {
+      toggle.classList.toggle('on', settings[key])
+      toggle.setAttribute('aria-checked', String(settings[key]))
+    }
     sync()
-    // Drop focus so Space stays the jump key instead of re-clicking the switch.
-    toggle.blur()
-  })
 
-  // Clicking the label text toggles the switch too.
-  label.addEventListener('click', () => toggle.click())
+    toggle.addEventListener('click', () => {
+      settings[key] = !settings[key]
+      persist(settings)
+      sync()
+      // Drop focus so Space stays the jump key instead of re-clicking the switch.
+      toggle.blur()
+    })
+
+    // Clicking the label text toggles the switch too.
+    label.addEventListener('click', () => toggle.click())
+
+    row.append(label, toggle)
+    return row
+  }
 
   const setOpen = (open: boolean): void => {
     panel.hidden = !open
@@ -158,8 +167,11 @@ export function initSettings(): Settings {
     if (e.code === 'Escape' && !e.repeat) setOpen(panel.hidden)
   })
 
-  row.append(label, toggle)
-  panel.append(title, row)
+  panel.append(
+    title,
+    makeRow('settings-camera-follow-label', 'camera always behind me', 'cameraFollow'),
+    makeRow('settings-first-person-label', 'first-person aim (with weapon)', 'firstPerson'),
+  )
   document.body.append(gear, panel)
 
   return settings

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { Player } from './player'
 import type { Settings } from './settings'
+import type { FirstPersonAim } from './firstperson'
 
 const ORBIT_SPEED = 2.2
 const DISTANCE = 9
@@ -29,7 +30,21 @@ export class GameCamera {
     this.camYaw += delta
   }
 
-  update(dt: number, keys: Set<string>, player: Player, settings: Settings): void {
+  update(dt: number, keys: Set<string>, player: Player, settings: Settings, fp: FirstPersonAim): void {
+    if (fp.isActive) {
+      // Rigid eye camera: at the head, looking along the crosshair. Follows
+      // the crouch squat via the animation blend so ducking actually ducks.
+      const anim = player.group.userData.anim as { crouch: number } | undefined
+      const eyeY = player.group.position.y + 1.9 - 0.5 * (anim?.crouch ?? 0)
+      this.camera.position.set(player.group.position.x, eyeY, player.group.position.z)
+      fp.aimDir(this.lookTarget).add(this.camera.position)
+      this.camera.lookAt(this.lookTarget)
+      // Park the orbit yaw behind the player: movement input stays aligned
+      // with facing, and dropping out of first person doesn't snap the view.
+      this.camYaw = player.group.rotation.y + Math.PI
+      return
+    }
+
     if (keys.has('KeyQ')) this.camYaw += ORBIT_SPEED * dt
     if (keys.has('KeyE')) this.camYaw -= ORBIT_SPEED * dt
 
