@@ -138,6 +138,10 @@ export class GameMap {
   }
 
   open(): void {
+    // Normal play keeps the mouse locked for the camera. The wheels cope by
+    // sweeping a virtual cursor, but this is a flat panel you point at, so
+    // hand the real cursor back — clicking the canvas re-grabs it after.
+    document.exitPointerLock?.()
     // 30k terrain samples, paid once on the first open rather than on the
     // startup path — the islands never change shape, so it never runs again.
     if (!this.painted) {

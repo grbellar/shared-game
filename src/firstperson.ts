@@ -93,7 +93,9 @@ export class FirstPersonAim {
     document.body.append(this.crosshair)
 
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked || this.paused) return
+      // The pointer stays locked in third person too (the orbit camera uses
+      // it); only steer the player while first person is actually on.
+      if (!this.active || !this.locked || this.paused) return
       // Mouse right turns right: facing is (sin ry, cos ry), and with the
       // camera looking along it screen-right is -X, so yaw decreases.
       this.player.group.rotation.y -= e.movementX * SENSITIVITY
@@ -133,10 +135,9 @@ export class FirstPersonAim {
     // Hide our own model so we're not staring at the inside of our head.
     // Local-only: remote clients render this character normally.
     this.player.group.visible = !active
-    if (!active) {
-      this.pitch = 0
-      if (this.locked) document.exitPointerLock()
-    }
+    // Keep the pointer lock on the way out — the third-person camera mouse
+    // look takes over seamlessly. Esc is how you actually let go.
+    if (!active) this.pitch = 0
   }
 
   // Wrapper pinned at the grip point, in camera space: the weapon (posed)

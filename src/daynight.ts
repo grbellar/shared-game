@@ -27,6 +27,25 @@ const MOON_LIGHT = new THREE.Color(0x8fa8dc)
 const SUN_DISC_NOON = new THREE.Color(0xfff3b0)
 const SUN_DISC_LOW = new THREE.Color(0xff7a2a)
 
+// The shadow realm keeps the room's clock — it just doesn't care what it
+// says. No sun, no moon, permanent bruise-coloured dusk lit from below by
+// the lava. Blended in by a 0..1 factor so the crossing isn't a hard cut.
+const SHADOW_SKY = new THREE.Color(0x2c1040)
+const SHADOW_HEMI_SKY = new THREE.Color(0x7b4aa8)
+const SHADOW_HEMI_GROUND = new THREE.Color(0xa8481c) // lava bouncing off everything
+const SHADOW_LIGHT = new THREE.Color(0xff8a44)
+// A low raking key light instead of a sun — there is no sun out here, just a
+// glow on the horizon that never moves.
+const SHADOW_SUN_DIR = new THREE.Vector3(-0.72, 0.34, -0.4)
+const SHADOW_FOG_NEAR = 26
+const SHADOW_FOG_FAR = 195
+const ISLAND_FOG_NEAR = 40
+const ISLAND_FOG_FAR = 150
+
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t
+}
+
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v))
 }
@@ -58,6 +77,7 @@ export class DayNight {
   private hemi: THREE.HemisphereLight
   private dirLight: THREE.DirectionalLight
   private sky = new THREE.Color()
+  private tmp = new THREE.Vector3()
   private anchorHours: number | null = null
   private anchorMs = 0
   private running = true
@@ -127,7 +147,7 @@ export class DayNight {
     return (this.anchorHours + ((performance.now() - this.anchorMs) / 1000) * (24 / DAY_LENGTH_S)) % 24
   }
 
-  update(settings: Settings, camPos: THREE.Vector3): void {
+  update(settings: Settings, camPos: THREE.Vector3, shadow = 0): void {
     // First frame: seed from persisted settings until the welcome clock lands.
     if (this.anchorHours === null) this.setClock(settings.timeOfDay, settings.clockRun)
     const t = this.now()
@@ -140,20 +160,27 @@ export class DayNight {
       .set(Math.cos(theta) * 0.9, e, Math.cos(theta) * 0.4)
       .multiplyScalar(SKY_RADIUS)
     this.moon.position.copy(this.sun.position).multiplyScalar(-1)
-    this.sun.visible = e > -0.2
-    this.moon.visible = -e > -0.2
+    this.sun.visible = e > -0.2 && shadow < 0.5
+    this.moon.visible = -e > -0.2 && shadow < 0.5
     this.starDome.rotation.y = theta // stars drift as the night wears on
 
     const day = smooth(-0.05, 0.3, e)
     const dusk = clamp01(1 - Math.abs(e) / 0.25)
 
     this.sky.copy(NIGHT_SKY).lerp(DAY_SKY, day).lerp(DUSK_SKY, dusk * 0.65)
+    this.sky.lerp(SHADOW_SKY, shadow)
     ;(this.scene.background as THREE.Color).copy(this.sky)
-    ;(this.scene.fog as THREE.Fog).color.copy(this.sky)
+    const fog = this.scene.fog as THREE.Fog
+    fog.color.copy(this.sky)
+    fog.near = mix(ISLAND_FOG_NEAR, SHADOW_FOG_NEAR, shadow)
+    fog.far = mix(ISLAND_FOG_FAR, SHADOW_FOG_FAR, shadow)
 
-    this.hemi.intensity = 0.3 + 0.65 * day
-    this.hemi.color.copy(NIGHT_HEMI_SKY).lerp(DAY_HEMI_SKY, day)
-    this.hemi.groundColor.copy(NIGHT_HEMI_GROUND).lerp(DAY_HEMI_GROUND, day)
+    this.hemi.intensity = mix(0.3 + 0.65 * day, 1.15, shadow)
+    this.hemi.color.copy(NIGHT_HEMI_SKY).lerp(DAY_HEMI_SKY, day).lerp(SHADOW_HEMI_SKY, shadow)
+    this.hemi.groundColor
+      .copy(NIGHT_HEMI_GROUND)
+      .lerp(DAY_HEMI_GROUND, day)
+      .lerp(SHADOW_HEMI_GROUND, shadow)
 
     // One directional light plays both parts: warm sun by day, cold faint
     // moon by night. Positions are direction-only (target stays at origin).
@@ -166,9 +193,20 @@ export class DayNight {
       this.dirLight.color.copy(MOON_LIGHT)
       this.dirLight.intensity = 0.35
     }
+    // Out in the realm the light is the lava, not the sky: low, orange, and
+    // never going anywhere.
+    if (shadow > 0) {
+      this.dirLight.position.lerp(
+        this.tmp.copy(SHADOW_SUN_DIR).multiplyScalar(SKY_RADIUS),
+        shadow,
+      )
+      this.dirLight.color.lerp(SHADOW_LIGHT, shadow)
+      this.dirLight.intensity = mix(this.dirLight.intensity, 1.25, shadow)
+    }
     this.sunMat.color.copy(SUN_DISC_LOW).lerp(SUN_DISC_NOON, day)
 
-    const starA = 1 - smooth(-0.35, -0.05, e)
+    // Whatever the clock says, the realm's sky is always full of stars.
+    const starA = Math.max(1 - smooth(-0.35, -0.05, e), shadow)
     this.starMats[0].opacity = starA * 0.85
     this.starMats[1].opacity = starA
 

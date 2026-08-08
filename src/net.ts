@@ -2,7 +2,7 @@
 
 import type { Pose } from './character'
 import type { Crater } from './world'
-import type { BlockSpec } from './blocks'
+import type { BlockSpec, WorldDamage } from './blocks'
 import type { SharkNetState } from './shark'
 
 export interface PlayerState {
@@ -33,6 +33,9 @@ type ServerMsg =
       players: PlayerState[]
       craters?: Crater[]
       blocks?: BlockSpec[]
+      // Damage done to world-generated blocks (the castle), which the room
+      // remembers even though it never stored the blocks themselves.
+      wdmg?: WorldDamage[]
       clock?: { hours: number; running: boolean }
       faces?: Face[]
     }
@@ -63,6 +66,7 @@ export class Net {
     players: PlayerState[],
     craters: Crater[],
     blocks: BlockSpec[],
+    worldDamage: WorldDamage[],
     faces: Face[],
   ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
@@ -108,7 +112,13 @@ export class Net {
       }
       if (msg.t === 'welcome') {
         this.id = msg.id
-        this.onWelcome(msg.players, msg.craters ?? [], msg.blocks ?? [], msg.faces ?? [])
+        this.onWelcome(
+          msg.players,
+          msg.craters ?? [],
+          msg.blocks ?? [],
+          msg.wdmg ?? [],
+          msg.faces ?? [],
+        )
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
         // No self-echo check needed: the server never echoes to the sender.

@@ -69,6 +69,16 @@ export class Player {
     scene.add(this.group)
   }
 
+  // Put the player somewhere else outright, dead still. Portals use this;
+  // impulses must not survive a trip across the map.
+  teleport(x: number, y: number, z: number, ry: number): void {
+    this.group.position.set(x, y, z)
+    this.group.rotation.y = ry
+    this.velX = this.velY = this.velZ = 0
+    this.onGround = false
+    this.wasFloating = false
+  }
+
   // Shove from an explosion (or whatever else wants to throw the player).
   applyImpulse(x: number, y: number, z: number): void {
     this.velX += x

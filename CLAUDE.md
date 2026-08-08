@@ -50,6 +50,10 @@ build) is the only gate.
     modules.
   - `world.ts` — terrain, trees, props. `heightAt(x, z)` is the ground truth
     for ground height — use it for anything that stands on the terrain.
+    `addRegion()` hands a stretch of the map to a second landmass (see the
+    shadow realm below) and enrols its mesh for crater carving.
+  - `realm.ts` / `castle.ts` / `portal.ts` — the shadow realm, the castle in
+    it, and the two gates between there and the island. See below.
   - `character.ts` — the shared blocky character used for local and remote
     players.
   - `player.ts` — local movement, physics, input.
@@ -146,9 +150,20 @@ split as blast knockback.
   damage (katana 1, shovel 2, rocket blast 3 from the rocket's owner); hp is
   a commutative sum of relayed dmg, so clients converge regardless of hit
   order, and hits on missing blocks are no-ops. See `building.ts`/`blocks.ts`.
+  Hits on cells the server has no block for are relayed anyway and their
+  damage accumulates in a separate map — that's how the castle stays broken
+  (see The shadow realm). Relaying is safe precisely because a hit on nothing
+  is a no-op.
+  The builder's right-click is the one exception to chewing through hp: it
+  sends the block's whole remaining hp as one `bhit`, so the tool that builds
+  also unbuilds in a click. `building.aim()` is the single source of truth for
+  what's targeted — the ghost preview (`blockghost.ts`) and both clicks all go
+  through it, so what you see outlined is exactly what the click acts on.
+- `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
+  world-generated blocks. Replayed onto a freshly regenerated castle.
 - client→server `land`: a rocket trip touching down, `{x, y, z}`; relayed with
   the traveller's id. The *flight* sends nothing at all — your position already
-  streams ~15x/sec and the pose rides in `state.emote` (see below) — but the
+  streams ~15x/sec and the pose rides in `state.emote` (see above) — but the
   impact needs to land on the same frame everywhere, so the touchdown gets its
   own message. Everyone plays the blast; each client applies the shove and
   damage to itself only (never the traveller, who is busy sticking the
@@ -188,13 +203,49 @@ third means touching four things together:
   tiled edge to edge in x with matching segment size (3⅓ units) — two meshes
   over the same ground z-fight, and mismatched segments crack the seam.
 - Its own PRNG seed in the `scatterProps` call, never a shared stream.
-- `GRID_XZ_MAX` (`blocks.ts` *and* `server/room.ts`) and `EDIT_XZ_MAX`
-  (`server/room.ts`), or blocks out there get rejected and craters get
-  silently clamped somewhere else — which forks everyone's terrain.
+- Check it fits inside `GRID_XZ_MAX` (`blocks.ts` *and* `server/room.ts`) and
+  `WORLD_XZ_MAX` (`server/room.ts`). Both are currently sized for the shadow
+  realm at x≈1800, so there's plenty of room — but a landmass outside them
+  gets its blocks rejected and its craters silently clamped somewhere else,
+  which forks everyone's terrain.
 
 The shark is leashed to home (`ROAM_R` in `shark.ts`), the cats never leave it,
 and `randomSpawn` always puts you back there — so dying abroad sends you home.
 That's deliberate: home is the hub, the far rock is somewhere you travel to.
+Rocket travel is island-only; the shadow realm is the gate's job, so `J` and
+the map both refuse to launch while you're out there.
+
+## The shadow realm
+
+A second place, reached through the purple gate on the island's central hill.
+It is **not** a second scene and there is no realm field in the protocol — it
+is simply 1800 units east in the same world. The fog wall (150 units) and the
+camera's far plane (500) mean the island and the realm can never see each
+other, so blocks, craters, rockets, arrows, chat and remote players all keep
+working out there with no new machinery. Which world you are in is derived
+from your own position (`inRealm()`), so gate crossings, respawns and
+reconnects can't disagree about it.
+
+- `realm.ts` owns the basalt plateau (flat at `REALM_GROUND`, a whole number
+  of BLOCKs so the castle sits flush), the lava sea, and the skyline. The lava
+  reuses the island's water trick: `player.ts` floats you at `WATER_LEVEL`
+  over anything deeper, and `main.ts` burns you for it. Dying there respawns
+  you on the island, which is the only way back out other than the gate.
+- `castle.ts` generates ~3,900 ordinary building blocks into the shared grid.
+  It is **world state, not synced state**: every client runs the same function
+  and gets the same castle, so it never crosses the wire. That means *no
+  randomness in castle.ts, ever* — one `Math.random` would fork the world.
+  Only the damage syncs, through the ordinary `bhit` message.
+- `blocks.ts` renders through four `InstancedMesh`es, one per material — a few
+  thousand individual meshes would spend the whole frame on scene-graph
+  traversal. `resetBlocks()` is the welcome path: wipe everything, regenerate
+  the castle pristine, replay `wdmg` onto it, then place the player blocks.
+- Two rules the castle geometry has to respect, both learned the hard way:
+  steps rise exactly one course (1.5, just under the 1.55 auto-step), and
+  **nothing may sit in the cell directly above a step** — the head-height
+  check in `wallAt` will refuse the climb. That's why the keep's four flights
+  spiral around different inner walls instead of stacking, and why the
+  rampart's inner lane skips the stair footprints.
 
 ## Health
 

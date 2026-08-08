@@ -165,6 +165,17 @@ export class Remotes {
     if (headPos) effects.spawnHeadPop(headPos)
   }
 
+  // Where everyone is, in their own colour, and how loudly they're talking
+  // right now — for the minimap.
+  blips(): { id: string; pos: THREE.Vector3; color: string; talk: number }[] {
+    return [...this.players.entries()].map(([id, r]) => ({
+      id,
+      pos: r.group.position,
+      color: r.color,
+      talk: (r.group.userData.talk as number) ?? 0,
+    }))
+  }
+
   // Positions rockets can collide with.
   targets(): { id: string; pos: THREE.Vector3 }[] {
     return [...this.players.entries()].map(([id, r]) => ({ id, pos: r.group.position }))

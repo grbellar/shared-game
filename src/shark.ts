@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { heightAt } from './world'
+import { inRealm } from './realm'
 import { WATER_LEVEL, type Player } from './player'
 import type { Remotes } from './remotes'
 import type { Effects } from './effects'
@@ -374,6 +375,10 @@ export class Shark {
       // shark can't reach, and would otherwise leave it parked against the
       // beach forever instead of patrolling where people can see it.
       if (Math.hypot(c.pos.x, c.pos.z) < 50) continue
+      // ...and in THIS sea. Floating in the shadow realm's lava also puts you
+      // at WATER_LEVEL, and aggro has no range limit, so without this the
+      // shark sets off on an 1800-unit swim across the void.
+      if (inRealm(c.pos.x, c.pos.z)) continue
       const d = Math.hypot(c.pos.x - this.pos.x, c.pos.z - this.pos.y)
       if (d < preyD) {
         preyD = d

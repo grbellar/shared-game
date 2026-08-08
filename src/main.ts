@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createWorld, landingSpotOn, nearestIsland, ISLANDS } from './world'
+import { createWorld, heightAt, landingSpotOn, nearestIsland, ISLANDS } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
@@ -15,15 +15,22 @@ import { Arrows } from './arrows'
 import { Destruction } from './destruction'
 import { DayNight } from './daynight'
 import { Building } from './building'
+import { createRealm, inRealm } from './realm'
+import { buildCastle } from './castle'
+import { Portals, type Gate } from './portal'
+import * as blocks from './blocks'
 import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
+import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
+import { Minimap } from './minimap'
 import { Health } from './health'
 import { Shark } from './shark'
 import { Cats } from './cats'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
+import { ItemWheel } from './itemwheel'
 import { GameMap } from './map'
 import { RocketRide, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
 import {
@@ -69,7 +76,11 @@ const camera = new THREE.PerspectiveCamera(70, VIEW_W / VIEW_H, 0.1, 500)
 // In the scene graph so camera children (the first-person view model) render.
 scene.add(camera)
 createWorld(scene)
-initBlocks(scene)
+createRealm(scene)
+// The castle is a world block seeder, not a snapshot: initBlocks builds it
+// now and rebuilds it on every welcome, before the room's damage replays.
+initBlocks(scene, buildCastle)
+const portals = new Portals(scene)
 
 const player = new Player(scene, color, profile.name)
 const remotes = new Remotes(scene)
@@ -130,6 +141,13 @@ const settings = initSettings(
   },
 )
 faceBar.setEnabled(settings.webcamBar)
+// Camera was on last session: restart it. Denied (or camera gone) flips the
+// switch back off, same as toggling it by hand.
+if (settings.webcamFace) {
+  void webcam.start().then((ok) => {
+    if (!ok) setSetting('webcamFace', false)
+  })
+}
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
@@ -142,7 +160,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, faces) => {
+net.onWelcome = (players, craters, blocks, worldDamage, faces) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -162,7 +180,9 @@ net.onWelcome = (players, craters, blocks, faces) => {
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
   // Blocks get a full reset instead: some may have died while we were away.
-  building.replay(blocks)
+  // The castle regenerates pristine inside this call, then takes the room's
+  // accumulated damage back on top.
+  building.replay(blocks, worldDamage)
 }
 net.onState = (p) => {
   const isNew = !remotes.getGroup(p.id)
@@ -244,7 +264,65 @@ const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
 buildHud.setMaterial(material)
-buildHud.setVisible(weapon === 'builder')
+const blockGhost = new BlockGhost(scene)
+// Everything that only makes sense with the builder out: the material chips
+// and (on touch, which has no right button) the break key.
+function setBuildUi(v: boolean): void {
+  buildHud.setVisible(v)
+  const breakBtn = document.getElementById('touch-break')
+  if (breakBtn) breakBtn.style.display = v ? 'flex' : 'none'
+}
+setBuildUi(weapon === 'builder')
+
+// Everything equip goes through these two, whether it came from a hotkey or
+// a wheel wedge — so the sound, the build HUD, and the saved loadout can
+// never drift apart.
+function equipWeapon(next: Weapon): void {
+  weapon = next
+  bowDrawStart = -1
+  setWeapon(player.group, weapon)
+  sfx.equip(weapon !== 'none')
+  setBuildUi(weapon === 'builder')
+  saveLoadout()
+}
+function equipRide(next: Ride): void {
+  ride = next
+  setRide(player.group, ride)
+  player.ride = ride
+  sfx.equip(ride !== 'none')
+  if (ride === 'ramsey') sfx.ramseyMount()
+  saveLoadout()
+}
+
+// Item wheels: hold E and sweep for what's in your hand, hold Q for how you
+// get around. Tap instead to pin the wheel open and click. The single-key
+// toggles below still work for muscle memory.
+const handWheel = new ItemWheel(
+  'KeyE',
+  'hand',
+  [
+    { id: 'none', icon: '✋', label: 'empty' },
+    { id: 'gun', icon: '🚀', label: 'G bazooka' },
+    { id: 'sword', icon: '🗡️', label: 'H katana' },
+    { id: 'shovel', icon: '⛏️', label: 'F shovel' },
+    { id: 'bow', icon: '🏹', label: 'B bow' },
+    { id: 'builder', icon: '🧱', label: 'T builder' },
+    { id: 'firework', icon: '🎆', label: 'K firework' },
+  ],
+  () => weapon,
+  (id) => equipWeapon(id as Weapon),
+)
+const rideWheel = new ItemWheel(
+  'KeyQ',
+  'ride',
+  [
+    { id: 'none', icon: '🚶', label: 'on foot' },
+    { id: 'wheelchair', icon: '🦽', label: 'R wheelchair' },
+    { id: 'ramsey', icon: '🧍', label: 'Y ramsey' },
+  ],
+  () => ride,
+  (id) => equipRide(id as Ride),
+)
 player.onSplash = (x, z) => effects.spawnSplash(x, z)
 remotes.onSplash = (x, z) => {
   effects.spawnSplash(x, z)
@@ -302,13 +380,9 @@ rocket.livePos = (id) => remotes.getGroup(id)?.position
 rocket.onLaunch = () => {
   emotes.stop()
   // The rocket goes on the chair, so you're in the chair. Never yanks anyone
-  // off Ramsey — he gets to come along.
-  if (ride === 'none') {
-    ride = 'wheelchair'
-    setRide(player.group, ride)
-    player.ride = ride
-    saveLoadout()
-  }
+  // off Ramsey — he gets to come along. Goes through equipRide so the ride
+  // wheel's selection follows along too.
+  if (ride === 'none') equipRide('wheelchair')
   emotes.play('rocketfly')
 }
 // The hero pose is the whole reason for the trip, so it gets a moment where
@@ -355,15 +429,32 @@ map.data = () => ({
   },
   friends: remotes.list(),
 })
+// Rocket travel is island business. The shadow realm is 1800 units east and
+// the gate is how you leave it — a rocket out of there would fly a fifteen-
+// hundred-unit arc and quietly bypass the whole portal.
+function grounded(): boolean {
+  if (!inRealm(player.group.position.x, player.group.position.z)) return true
+  chat.addMessage('🚀', 'no launching from the realm — take the gate')
+  return false
+}
 map.onPickPlayer = (id) => {
   const group = remotes.getGroup(id)
-  if (!group) return
+  if (!group || !grounded()) return
+  // Never at someone who's in the realm either: the arc would drop you
+  // through the lava sea with no gate in sight.
+  if (inRealm(group.position.x, group.position.z)) {
+    chat.addMessage('🚀', `${remotes.nameOf(id)} is in the realm — take the gate`)
+    return
+  }
   rocket.launch(player, { x: group.position.x, z: group.position.z, followId: id })
 }
-map.onPickIsland = (index) => rocket.launch(player, landingSpotOn(index))
+map.onPickIsland = (index) => {
+  if (grounded()) rocket.launch(player, landingSpotOn(index))
+}
 // Keyboard shortcut for the trip everyone actually wants: the other island,
 // no map required.
 function rocketToNextIsland(): void {
+  if (!grounded()) return
   const here = nearestIsland(player.group.position.x, player.group.position.z)
   const next = (here + 1) % ISLANDS.length
   if (rocket.launch(player, landingSpotOn(next))) chat.addMessage('🚀', `to ${ISLANDS[next].name}!`)
@@ -549,6 +640,37 @@ function attack(): void {
   }
 }
 
+// Where the builder is pointing this instant: the cell a click fills and the
+// block it would knock out. The ghost draws it and both clicks act on it, so
+// there's no second copy of the aiming math to drift.
+function buildAim(): ReturnType<Building['aim']> {
+  if (weapon !== 'builder' || player.dead) return null
+  return building.aim(
+    player.group.position,
+    player.group.rotation.y,
+    fp.isActive ? fp.aimedDigPoint() : null,
+  )
+}
+
+// Right-click with the builder equipped: pop out the block the cage is around.
+let lastBreak = 0
+function breakBlock(): void {
+  const now = performance.now()
+  if (player.dead || now - lastBreak < 200) return
+  lastBreak = now
+  emotes.stop()
+  fp.swing()
+  startSlash(player.group)
+  net.sendSlash()
+  if (!building.breakAt(
+    player.group.position,
+    player.group.rotation.y,
+    fp.isActive ? fp.aimedDigPoint() : null,
+  )) {
+    sfx.slash(0.25) // whiffed at empty air
+  }
+}
+
 // Light every firework we've planted. They also self-launch when the fuse
 // burns down, so touch players (no keyboard) still get the show.
 function launchFireworks(): void {
@@ -560,8 +682,21 @@ window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
   if (touch.active || chat.isOpen || emoteWheel.isOpen || map.isOpen) return
   if (target !== document.body && target.tagName !== 'CANVAS') return
-  // In first person the first click grabs the mouse; later clicks attack.
+  // The first click grabs the mouse (both camera modes); later clicks attack.
   if (fp.claimClickForLock()) return
+  if (!document.pointerLockElement) {
+    // Chrome enforces a short cooldown after Esc; a too-quick click rejects
+    // and the one after lands. Keep the console quiet about it.
+    const lock = renderer.domElement.requestPointerLock() as unknown as Promise<void> | undefined
+    void lock?.catch(() => {})
+    return
+  }
+  // Right-click is the builder's eraser. Every other tool ignores it — it
+  // used to fire whatever you were holding, which nobody meant to do.
+  if (e.button !== 0) {
+    if (e.button === 2 && weapon === 'builder') breakBlock()
+    return
+  }
   if (weapon === 'bow') {
     bowDrawStart = performance.now()
     sfx.bowDraw()
@@ -572,6 +707,13 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', () => {
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
+})
+// Third-person mouse look: locked mouse movement orbits the camera — unless
+// first person owns it (it turns the player instead) or a wheel is sweeping.
+window.addEventListener('mousemove', (e) => {
+  if (!document.pointerLockElement || fp.isActive) return
+  if (emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen) return
+  gameCamera.addLook(e.movementX, e.movementY)
 })
 // Right-click is reserved for in-game actions; the chat input keeps the
 // browser menu so paste still works.
@@ -586,6 +728,15 @@ if (touch.active) {
     e.preventDefault()
     attack()
   })
+  // Touch has no right button, so the eraser gets its own key — shown only
+  // while the builder is out (setBuildUi owns that).
+  const dig = document.createElement('div')
+  dig.id = 'touch-break'
+  dig.textContent = '⛏'
+  dig.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    breakBlock()
+  })
   const mic = document.createElement('div')
   mic.id = 'mic-open'
   mic.textContent = '🎤'
@@ -597,7 +748,8 @@ if (touch.active) {
       sfx.equip(on)
     })
   })
-  document.body.append(fire, mic)
+  document.body.append(fire, dig, mic)
+  setBuildUi(weapon === 'builder') // the break key only exists now
 }
 
 // Voice chat is ON by default: the mic starts as soon as you join (browser
@@ -639,6 +791,7 @@ chat.onSend = (text) => {
   bubbles.show(player.group, text)
   startJabber(player.group, jabberFor(text))
   chat.addMessage(profile.name, text)
+  minimap.talkLocal()
 }
 net.onChat = (id, senderName, text) => {
   sfx.chat()
@@ -648,6 +801,7 @@ net.onChat = (id, senderName, text) => {
     startJabber(group, jabberFor(text))
   }
   chat.addMessage(senderName, text)
+  minimap.talk(id)
 }
 
 const status = document.getElementById('status')!
@@ -655,8 +809,9 @@ setInterval(() => {
   const others = remotes.count
   const mute = sfx.muted ? ' · 🔇 (M)' : ''
   const mic = voice.enabled ? ' · 🎤 live (V)' : ''
+  const where = shadow ? ' · 🌑 shadow realm' : ''
   status.textContent = net.connected
-    ? `${profile.name} · ${others} other ${others === 1 ? 'player' : 'players'} here${mute}${mic}`
+    ? `${profile.name} · ${others} other ${others === 1 ? 'player' : 'players'} here${where}${mute}${mic}`
     : `${profile.name} · connecting...${mute}${mic}`
 }, 500)
 
@@ -675,70 +830,20 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault()
     chat.open()
   }
-  if (e.code === 'KeyG') {
-    weapon = weapon === 'gun' ? 'none' : 'gun'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyH') {
-    weapon = weapon === 'sword' ? 'none' : 'sword'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyF') {
-    weapon = weapon === 'shovel' ? 'none' : 'shovel'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyB') {
-    weapon = weapon === 'bow' ? 'none' : 'bow'
-    bowDrawStart = -1
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyT') {
-    weapon = weapon === 'builder' ? 'none' : 'builder'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(weapon === 'builder')
-    saveLoadout()
-  }
+  if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
+  if (e.code === 'KeyH') equipWeapon(weapon === 'sword' ? 'none' : 'sword')
+  if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
+  if (e.code === 'KeyB') equipWeapon(weapon === 'bow' ? 'none' : 'bow')
+  if (e.code === 'KeyT') equipWeapon(weapon === 'builder' ? 'none' : 'builder')
   if (weapon === 'builder' && /^Digit[1-4]$/.test(e.code)) {
     material = Number(e.code.slice(5)) - 1
     buildHud.setMaterial(material)
     saveLoadout()
   }
-  if (e.code === 'KeyK') {
-    weapon = weapon === 'firework' ? 'none' : 'firework'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
+  if (e.code === 'KeyK') equipWeapon(weapon === 'firework' ? 'none' : 'firework')
   if (e.code === 'KeyL') launchFireworks()
-  if (e.code === 'KeyR') {
-    ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
-    setRide(player.group, ride)
-    player.ride = ride
-    sfx.equip(ride !== 'none')
-    saveLoadout()
-  }
-  if (e.code === 'KeyY') {
-    ride = ride === 'ramsey' ? 'none' : 'ramsey'
-    setRide(player.group, ride)
-    player.ride = ride
-    sfx.equip(ride !== 'none')
-    if (ride === 'ramsey') sfx.ramseyMount()
-    saveLoadout()
-  }
+  if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
+  if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
   if (e.code === 'KeyJ') rocketToNextIsland()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
@@ -752,6 +857,7 @@ window.addEventListener('keyup', (e) => keys.delete(e.code))
 
 const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
+const minimap = new Minimap(touch.active, color)
 const daynight = new DayNight(scene)
 
 // The day/night clock is shared: the room's clock arrives in welcome (and on
@@ -767,6 +873,39 @@ settings.onClockChange = (fromToggle) => {
   if (fromToggle) settings.timeOfDay = daynight.now()
   daynight.setClock(settings.timeOfDay, settings.clockRun)
   net.sendClock(settings.timeOfDay, settings.clockRun)
+}
+
+// Crossing over. Which world you're in is derived from your own position —
+// no realm field in the protocol, no second scene — so walking through a
+// gate, respawning out of the lava, and reconnecting all agree by
+// construction. `shadow` drives the sky, the fog, the burn, and the banner.
+const flash = document.getElementById('flash')!
+const banner = document.getElementById('realm-banner')!
+let shadow = inRealm(player.group.position.x, player.group.position.z)
+let burnT = 0
+
+// (Re)start a CSS animation: tear it off, force a reflow, put it back.
+function replayAnim(el: HTMLElement, anim: string): void {
+  el.style.animation = 'none'
+  void el.offsetWidth
+  el.style.animation = anim
+}
+
+function announce(title: string): void {
+  banner.textContent = title
+  replayAnim(flash, 'portal-flash 0.7s ease-out')
+  replayAnim(banner, 'realm-banner 3.2s ease forwards')
+}
+
+function crossTo(gate: Gate): void {
+  const ex = gate.x
+  const ez = gate.z + gate.exitZ
+  player.teleport(ex, heightAt(ex, ez), ez, gate.exitRy)
+  gameCamera.snapTo(player)
+  sfx.warp()
+  announce(gate.name)
+  // Let the keep introduce itself once the fog gives it up.
+  if (inRealm(ex, ez)) setTimeout(() => sfx.toll(), 950)
 }
 
 // Debug handle so agents (and curious friends) can poke the game from the
@@ -787,10 +926,14 @@ settings.onClockChange = (fromToggle) => {
   effects,
   music,
   building,
+  blockGhost,
   cats,
   fireworks,
   webcam,
   emotes,
+  portals,
+  gameCamera,
+  blocks,
   faceBar,
   rocket,
   map,
@@ -806,7 +949,8 @@ renderer.setAnimationLoop(() => {
 
   gameCamera.addYaw(touch.consumeYaw())
   music.setEnabled(settings.music && !sfx.muted)
-  fp.paused = emoteWheel.isOpen || map.isOpen // both borrow the mouse
+  // Any overlay borrows the mouse — the wheels and the travel map alike.
+  fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen
   // No aiming down a scope while the rocket flies you; the chase cam sells it.
   fp.setActive(
     settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active,
@@ -827,8 +971,37 @@ renderer.setAnimationLoop(() => {
     gameCamera.yaw,
   )
   // Straight after player.update, which left our position alone while flying:
-  // the arc writes it here, before anything else reads where we are.
+  // the arc writes it here, before anything else reads where we are — the
+  // gates below included, so a rocket can't be teleported out mid-arc.
   rocket.update(dt, player)
+  const gate = portals.update(dt, player.group.position)
+  if (gate) crossTo(gate)
+  const nowShadow = inRealm(player.group.position.x, player.group.position.z)
+  if (nowShadow !== shadow) {
+    shadow = nowShadow
+    // Changed worlds without using a gate — respawned out of the lava, most
+    // likely. Same fanfare, and hold the gates off so you don't fall
+    // straight back through the one you land next to.
+    if (!gate) {
+      announce(nowShadow ? 'THE SHADOW REALM' : 'THE ISLAND')
+      sfx.warp()
+      portals.hold()
+      gameCamera.snapTo(player)
+    }
+  }
+  // The realm's sea is molten. player.ts floats you in it exactly like water,
+  // which is the joke: the only difference is that it kills you.
+  if (shadow && player.pose === 'swim' && !player.dead) {
+    health.damage(52 * dt)
+    burnT -= dt
+    if (burnT <= 0) {
+      burnT = 0.35
+      sfx.sizzle()
+    }
+  } else {
+    burnT = 0
+  }
+
   health.update(dt)
   voice.update(dt)
   player.group.userData.talk = voice.level // our own mouth flaps too
@@ -864,8 +1037,20 @@ renderer.setAnimationLoop(() => {
   shark.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
-  gameCamera.update(dt, keys, player, settings, fp)
-  daynight.update(settings, camera.position)
+  gameCamera.update(dt, player, settings, fp)
+  // After the player has settled: the ghost is aimed from where you actually
+  // ended up this frame, so it never lags a step behind your feet.
+  const aim = buildAim()
+  blockGhost.update(
+    aim && {
+      place: { gx: aim.gx, gy: aim.gy, gz: aim.gz, valid: aim.valid },
+      break: aim.breakGy === null ? null : { gx: aim.gx, gy: aim.breakGy, gz: aim.gz },
+      m: material,
+    },
+    dt,
+  )
+  daynight.update(settings, camera.position, shadow ? 1 : 0)
+  minimap.update(player, remotes, settings, voice.level)
 
   renderer.render(scene, camera)
 })

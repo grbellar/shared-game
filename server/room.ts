@@ -19,11 +19,15 @@ interface Block {
 
 const BLOCK_HP = [2, 4, 6, 8] // keep in sync with MATERIALS in src/blocks.ts
 const BLOCK_CAP = 1500
-const GRID_XZ_MAX = 240 // |gx|,|gz| cap — keep in sync with src/blocks.ts
-// How far out world edits may reach, in world units. Has to cover every
-// island in src/world.ts (the far rock runs out to x=350) or craters out
-// there get silently clamped somewhere else and fork everyone's terrain.
-const EDIT_XZ_MAX = 380
+const GRID_XZ_MAX = 1400 // |gx|,|gz| cap — keep in sync with src/blocks.ts
+// Damage to blocks this room never stored: the castle in the shadow realm,
+// which every client generates for itself. Roughly one entry per castle block
+// anyone has touched, so the cap is sized to let the whole thing come down.
+const WORLD_DMG_CAP = 5000
+// Craters and world damage reach out to the realm — and to the far rock at
+// x=280 (src/world.ts). Anything beyond this gets clamped somewhere nobody
+// asked for, which forks everyone's terrain.
+const WORLD_XZ_MAX = 2000
 
 interface PlayerState {
   id: string
@@ -57,6 +61,11 @@ export class GameRoom extends DurableObject<Env> {
   // half-damaged blocks replay accurately; insertion order doubles as the
   // eviction order when the cap trips. In-memory like everything else.
   private blocks = new Map<string, Block>()
+  // Accumulated damage on cells that aren't in `blocks` — the castle, which
+  // isn't ours to store because every client generates it identically. We
+  // only have to remember how broken it is. Summed, so replay order can't
+  // matter; insertion order doubles as the eviction order at the cap.
+  private worldDmg = new Map<string, number>()
   // The shared day/night clock: time-of-day in hours anchored to this DO's
   // wall clock. Scrubs/pauses re-anchor it; late joiners get the advanced
   // value in `welcome`. In-memory: hibernation resets to mid-morning.
@@ -88,6 +97,7 @@ export class GameRoom extends DurableObject<Env> {
         players: [...this.states.values()],
         craters: this.craters,
         blocks: [...this.blocks.values()],
+        wdmg: [...this.worldDmg].map(([cell, dmg]) => [...cell.split(',').map(Number), dmg]),
         clock: { hours: this.clockHours(), running: this.clock.running },
         faces: [...this.faces].map(([fid, d]) => ({ id: fid, d })),
       }),
@@ -183,8 +193,8 @@ export class GameRoom extends DurableObject<Env> {
       if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(r) || !Number.isFinite(d))
         return
       const c: Crater = {
-        x: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, x)),
-        z: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, z)),
+        x: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x)),
+        z: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z)),
         r: Math.max(0.5, Math.min(8, r)),
         d: Math.max(0.1, Math.min(4, d)),
       }
@@ -250,11 +260,23 @@ export class GameRoom extends DurableObject<Env> {
       const gy = Number(msg.gy)
       const gz = Number(msg.gz)
       if (!Number.isInteger(gx) || !Number.isInteger(gy) || !Number.isInteger(gz)) return
+      if (Math.abs(gx) > GRID_XZ_MAX || Math.abs(gz) > GRID_XZ_MAX || gy < -8 || gy > 40) return
       const dmg = Math.max(1, Math.min(999, Math.round(Number(msg.dmg) || 0)))
-      const b = this.blocks.get(`${gx},${gy},${gz}`)
-      if (!b) return // stale hit on an already-dead block: drop, don't relay
-      b.hp -= dmg
-      if (b.hp <= 0) this.blocks.delete(`${gx},${gy},${gz}`)
+      const cell = `${gx},${gy},${gz}`
+      const b = this.blocks.get(cell)
+      if (b) {
+        b.hp -= dmg
+        if (b.hp <= 0) this.blocks.delete(cell)
+      } else {
+        // Either a castle block — ours to remember the damage on, not the
+        // block itself — or a stale hit on something already dead. We can't
+        // tell the two apart and don't need to: damaging a cell with nothing
+        // in it is a no-op on every client, so recording it is harmless.
+        this.worldDmg.set(cell, (this.worldDmg.get(cell) ?? 0) + dmg)
+        if (this.worldDmg.size > WORLD_DMG_CAP) {
+          this.worldDmg.delete(this.worldDmg.keys().next().value!)
+        }
+      }
       // hp is a commutative sum of relayed dmg, so clients that see hits in
       // different orders still agree on when a block dies.
       this.broadcast(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }), ws)
@@ -275,8 +297,10 @@ export class GameRoom extends DurableObject<Env> {
         JSON.stringify({
           t: 'fw',
           id: att.id,
-          x: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, x)),
-          z: Math.max(-EDIT_XZ_MAX, Math.min(EDIT_XZ_MAX, z)),
+          // Wide enough to reach the shadow realm: clamping to the island
+          // would relay someone's realm firework to everyone else's beach.
+          x: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x)),
+          z: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z)),
           c: Math.max(0, Math.min(15, c)),
         }),
         ws,
