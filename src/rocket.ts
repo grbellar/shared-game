@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { heightAt } from './world'
+import { heightAt, ISLANDS, landingSpotOn, nearestIsland } from './world'
+import { REALM_X, REALM_Z, inRealm } from './realm'
 import { WATER_LEVEL, type Player } from './player'
 import { ROCKET_ASCENT_S, ROCKET_DESCENT_S, ROCKET_FLIGHT_S } from './emotes'
 import type { Effects } from './effects'
@@ -23,6 +24,39 @@ const HOMING = 1.8 // how hard the aim point chases a friend who wanders off
 // should hurt and should launch you, but it shouldn't usually be a beheading.
 export const LAND_BLAST_RADIUS = 8
 export const LAND_BLAST_DAMAGE = 35
+
+// Everywhere rocket travel can take you. The islands come straight out of
+// world.ts; the shadow realm isn't an island at all (it's a region that owns
+// its own heightfield) so it brings its own arrival pad. The map builds its
+// buttons off this list, so anything added here is immediately travellable.
+export interface Destination {
+  name: string
+  icon: string
+  // Are we standing on this one right now? The map hides the place you are.
+  here: (x: number, z: number) => boolean
+  spot: () => { x: number; z: number }
+}
+
+export const DESTINATIONS: Destination[] = [
+  ...ISLANDS.map((isl, i) => ({
+    name: isl.name,
+    icon: '🚀',
+    // inRealm first: the realm is nearer to no island, but nearestIsland
+    // still has to answer something, and it would claim you're on the rock.
+    here: (x: number, z: number) => !inRealm(x, z) && nearestIsland(x, z) === i,
+    spot: () => landingSpotOn(i),
+  })),
+  { name: 'the castle', icon: '🏰', here: inRealm, spot: realmPad },
+]
+
+// Down on the apron: clear of the castle curtain (33 units from centre) and
+// well inside the plateau's flat (88), so a trip never drops you onto a
+// battlement or into the lava.
+function realmPad(): { x: number; z: number } {
+  const a = Math.random() * Math.PI * 2
+  const r = 46 + Math.random() * 30
+  return { x: REALM_X + Math.cos(a) * r, z: REALM_Z + Math.sin(a) * r }
+}
 
 export interface RocketDest {
   x: number
@@ -65,7 +99,11 @@ export class RocketRide {
     this.from.copy(player.group.position)
     this.to.set(dest.x, dest.z)
     this.followId = dest.followId ?? null
-    this.apexY = Math.max(this.from.y, this.groundAtTarget()) + APEX
+    // The further you're going, the higher you throw it. A hop across the
+    // island wants ~96; the castle is 1800 units away, and at a fixed 96 that
+    // trip is a flat skim through the fog rather than an arc over it.
+    const reach = Math.hypot(this.to.x - this.from.x, this.to.y - this.from.z)
+    this.apexY = Math.max(this.from.y, this.groundAtTarget()) + APEX + reach * 0.18
     const fog = this.scene.fog as THREE.Fog | null
     // Captured before we start driving it, and put back on landing — this is
     // the only thing in the game that touches fog distance, and daynight.ts
