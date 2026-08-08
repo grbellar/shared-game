@@ -28,6 +28,9 @@ const WORLD_DMG_CAP = 5000
 // x=280 (src/world.ts). Anything beyond this gets clamped somewhere nobody
 // asked for, which forks everyone's terrain.
 const WORLD_XZ_MAX = 2000
+// Skeleton roster cap: 5 packed numbers each (see src/skeletons.ts), with room
+// to grow the garrison without touching the server.
+const SKEL_MAX_FIELDS = 64 * 5
 
 interface PlayerState {
   id: string
@@ -358,6 +361,22 @@ export class GameRoom extends DurableObject<Env> {
       const dmg = Number(msg.dmg)
       if (!Number.isFinite(dmg)) return
       this.broadcast(JSON.stringify({ t: 'sharkhit', dmg: Math.max(0, Math.min(200, dmg)) }), ws)
+    } else if (msg.t === 'skel') {
+      // The castle garrison, hosted by one client (lowest id) and relayed like
+      // the shark. Not stored for late joiners: the roster is a fixed list in
+      // castle.ts, and the next host update is a tenth of a second away.
+      const s = msg.s
+      if (!Array.isArray(s) || s.length > SKEL_MAX_FIELDS) return
+      if (!s.every((n) => typeof n === 'number' && Number.isFinite(n))) return
+      this.broadcast(JSON.stringify({ t: 'skel', s }), ws)
+    } else if (msg.t === 'skelhit') {
+      const i = Number(msg.i)
+      const dmg = Number(msg.dmg)
+      if (!Number.isInteger(i) || i < 0 || i > 63 || !Number.isFinite(dmg)) return
+      this.broadcast(
+        JSON.stringify({ t: 'skelhit', i, dmg: Math.max(0, Math.min(200, dmg)) }),
+        ws,
+      )
     } else if (msg.t === 'land') {
       // Rocket travel touching down. Relayed like `fire`: every client plays
       // the impact, and each one shoves only itself. Nothing stored — the

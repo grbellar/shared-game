@@ -360,6 +360,31 @@ class Sfx {
     this.noise('lowpass', 900, 120, 0.5, 0.1)
   }
 
+  // Dry bones knocking together — a skeleton moving, or taking a hit that
+  // doesn't finish it.
+  boneRattle(vol = 1): void {
+    for (let i = 0; i < 4; i++) {
+      this.noise('bandpass', 1800 + Math.random() * 1400, 900, 0.035, 0.11 * vol, i * 0.035)
+    }
+    this.tone('triangle', 220, 160, 0.06, 0.05 * vol)
+  }
+
+  // The whole thing coming apart in a heap.
+  boneShatter(vol = 1): void {
+    this.noise('bandpass', 2600, 700, 0.3, 0.3 * vol)
+    this.tone('square', 150, 55, 0.22, 0.14 * vol)
+    for (let i = 0; i < 7; i++) {
+      this.noise('highpass', 1600 + Math.random() * 2200, 1200, 0.04, 0.1 * vol, 0.05 + i * 0.05)
+    }
+  }
+
+  // A rusty blade finding you.
+  boneHit(vol = 1): void {
+    this.tone('square', 420, 90, 0.1, 0.22 * vol)
+    this.noise('bandpass', 2200, 600, 0.12, 0.2 * vol)
+    this.tone('sawtooth', 110, 60, 0.18, 0.1 * vol)
+  }
+
   // Standing in lava. Called on a loop while you burn, so keep it short.
   sizzle(): void {
     this.noise('highpass', 1400, 3600, 0.24, 0.13)

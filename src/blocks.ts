@@ -53,6 +53,9 @@ interface Cell {
 }
 
 const cells = new Map<string, Cell>()
+// Bumped whenever a block appears or dies. Anything caching a picture of the
+// grid (the minimap's castle layer) watches this instead of wiring a callback.
+let revision = 0
 let meshes: THREE.InstancedMesh[] = []
 // Recycled instance slots per material, plus the high-water mark that bounds
 // how many instances the GPU actually walks.
@@ -96,6 +99,16 @@ export function blockAtPoint(x: number, y: number, z: number): BlockSpec | undef
   return blockAt(Math.round(x / BLOCK), Math.floor(y / BLOCK), Math.round(z / BLOCK))
 }
 
+export function blocksVersion(): number {
+  return revision
+}
+
+// Walk every standing block. Cheap enough to sweep the whole castle (~4k) in
+// one pass, which is how the minimap bakes its castle layer.
+export function forEachBlock(fn: (spec: BlockSpec) => void): void {
+  for (const cell of cells.values()) fn(cell.spec)
+}
+
 // False if the cell is already occupied (simultaneous-place race: the server
 // keeps the first, the loser's phantom heals on the next welcome) or the
 // material's instance pool is full.
@@ -106,6 +119,7 @@ export function placeBlock(spec: BlockSpec): boolean {
   if (inst < 0) return false
   cells.set(k, { spec, inst })
   writeInstance(spec.m, inst, spec)
+  revision++
   return true
 }
 
@@ -126,6 +140,7 @@ export function damageBlock(
     writeInstance(entry.spec.m, entry.inst, null)
     freeSlots[entry.spec.m].push(entry.inst)
     cells.delete(k)
+    revision++
     return { destroyed: true, m: entry.spec.m, center }
   }
   writeInstance(entry.spec.m, entry.inst, entry.spec)

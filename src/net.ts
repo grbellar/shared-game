@@ -64,6 +64,8 @@ type ServerMsg =
   | { t: 'land'; id: string; x: number; y: number; z: number }
   | { t: 'mob'; i: number; x: number; z: number; ry: number; hp: number; st: string }
   | { t: 'mobhit'; i: number; dmg: number }
+  | { t: 'skel'; s: number[] }
+  | { t: 'skelhit'; i: number; dmg: number }
 
 export class Net {
   id: string | null = null
@@ -104,6 +106,11 @@ export class Net {
   onLand: (id: string, pos: [number, number, number]) => void = () => {}
   onMob: (s: MobNetState) => void = () => {}
   onMobHit: (i: number, dmg: number) => void = () => {}
+  // The castle garrison, packed five numbers per skeleton (see skeletons.ts).
+  // Its own message rather than `mob`: the whole roster rides in one array,
+  // where land mobs stream one at a time.
+  onSkeletons: (packed: number[]) => void = () => {}
+  onSkeletonHit: (index: number, dmg: number) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -179,6 +186,10 @@ export class Net {
         })
       } else if (msg.t === 'sharkhit') {
         this.onSharkHit(msg.dmg)
+      } else if (msg.t === 'skel') {
+        if (Array.isArray(msg.s)) this.onSkeletons(msg.s)
+      } else if (msg.t === 'skelhit') {
+        this.onSkeletonHit(msg.i, msg.dmg)
       } else if (msg.t === 'land') {
         if (msg.id !== this.id) this.onLand(msg.id, [msg.x, msg.y, msg.z])
       } else if (msg.t === 'mob') {
@@ -251,6 +262,17 @@ export class Net {
   sendSharkHit(dmg: number): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'sharkhit', dmg }))
+  }
+
+  // Host-only: the whole garrison in one packed array, ~10x/sec.
+  sendSkeletons(packed: number[]): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'skel', s: packed }))
+  }
+
+  sendSkeletonHit(index: number, dmg: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'skelhit', i: index, dmg }))
   }
 
   // Rocket travel touching down. The flight itself needs no message — the

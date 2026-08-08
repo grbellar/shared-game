@@ -293,6 +293,19 @@ export class Mobs {
     return low === null || low === this.net.id
   }
 
+  // Something a rocket should burst against, in the shape effects.ts wants.
+  // Without this a rocket sails straight through a bear and only hurts it if
+  // it happens to hit the ground nearby. The ids can't collide with a
+  // shooter's (server ids are uuid slices, ours is 'me'), so a rocket is never
+  // stopped by its own owner check.
+  *targets(): Generator<{ id: string; pos: THREE.Vector3 }> {
+    for (let i = 0; i < this.mobs.length; i++) {
+      const m = this.mobs[i]
+      if (m.st === 'dead') continue
+      yield { id: `mob:${i}`, pos: m.group.position }
+    }
+  }
+
   // --- taking hits (attacker mints damage, same rule as sharkhit) ---------
 
   blast(center: THREE.Vector3): void {
