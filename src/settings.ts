@@ -5,7 +5,12 @@
 export interface Settings {
   cameraFollow: boolean
   firstPerson: boolean
+  clockRun: boolean // day/night cycle advances on its own
+  timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
 }
+
+// Keys makeRow may bind — the boolean toggles only.
+type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings]
 
 const STORAGE_KEY = 'shared-game.settings'
 
@@ -13,9 +18,14 @@ function load(): Settings {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')
     const obj = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<string, unknown>
-    return { cameraFollow: obj.cameraFollow === true, firstPerson: obj.firstPerson === true }
+    return {
+      cameraFollow: obj.cameraFollow === true,
+      firstPerson: obj.firstPerson === true,
+      clockRun: obj.clockRun !== false,
+      timeOfDay: typeof obj.timeOfDay === 'number' && isFinite(obj.timeOfDay) ? obj.timeOfDay : 10,
+    }
   } catch {
-    return { cameraFollow: false, firstPerson: false }
+    return { cameraFollow: false, firstPerson: false, clockRun: true, timeOfDay: 10 }
   }
 }
 
@@ -99,6 +109,14 @@ export function initSettings(): Settings {
     #settings-gear:focus-visible, .settings-switch:focus-visible {
       outline: 2px solid #fff;
     }
+    #settings-time-value {
+      color: #fff;
+    }
+    #settings-time-slider {
+      width: 100%;
+      margin: 2px 0 0;
+      accent-color: #4f9e3f;
+    }
   `
   document.head.appendChild(style)
 
@@ -116,7 +134,7 @@ export function initSettings(): Settings {
   title.id = 'settings-title'
   title.textContent = 'settings'
 
-  const makeRow = (id: string, text: string, key: keyof Settings): HTMLDivElement => {
+  const makeRow = (id: string, text: string, key: BoolKey): HTMLDivElement => {
     const row = document.createElement('div')
     row.className = 'settings-row'
 
@@ -155,6 +173,53 @@ export function initSettings(): Settings {
     return row
   }
 
+  // Time-of-day scrubber: live clock readout plus a slider over 0-24h.
+  // While the clock runs, the readout (and idle slider) track game time.
+  const fmtTime = (t: number): string => {
+    const h = Math.floor(t) % 24
+    const m = Math.floor((t % 1) * 60)
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+  const timeRow = document.createElement('div')
+  timeRow.className = 'settings-row'
+  const timeLabel = document.createElement('span')
+  timeLabel.textContent = 'time of day'
+  const timeValue = document.createElement('span')
+  timeValue.id = 'settings-time-value'
+  timeRow.append(timeLabel, timeValue)
+
+  const slider = document.createElement('input')
+  slider.type = 'range'
+  slider.id = 'settings-time-slider'
+  slider.min = '0'
+  slider.max = '24'
+  slider.step = '0.1'
+  slider.setAttribute('aria-label', 'Time of day')
+  let scrubbing = false
+  slider.addEventListener('pointerdown', () => {
+    scrubbing = true
+  })
+  window.addEventListener('pointerup', () => {
+    scrubbing = false
+  })
+  slider.addEventListener('input', () => {
+    settings.timeOfDay = parseFloat(slider.value) % 24
+    persist(settings)
+  })
+  // Drop focus after a scrub so WASD/Space go back to being game keys.
+  slider.addEventListener('change', () => slider.blur())
+  const syncTime = (): void => {
+    timeValue.textContent = fmtTime(settings.timeOfDay)
+    if (!scrubbing) slider.value = String(settings.timeOfDay % 24)
+  }
+  syncTime()
+  setInterval(() => {
+    if (!panel.hidden) syncTime()
+  }, 250)
+
+  // The running clock only persists on scrubs; catch it on the way out too.
+  window.addEventListener('beforeunload', () => persist(settings))
+
   const setOpen = (open: boolean): void => {
     panel.hidden = !open
     gear.classList.toggle('open', open)
@@ -171,6 +236,9 @@ export function initSettings(): Settings {
     title,
     makeRow('settings-camera-follow-label', 'camera always behind me', 'cameraFollow'),
     makeRow('settings-first-person-label', 'first-person aim (with weapon)', 'firstPerson'),
+    makeRow('settings-clock-run-label', 'day/night clock runs', 'clockRun'),
+    timeRow,
+    slider,
   )
   document.body.append(gear, panel)
 

@@ -10,6 +10,7 @@ import { Chat } from './chat'
 import { Bubbles } from './bubbles'
 import { Effects } from './effects'
 import { Destruction } from './destruction'
+import { DayNight } from './daynight'
 import { FirstPersonAim } from './firstperson'
 import { setWeapon, setRide, startSlash, popHead, SLASH_DURATION } from './character'
 import { sfx } from './audio'
@@ -260,10 +261,11 @@ window.addEventListener('keyup', (e) => keys.delete(e.code))
 
 const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
+const daynight = new DayNight(scene)
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -289,6 +291,7 @@ renderer.setAnimationLoop(() => {
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   remotes.update(dt)
   gameCamera.update(dt, keys, player, settings, fp)
+  daynight.update(dt, settings, camera.position)
 
   renderer.render(scene, camera)
 })

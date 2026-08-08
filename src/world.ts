@@ -212,8 +212,12 @@ export function createWorld(scene: THREE.Scene): void {
   scene.background = sky
   scene.fog = new THREE.Fog(sky, 40, 150)
 
-  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x5a7a4a, 0.9))
+  // Named so daynight.ts can find and drive them through the day cycle.
+  const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x5a7a4a, 0.9)
+  hemi.name = 'hemi-light'
+  scene.add(hemi)
   const sun = new THREE.DirectionalLight(0xfff2cc, 1.4)
+  sun.name = 'sun-light'
   sun.position.set(40, 60, 20)
   scene.add(sun)
 
