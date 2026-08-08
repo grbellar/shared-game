@@ -386,7 +386,7 @@ net.onFire = (id, origin, dir) => {
 // Rocket travel and the map that aims it. Tab opens the map; clicking a
 // friend or the island you're not on straps a rocket to your chair and throws
 // you over there. See rocket.ts for why the flight itself sends nothing.
-const rocket = new RocketRide(scene, effects)
+const rocket = new RocketRide(effects)
 const map = new GameMap(touch.active)
 rocket.livePos = (id) => remotes.getGroup(id)?.position
 rocket.onLaunch = () => {
@@ -1074,7 +1074,7 @@ renderer.setAnimationLoop(() => {
     },
     dt,
   )
-  daynight.update(settings, camera.position, shadow ? 1 : 0)
+  daynight.update(settings, camera.position, shadow ? 1 : 0, rocket.fogLift)
   minimap.update(player, remotes, settings, voice.level)
 
   renderer.render(scene, camera)

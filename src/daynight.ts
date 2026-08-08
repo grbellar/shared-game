@@ -147,7 +147,12 @@ export class DayNight {
     return (this.anchorHours + ((performance.now() - this.anchorMs) / 1000) * (24 / DAY_LENGTH_S)) % 24
   }
 
-  update(settings: Settings, camPos: THREE.Vector3, shadow = 0): void {
+  // `fogLift` pushes the fog wall back, in world units, on top of whatever the
+  // time of day and the current world call for. Rocket travel feeds it its
+  // altitude: this has to be additive and applied here rather than written
+  // straight onto the fog, because this runs at the end of the frame and would
+  // otherwise stamp right over it.
+  update(settings: Settings, camPos: THREE.Vector3, shadow = 0, fogLift = 0): void {
     // First frame: seed from persisted settings until the welcome clock lands.
     if (this.anchorHours === null) this.setClock(settings.timeOfDay, settings.clockRun)
     const t = this.now()
@@ -173,7 +178,7 @@ export class DayNight {
     const fog = this.scene.fog as THREE.Fog
     fog.color.copy(this.sky)
     fog.near = mix(ISLAND_FOG_NEAR, SHADOW_FOG_NEAR, shadow)
-    fog.far = mix(ISLAND_FOG_FAR, SHADOW_FOG_FAR, shadow)
+    fog.far = mix(ISLAND_FOG_FAR, SHADOW_FOG_FAR, shadow) + fogLift
 
     this.hemi.intensity = mix(0.3 + 0.65 * day, 1.15, shadow)
     this.hemi.color.copy(NIGHT_HEMI_SKY).lerp(DAY_HEMI_SKY, day).lerp(SHADOW_HEMI_SKY, shadow)
