@@ -130,6 +130,13 @@ const settings = initSettings(
   },
 )
 faceBar.setEnabled(settings.webcamBar)
+// Camera was on last session: restart it. Denied (or camera gone) flips the
+// switch back off, same as toggling it by hand.
+if (settings.webcamFace) {
+  void webcam.start().then((ok) => {
+    if (!ok) setSetting('webcamFace', false)
+  })
+}
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()

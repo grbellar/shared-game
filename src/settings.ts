@@ -49,11 +49,9 @@ function load(): Settings {
       timeOfDay: typeof obj.timeOfDay === 'number' && isFinite(obj.timeOfDay) ? obj.timeOfDay : 10,
       // Music defaults on, so absence means true.
       music: obj.music !== false,
-      // Never restored from storage: the camera is opt-in every session, so
-      // reloading the page can't silently reopen a webcam.
-      webcamFace: false,
-      // The strip only displays frames others already sent, so it's safe to
-      // remember — unlike the camera above, it never turns on your hardware.
+      // Restored from storage: main.ts restarts the camera on load (the
+      // browser's permission prompt still gates it if access wasn't granted).
+      webcamFace: obj.webcamFace === true,
       webcamBar: obj.webcamBar === true,
     }
   } catch {
