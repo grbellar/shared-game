@@ -12,6 +12,7 @@ import { Effects } from './effects'
 import { Destruction } from './destruction'
 import { FirstPersonAim } from './firstperson'
 import { setWeapon, setRide, startSlash, popHead, SLASH_DURATION } from './character'
+import { sfx } from './audio'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -43,6 +44,11 @@ const player = new Player(scene, color, name)
 const remotes = new Remotes(scene)
 const settings = initSettings()
 const touch = new TouchControls()
+
+// Sounds fade with distance from the local player.
+function distVol(pos: THREE.Vector3, range = 70): number {
+  return Math.max(0, 1 - player.group.position.distanceTo(pos) / range)
+}
 
 const net = new Net()
 net.onWelcome = (players, craters) => {
@@ -76,9 +82,14 @@ setInterval(() => {
 const effects = new Effects(scene)
 const destruction = new Destruction(effects, net)
 effects.onOwnExplosion = (center) => destruction.rocketCrater(center)
-net.onCrater = (c) => destruction.applyRemote([c])
+net.onCrater = (c) => {
+  // Dig-sized craters get a scoop sound; rocket craters already boomed.
+  if (c.r < 3) sfx.dig(distVol(new THREE.Vector3(c.x, player.group.position.y, c.z), 50))
+  destruction.applyRemote([c])
+}
 effects.onBlast = (center) => {
   const BLAST_RADIUS = 7
+  sfx.explosion(distVol(center, 90))
   const d = player.group.position.distanceTo(center)
   if (d >= BLAST_RADIUS) return
   const k = 1 - d / BLAST_RADIUS
@@ -89,19 +100,25 @@ effects.onBlast = (center) => {
   player.applyImpulse(dir.x * 20 * k, 7 + 9 * k, dir.z * 20 * k)
 }
 net.onFire = (id, origin, dir) => {
-  effects.spawnRocket(
-    id,
-    new THREE.Vector3(...origin),
-    new THREE.Vector3(...dir),
-  )
+  const from = new THREE.Vector3(...origin)
+  sfx.rocket(distVol(from))
+  effects.spawnRocket(id, from, new THREE.Vector3(...dir))
 }
-net.onSlash = (id) => remotes.slash(id)
+net.onSlash = (id) => {
+  const group = remotes.getGroup(id)
+  sfx.slash(group ? distVol(group.position) : 0.7)
+  remotes.slash(id)
+}
 net.onKill = (victim) => {
   if (victim === net.id) {
     const headPos = popHead(player.group)
     if (headPos) effects.spawnHeadPop(headPos)
+    sfx.pop()
+    sfx.death()
     player.die()
   } else {
+    const group = remotes.getGroup(victim)
+    sfx.pop(group ? distVol(group.position) : 0.7)
     remotes.decapitate(victim, effects)
   }
 }
@@ -111,6 +128,7 @@ function attack(): void {
   const now = performance.now()
   if (weapon === 'gun' && now - lastAttack > 800) {
     lastAttack = now
+    sfx.rocket()
     const ry = player.group.rotation.y
     // Third person lobs slightly upward; first person fires along the crosshair.
     const dir = fp.isActive
@@ -123,6 +141,7 @@ function attack(): void {
     net.sendFire(origin, dir)
   } else if (weapon === 'sword' && now - lastAttack > 500) {
     lastAttack = now
+    sfx.slash()
     startSlash(player.group)
     net.sendSlash()
     // Check for a hit at the midpoint of the swing.
@@ -143,6 +162,7 @@ function attack(): void {
     }, SLASH_DURATION * 500)
   } else if (weapon === 'shovel' && now - lastAttack > 600) {
     lastAttack = now
+    sfx.slash(0.5)
     startSlash(player.group)
     net.sendSlash()
     // Scoop at the bottom of the swing: the aimed ground point in first
@@ -180,11 +200,13 @@ if (touch.active) {
 const chat = new Chat()
 const bubbles = new Bubbles(camera, renderer.domElement)
 chat.onSend = (text) => {
+  sfx.chat()
   net.sendChat(text)
   bubbles.show(player.group, text)
   chat.addMessage(name, text)
 }
 net.onChat = (id, senderName, text) => {
+  sfx.chat()
   const group = remotes.getGroup(id)
   if (group) bubbles.show(group, text)
   chat.addMessage(senderName, text)
@@ -193,9 +215,10 @@ net.onChat = (id, senderName, text) => {
 const status = document.getElementById('status')!
 setInterval(() => {
   const others = remotes.count
+  const mute = sfx.muted ? ' · 🔇 (M)' : ''
   status.textContent = net.connected
-    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here`
-    : `${name} · connecting...`
+    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here${mute}`
+    : `${name} · connecting...${mute}`
 }, 500)
 
 const keys = new Set<string>()
@@ -208,20 +231,25 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyG') {
     weapon = weapon === 'gun' ? 'none' : 'gun'
     setWeapon(player.group, weapon)
+    sfx.equip(weapon !== 'none')
   }
   if (e.code === 'KeyH') {
     weapon = weapon === 'sword' ? 'none' : 'sword'
     setWeapon(player.group, weapon)
+    sfx.equip(weapon !== 'none')
   }
   if (e.code === 'KeyF') {
     weapon = weapon === 'shovel' ? 'none' : 'shovel'
     setWeapon(player.group, weapon)
+    sfx.equip(weapon !== 'none')
   }
   if (e.code === 'KeyR') {
     ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
     setRide(player.group, ride)
     player.riding = ride === 'wheelchair'
+    sfx.equip(ride !== 'none')
   }
+  if (e.code === 'KeyM') sfx.toggleMute()
 })
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 

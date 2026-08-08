@@ -1,0 +1,226 @@
+// Lo-fi synthesized sound effects — no audio assets, matching the no-assets
+// art rule. Everything is oscillators and low-sample-rate noise buffers; the
+// resampling aliasing IS the N64 crunch. A master lowpass fakes the muffled
+// mix of a console pushed through a CRT TV speaker.
+//
+// Usage: import { sfx } and call methods anywhere. Safe before the first user
+// gesture (calls are no-ops until the AudioContext unlocks itself on the
+// first pointerdown/keydown).
+
+class Sfx {
+  private ctx: AudioContext | null = null
+  private out: GainNode | null = null
+  private masterGain = 0.5
+  private mutedFlag = false
+  private squeakHigh = false
+
+  constructor() {
+    const unlock = () => {
+      this.init()
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+    window.addEventListener('pointerdown', unlock)
+    window.addEventListener('keydown', unlock)
+  }
+
+  get muted(): boolean {
+    return this.mutedFlag
+  }
+
+  toggleMute(): boolean {
+    this.mutedFlag = !this.mutedFlag
+    if (this.out && this.ctx) {
+      this.out.gain.setValueAtTime(this.mutedFlag ? 0 : this.masterGain, this.ctx.currentTime)
+    }
+    return this.mutedFlag
+  }
+
+  private init(): void {
+    if (this.ctx) return
+    this.ctx = new AudioContext()
+    if (this.ctx.state === 'suspended') void this.ctx.resume()
+    this.out = this.ctx.createGain()
+    this.out.gain.value = this.mutedFlag ? 0 : this.masterGain
+    const muffle = this.ctx.createBiquadFilter()
+    muffle.type = 'lowpass'
+    muffle.frequency.value = 5500
+    this.out.connect(muffle)
+    muffle.connect(this.ctx.destination)
+    this.startAmbient()
+  }
+
+  // A crunchy mono noise buffer. Low sample rates alias on playback — free grit.
+  private noiseBuffer(seconds: number, sampleRate: number): AudioBuffer {
+    const ctx = this.ctx!
+    const len = Math.max(1, Math.floor(seconds * sampleRate))
+    const buf = ctx.createBuffer(1, len, sampleRate)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1
+    return buf
+  }
+
+  private tone(
+    type: OscillatorType,
+    freqFrom: number,
+    freqTo: number,
+    dur: number,
+    peak: number,
+    delay = 0,
+  ): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime + delay
+    const osc = this.ctx.createOscillator()
+    osc.type = type
+    osc.frequency.setValueAtTime(Math.max(1, freqFrom), t0)
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqTo), t0 + dur)
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(peak, t0)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur)
+    osc.connect(g)
+    g.connect(this.out)
+    osc.start(t0)
+    osc.stop(t0 + dur + 0.02)
+  }
+
+  private noise(
+    filterType: BiquadFilterType,
+    freqFrom: number,
+    freqTo: number,
+    dur: number,
+    peak: number,
+    delay = 0,
+    sampleRate = 11025,
+  ): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime + delay
+    const src = this.ctx.createBufferSource()
+    src.buffer = this.noiseBuffer(dur + 0.05, sampleRate)
+    const filter = this.ctx.createBiquadFilter()
+    filter.type = filterType
+    filter.frequency.setValueAtTime(Math.max(20, freqFrom), t0)
+    filter.frequency.exponentialRampToValueAtTime(Math.max(20, freqTo), t0 + dur)
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(peak, t0)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur)
+    src.connect(filter)
+    filter.connect(g)
+    g.connect(this.out)
+    src.start(t0)
+    src.stop(t0 + dur + 0.05)
+  }
+
+  // Endless quiet wave-wash: looped noise with a slow LFO breathing the gain.
+  private startAmbient(): void {
+    if (!this.ctx || !this.out) return
+    const src = this.ctx.createBufferSource()
+    src.buffer = this.noiseBuffer(2, 11025)
+    src.loop = true
+    const filter = this.ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = 450
+    const g = this.ctx.createGain()
+    g.gain.value = 0.035
+    const lfo = this.ctx.createOscillator()
+    lfo.frequency.value = 0.13
+    const lfoGain = this.ctx.createGain()
+    lfoGain.gain.value = 0.02
+    lfo.connect(lfoGain)
+    lfoGain.connect(g.gain)
+    src.connect(filter)
+    filter.connect(g)
+    g.connect(this.out)
+    src.start()
+    lfo.start()
+  }
+
+  // --- movement ---
+
+  jump(): void {
+    this.tone('square', 220, 520, 0.14, 0.18)
+  }
+
+  land(intensity: number): void {
+    const v = Math.min(1, intensity)
+    this.noise('lowpass', 700, 150, 0.09, 0.1 + 0.25 * v)
+    this.tone('triangle', 90, 45, 0.1, 0.15 * v)
+  }
+
+  step(): void {
+    this.noise('bandpass', 350 + Math.random() * 300, 250, 0.05, 0.1)
+  }
+
+  // Alternating wheek-wheek of an unoiled wheelchair wheel.
+  squeak(): void {
+    this.squeakHigh = !this.squeakHigh
+    const f = this.squeakHigh ? 1350 : 1100
+    this.tone('triangle', f, f * 1.25, 0.09, 0.05)
+  }
+
+  splash(): void {
+    this.noise('lowpass', 2500, 250, 0.35, 0.3)
+    this.tone('sine', 320, 85, 0.22, 0.2)
+  }
+
+  paddle(): void {
+    this.noise('lowpass', 900, 300, 0.12, 0.07)
+  }
+
+  // --- combat ---
+
+  rocket(vol = 1): void {
+    this.noise('bandpass', 900, 180, 0.5, 0.28 * vol)
+    this.tone('square', 110, 55, 0.4, 0.12 * vol)
+  }
+
+  explosion(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('lowpass', 3000, 60, 0.7, 0.8 * v, 0, 8000)
+    this.tone('sine', 100, 32, 0.6, 0.45 * v)
+    this.noise('highpass', 2000, 4000, 0.04, 0.3 * v)
+  }
+
+  slash(vol = 1): void {
+    this.noise('bandpass', 800, 4200, 0.13, 0.22 * vol)
+  }
+
+  // Shovel scooping dirt.
+  dig(vol = 1): void {
+    this.noise('lowpass', 600, 180, 0.16, 0.25 * vol)
+    this.noise('bandpass', 1800, 900, 0.05, 0.12 * vol)
+  }
+
+  // A tree or rock giving up.
+  crunch(vol = 1): void {
+    this.noise('lowpass', 900, 90, 0.25, 0.28 * vol)
+    this.tone('square', 130, 55, 0.15, 0.08 * vol)
+  }
+
+  // Comedic decapitation pop.
+  pop(vol = 1): void {
+    this.tone('sine', 520, 70, 0.12, 0.35 * vol)
+    this.noise('lowpass', 1500, 400, 0.08, 0.2 * vol)
+  }
+
+  // Sad little wah-wah-wah for your own demise.
+  death(): void {
+    this.tone('square', 330, 320, 0.22, 0.12, 0)
+    this.tone('square', 294, 284, 0.22, 0.12, 0.26)
+    this.tone('square', 262, 196, 0.5, 0.12, 0.52)
+  }
+
+  // --- ui ---
+
+  chat(): void {
+    this.tone('square', 660, 660, 0.05, 0.08)
+    this.tone('square', 880, 880, 0.05, 0.08, 0.06)
+  }
+
+  equip(on: boolean): void {
+    if (on) this.tone('square', 520, 780, 0.09, 0.12)
+    else this.tone('square', 780, 520, 0.09, 0.12)
+  }
+}
+
+export const sfx = new Sfx()

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createCharacter, animateCharacter, type Pose } from './character'
 import { heightAt } from './world'
+import { sfx } from './audio'
 
 const SPEED = 9
 const RIDE_SPEED = 16 // wheelchair beats walking
@@ -32,6 +33,7 @@ export class Player {
   private onGround = false
   private walkPhase = 0
   private bobPhase = 0
+  private wasFloating = false
 
   constructor(scene: THREE.Scene, color: string, name: string) {
     this.group = createCharacter(color, name)
@@ -73,6 +75,7 @@ export class Player {
       s = 0
     }
     const mag = Math.hypot(f, s)
+    const prevStep = Math.floor(this.walkPhase / Math.PI)
 
     let moving = 0
     if (mag > 0.15) {
@@ -129,6 +132,7 @@ export class Player {
       this.group.position.y <= WATER_LEVEL + FLOAT_BAND
     ) {
       // Stick to the water surface with a gentle bob.
+      if (!this.wasFloating) sfx.splash()
       this.bobPhase += dt * 2.5
       this.group.position.y = WATER_LEVEL + Math.sin(this.bobPhase) * 0.07
       this.velY = 0
@@ -137,6 +141,7 @@ export class Player {
     } else {
       const floor = Math.max(ground, WATER_LEVEL)
       if (this.group.position.y <= floor) {
+        if (!this.onGround && this.velY < -7) sfx.land(-this.velY / 25)
         this.group.position.y = floor
         this.velY = 0
         this.onGround = true
@@ -147,9 +152,18 @@ export class Player {
     if (input.jump && this.onGround && !this.dead) {
       this.velY = JUMP_VELOCITY
       this.onGround = false
+      sfx.jump()
     }
 
     this.moving = moving > 0
+
+    // One footstep (or squeak, or paddle stroke) per half walk cycle.
+    if (Math.floor(this.walkPhase / Math.PI) !== prevStep && moving > 0.15 && !this.dead) {
+      if (floating) sfx.paddle()
+      else if (this.onGround) this.riding ? sfx.squeak() : sfx.step()
+    }
+    this.wasFloating = floating
+
     this.pose = floating ? 'swim' : crouching ? 'crouch' : 'stand'
     animateCharacter(this.group, dt, this.walkPhase, moving, this.pose)
   }

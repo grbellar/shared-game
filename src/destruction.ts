@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { addCraters, heightAt, type Crater, type DestroyedProp } from './world'
 import type { Effects } from './effects'
 import type { Net } from './net'
+import { sfx } from './audio'
 
 // World damage orchestration: turns rocket blasts and shovel digs into
 // synced craters, and blows up whatever props the craters catch. This is the
@@ -34,6 +35,7 @@ export class Destruction {
   // byte-identical craters and get eaten by the reconnect dedupe (and the
   // jitter is minted here, so it rides the message — all clients agree).
   dig(x: number, z: number): void {
+    sfx.dig()
     this.applyLocal({
       x: x + (Math.random() - 0.5) * 0.7,
       z: z + (Math.random() - 0.5) * 0.7,
@@ -60,6 +62,7 @@ export class Destruction {
   }
 
   private explodeProp(prop: DestroyedProp): void {
+    sfx.crunch(0.6)
     const base = new THREE.Vector3(prop.x, prop.y + 0.5, prop.z)
     if (prop.kind === 'tree') {
       this.effects.spawnDebris(base, 0x6b4a2b, 6, 7)
