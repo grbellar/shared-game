@@ -40,6 +40,7 @@ type ServerMsg =
   | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
   | { t: 'bplace'; gx: number; gy: number; gz: number; m: number }
   | { t: 'bhit'; gx: number; gy: number; gz: number; dmg: number }
+  | { t: 'pet'; id: string; cat: number }
 
 export class Net {
   id: string | null = null
@@ -64,6 +65,7 @@ export class Net {
   onClock: (hours: number, running: boolean) => void = () => {}
   onBlockPlace: (gx: number, gy: number, gz: number, m: number) => void = () => {}
   onBlockHit: (gx: number, gy: number, gz: number, dmg: number) => void = () => {}
+  onPet: (cat: number) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -113,6 +115,8 @@ export class Net {
         // Cap-eviction bhits DO come back to their own trigger (broadcast to
         // all) — safe, because damaging a missing block is a no-op.
         this.onBlockHit(msg.gx, msg.gy, msg.gz, msg.dmg)
+      } else if (msg.t === 'pet') {
+        if (msg.id !== this.id) this.onPet(msg.cat)
       }
     }
     ws.onclose = () => {
@@ -201,5 +205,10 @@ export class Net {
   sendBlockHit(gx: number, gy: number, gz: number, dmg: number): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }))
+  }
+
+  sendPet(cat: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'pet', cat }))
   }
 }

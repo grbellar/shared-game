@@ -17,6 +17,7 @@ import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
+import { Cats } from './cats'
 import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
 import { loadProfile, saveProfile } from './profile'
 import { sfx } from './audio'
@@ -58,6 +59,7 @@ const settings = initSettings()
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
+const cats = new Cats(scene, touch.active)
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -175,6 +177,8 @@ net.onFire = (id, origin, dir) => {
   sfx.rocket(distVol(from))
   effects.spawnRocket(id, from, new THREE.Vector3(...dir))
 }
+cats.onPet = (index) => net.sendPet(index)
+net.onPet = (index) => cats.pet(index)
 net.onSlash = (id) => {
   const group = remotes.getGroup(id)
   sfx.slash(group ? distVol(group.position) : 0.7)
@@ -470,6 +474,7 @@ window.addEventListener('keydown', (e) => {
     if (ride === 'ramsey') sfx.ramseyMount()
     saveLoadout()
   }
+  if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat) void voice.toggle().then((on) => sfx.equip(on))
 })
@@ -496,7 +501,7 @@ settings.onClockChange = (fromToggle) => {
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music, building }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music, building, cats }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -532,6 +537,7 @@ renderer.setAnimationLoop(() => {
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   remotes.update(dt)
+  cats.update(dt, player.group.position)
   gameCamera.update(dt, keys, player, settings, fp)
   daynight.update(settings, camera.position)
 

@@ -244,6 +244,12 @@ export class GameRoom extends DurableObject<Env> {
       // hp is a commutative sum of relayed dmg, so clients that see hits in
       // different orders still agree on when a block dies.
       this.broadcast(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }), ws)
+    } else if (msg.t === 'pet') {
+      // Cats are deterministic (src/cats.ts), so the index is all anyone
+      // needs to pop a heart over the right one.
+      const cat = Math.floor(Number(msg.cat))
+      if (!Number.isFinite(cat) || cat < 0 || cat > 15) return
+      this.broadcast(JSON.stringify({ t: 'pet', id: att.id, cat }), ws)
     }
   }
 

@@ -111,6 +111,10 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   damage (katana 1, shovel 2, rocket blast 3 from the rocket's owner); hp is
   a commutative sum of relayed dmg, so clients converge regardless of hit
   order, and hits on missing blocks are no-ops. See `building.ts`/`blocks.ts`.
+- client→server `pet`: someone petted a cat, `{cat: index}`; relayed with the
+  petter's id so everyone sees the heart. Cats themselves are never synced —
+  see `cats.ts`, where position is a closed-form function of the clock. That's
+  why petting is purely cosmetic: it must never move a cat.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world

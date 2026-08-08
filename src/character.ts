@@ -499,7 +499,8 @@ export function buildBuilder(): THREE.Group {
   return mallet
 }
 
-function makeNameTag(name: string): THREE.Sprite {
+// Exported for cats.ts, which hangs a smaller one over each cat.
+export function makeNameTag(name: string): THREE.Sprite {
   // Low-res canvas + nearest filtering: the game renders at 320x240, so a big
   // smooth texture just gets minified into mush. Chunky pixels read better.
   const canvas = document.createElement('canvas')

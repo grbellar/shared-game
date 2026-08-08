@@ -35,6 +35,20 @@
         font: 12px monospace;
         pointer-events: none;
       }
+      #pet-hint {
+        position: fixed;
+        /* Above the build HUD and the chat input, which both sit at 34-36px. */
+        bottom: 66px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        color: #ffd9e2;
+        font: 12px monospace;
+        padding: 5px 10px;
+        -webkit-tap-highlight-color: transparent;
+      }
       #status {
         position: fixed;
         top: calc(env(safe-area-inset-top) + 12px);
@@ -159,7 +173,7 @@
   <body>
     <div id="welcome">WELCOME TO<br />WHEELCHAIR WARRIORS<small>press R to ride</small></div>
     <div id="status"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; V voice &middot; G bazooka &middot; H katana &middot; F shovel &middot; B bow (hold click) &middot; T build (1-4 material) &middot; R wheelchair &middot; Y ramsey &middot; click attack</div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; V voice &middot; G bazooka &middot; H katana &middot; F shovel &middot; B bow (hold click) &middot; T build (1-4 material) &middot; R wheelchair &middot; Y ramsey &middot; P pet cat &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

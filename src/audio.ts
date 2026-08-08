@@ -307,6 +307,73 @@ class Sfx {
     this.tone('square', 262, 196, 0.5, 0.12, 0.52)
   }
 
+  // --- critters ---
+
+  // Two-part "me-ow": the pitch rises, then falls away. The vibrato is what
+  // sells it as a voice instead of a siren, and the sweeping bandpass is a
+  // mouth opening and closing.
+  meow(vol = 1, pitch = 1): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime
+    const base = 520 * pitch
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(base * 0.8, t0)
+    osc.frequency.exponentialRampToValueAtTime(base * 1.35, t0 + 0.13)
+    osc.frequency.exponentialRampToValueAtTime(base * 0.6, t0 + 0.45)
+    const lfo = this.ctx.createOscillator()
+    lfo.frequency.value = 11
+    const lfoGain = this.ctx.createGain()
+    lfoGain.gain.value = base * 0.05
+    lfo.connect(lfoGain)
+    lfoGain.connect(osc.frequency)
+    const mouth = this.ctx.createBiquadFilter()
+    mouth.type = 'bandpass'
+    mouth.Q.value = 3
+    mouth.frequency.setValueAtTime(700, t0)
+    mouth.frequency.linearRampToValueAtTime(1600, t0 + 0.15)
+    mouth.frequency.linearRampToValueAtTime(600, t0 + 0.5)
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t0)
+    g.gain.exponentialRampToValueAtTime(0.24 * vol, t0 + 0.06)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.5)
+    osc.connect(mouth)
+    mouth.connect(g)
+    g.connect(this.out)
+    osc.start(t0)
+    osc.stop(t0 + 0.55)
+    lfo.start(t0)
+    lfo.stop(t0 + 0.55)
+  }
+
+  // Low rumble under a ~26 Hz tremolo — the rattle is the whole purr.
+  purr(vol = 1): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime
+    const src = this.ctx.createBufferSource()
+    src.buffer = this.noiseBuffer(1.2, 6000)
+    const lp = this.ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 260
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t0)
+    g.gain.exponentialRampToValueAtTime(0.3 * vol, t0 + 0.1)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 1.1)
+    const lfo = this.ctx.createOscillator()
+    lfo.frequency.value = 26
+    const lfoGain = this.ctx.createGain()
+    lfoGain.gain.value = 0.22 * vol
+    lfo.connect(lfoGain)
+    lfoGain.connect(g.gain)
+    src.connect(lp)
+    lp.connect(g)
+    g.connect(this.out)
+    src.start(t0)
+    src.stop(t0 + 1.15)
+    lfo.start(t0)
+    lfo.stop(t0 + 1.15)
+  }
+
   // --- ui ---
 
   chat(): void {
