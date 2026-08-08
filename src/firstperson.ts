@@ -1,6 +1,13 @@
 import * as THREE from 'three'
 import { heightAt } from './world'
-import { buildBazooka, buildKatana, buildShovel, buildBow, SLASH_DURATION } from './character'
+import {
+  buildBazooka,
+  buildBow,
+  buildBuilder,
+  buildKatana,
+  buildShovel,
+  SLASH_DURATION,
+} from './character'
 import { buildArrow } from './arrows'
 import type { Player } from './player'
 
@@ -31,6 +38,7 @@ const VIEW_POSES: Record<
   // The bow is built facing -Z already; held right of center, canted like
   // a proper FPS bow so the limbs stay clear of the crosshair.
   bow: { pos: [0.38, -0.34, -0.9], rot: [0, 0, 0.3], hand: [0, -0.02, 0] },
+  builder: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12], hand: [0.05, 0, -0.4] },
 }
 const BOW_VIEW_SCALE = 0.85
 
@@ -140,7 +148,9 @@ export class FirstPersonAim {
           ? buildKatana()
           : weapon === 'shovel'
             ? buildShovel()
-            : buildBow()
+            : weapon === 'builder'
+              ? buildBuilder()
+              : buildBow()
     model.position.set(0, 0, 0) // strip the shoulder-mount offset baked into buildBazooka
     model.rotation.set(...pose.rot)
     held.add(model)

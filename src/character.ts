@@ -135,7 +135,7 @@ export function animateCharacter(
     if (held) held.position.y = (weapon === 'gun' ? 1.8 : 1.5) - 0.3 * crouch
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
-  } else if (weapon === 'sword' || weapon === 'shovel') {
+  } else if (weapon === 'sword' || weapon === 'shovel' || weapon === 'builder') {
     const t = (performance.now() - ((group.userData.attackStart as number) ?? 0)) / 1000
     if (t < SLASH_DURATION) {
       // Overhead chop: wind up behind the head, slice down past the knees.
@@ -172,8 +172,8 @@ export function popHead(group: THREE.Group): THREE.Vector3 | null {
 }
 
 // Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand),
-// 'shovel' (also right hand), or 'none'. Synced over the network via the
-// `weapon` field in PlayerState.
+// 'shovel' or 'builder' (also right hand), or 'none'. Synced over the
+// network via the `weapon` field in PlayerState.
 export function setWeapon(group: THREE.Group, weapon: string): void {
   const existing = group.getObjectByName('weapon')
   if (existing) existing.parent!.remove(existing)
@@ -192,6 +192,8 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
     bow.rotation.y = Math.PI
     bow.position.set(0.3, 1.5, 0.35)
     group.add(bow)
+  } else if (weapon === 'builder') {
+    armR.add(buildBuilder())
   }
 }
 
@@ -361,6 +363,25 @@ export function buildBow(): THREE.Group {
   bow.userData.nockRestZ = -0.18
   bow.userData.nockPullZ = 0.32
   return bow
+}
+
+// Chunky builder's mallet in the right hand, head past the fist (local -Y)
+// like the katana, so the overhead chop doubles as a place-and-tamp whack.
+export function buildBuilder(): THREE.Group {
+  const mallet = new THREE.Group()
+  mallet.name = 'weapon'
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8a5a2b, flatShading: true })
+  const steel = new THREE.MeshLambertMaterial({ color: 0x9aa0a8, flatShading: true })
+  const gold = new THREE.MeshLambertMaterial({ color: 0xb8973a, flatShading: true })
+
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.1, 0.08), wood)
+  shaft.position.y = -0.9
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.12), gold)
+  band.position.y = -1.38
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.26, 0.26), steel)
+  head.position.y = -1.55
+  mallet.add(shaft, band, head)
+  return mallet
 }
 
 function makeNameTag(name: string): THREE.Sprite {

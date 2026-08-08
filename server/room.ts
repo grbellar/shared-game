@@ -9,6 +9,18 @@ interface Crater {
   d: number
 }
 
+interface Block {
+  gx: number
+  gy: number
+  gz: number
+  m: number
+  hp: number
+}
+
+const BLOCK_HP = [2, 4, 6, 8] // keep in sync with MATERIALS in src/blocks.ts
+const BLOCK_CAP = 1500
+const GRID_XZ_MAX = 110 // |gx|,|gz| cap — keep in sync with src/blocks.ts
+
 interface PlayerState {
   id: string
   x: number
@@ -35,6 +47,10 @@ export class GameRoom extends DurableObject<Env> {
   // World damage (blast craters, shovel digs), replayed to late joiners in
   // `welcome`. In-memory like `states`: hibernation heals the island.
   private craters: Crater[] = []
+  // Player-built blocks, keyed by grid cell. Remaining hp lives here so
+  // half-damaged blocks replay accurately; insertion order doubles as the
+  // eviction order when the cap trips. In-memory like everything else.
+  private blocks = new Map<string, Block>()
   // The shared day/night clock: time-of-day in hours anchored to this DO's
   // wall clock. Scrubs/pauses re-anchor it; late joiners get the advanced
   // value in `welcome`. In-memory: hibernation resets to mid-morning.
@@ -60,6 +76,7 @@ export class GameRoom extends DurableObject<Env> {
         id,
         players: [...this.states.values()],
         craters: this.craters,
+        blocks: [...this.blocks.values()],
         clock: { hours: this.clockHours(), running: this.clock.running },
       }),
     )
@@ -188,6 +205,45 @@ export class GameRoom extends DurableObject<Env> {
         JSON.stringify({ t: 'clock', hours: this.clock.hours, running: this.clock.running }),
         ws,
       )
+    } else if (msg.t === 'bplace') {
+      const gx = Number(msg.gx)
+      const gy = Number(msg.gy)
+      const gz = Number(msg.gz)
+      const m = Number(msg.m)
+      // Reject rather than clamp: a clamped block would land somewhere the
+      // client didn't ask for and fork everyone's world.
+      if (!Number.isInteger(gx) || !Number.isInteger(gy) || !Number.isInteger(gz)) return
+      if (Math.abs(gx) > GRID_XZ_MAX || Math.abs(gz) > GRID_XZ_MAX || gy < -8 || gy > 40) return
+      if (!Number.isInteger(m) || m < 0 || m >= BLOCK_HP.length) return
+      const cell = `${gx},${gy},${gz}`
+      // Simultaneous place: first writer wins, the loser's phantom block
+      // heals on their next welcome.
+      if (this.blocks.has(cell)) return
+      this.blocks.set(cell, { gx, gy, gz, m, hp: BLOCK_HP[m] })
+      this.broadcast(JSON.stringify({ t: 'bplace', gx, gy, gz, m }), ws)
+      if (this.blocks.size > BLOCK_CAP) {
+        // Evict the oldest block and tell EVERYONE (no except): reusing the
+        // bhit remove path keeps every client converged, including whoever
+        // placed the block that tripped the cap.
+        const oldest: Block = this.blocks.values().next().value!
+        this.blocks.delete(`${oldest.gx},${oldest.gy},${oldest.gz}`)
+        this.broadcast(
+          JSON.stringify({ t: 'bhit', gx: oldest.gx, gy: oldest.gy, gz: oldest.gz, dmg: 999 }),
+        )
+      }
+    } else if (msg.t === 'bhit') {
+      const gx = Number(msg.gx)
+      const gy = Number(msg.gy)
+      const gz = Number(msg.gz)
+      if (!Number.isInteger(gx) || !Number.isInteger(gy) || !Number.isInteger(gz)) return
+      const dmg = Math.max(1, Math.min(999, Math.round(Number(msg.dmg) || 0)))
+      const b = this.blocks.get(`${gx},${gy},${gz}`)
+      if (!b) return // stale hit on an already-dead block: drop, don't relay
+      b.hp -= dmg
+      if (b.hp <= 0) this.blocks.delete(`${gx},${gy},${gz}`)
+      // hp is a commutative sum of relayed dmg, so clients that see hits in
+      // different orders still agree on when a block dies.
+      this.broadcast(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }), ws)
     }
   }
 

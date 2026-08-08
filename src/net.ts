@@ -2,6 +2,7 @@
 
 import type { Pose } from './character'
 import type { Crater } from './world'
+import type { BlockSpec } from './blocks'
 
 export interface PlayerState {
   id: string
@@ -23,6 +24,7 @@ type ServerMsg =
       id: string
       players: PlayerState[]
       craters?: Crater[]
+      blocks?: BlockSpec[]
       clock?: { hours: number; running: boolean }
     }
   | { t: 'clock'; hours: number; running: boolean }
@@ -36,10 +38,12 @@ type ServerMsg =
   | { t: 'crater'; x: number; z: number; r: number; d: number }
   | { t: 'rtc'; from: string; data: unknown }
   | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
+  | { t: 'bplace'; gx: number; gy: number; gz: number; m: number }
+  | { t: 'bhit'; gx: number; gy: number; gz: number; dmg: number }
 
 export class Net {
   id: string | null = null
-  onWelcome: (players: PlayerState[], craters: Crater[]) => void = () => {}
+  onWelcome: (players: PlayerState[], craters: Crater[], blocks: BlockSpec[]) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
   onChat: (id: string, name: string, text: string) => void = () => {}
@@ -58,6 +62,8 @@ export class Net {
     power: number,
   ) => void = () => {}
   onClock: (hours: number, running: boolean) => void = () => {}
+  onBlockPlace: (gx: number, gy: number, gz: number, m: number) => void = () => {}
+  onBlockHit: (gx: number, gy: number, gz: number, dmg: number) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -73,7 +79,7 @@ export class Net {
       }
       if (msg.t === 'welcome') {
         this.id = msg.id
-        this.onWelcome(msg.players, msg.craters ?? [])
+        this.onWelcome(msg.players, msg.craters ?? [], msg.blocks ?? [])
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
         // No self-echo check needed: the server never echoes to the sender.
@@ -101,6 +107,12 @@ export class Net {
       } else if (msg.t === 'arrow') {
         if (msg.id !== this.id)
           this.onArrow(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz], msg.p)
+      } else if (msg.t === 'bplace') {
+        this.onBlockPlace(msg.gx, msg.gy, msg.gz, msg.m)
+      } else if (msg.t === 'bhit') {
+        // Cap-eviction bhits DO come back to their own trigger (broadcast to
+        // all) — safe, because damaging a missing block is a no-op.
+        this.onBlockHit(msg.gx, msg.gy, msg.gz, msg.dmg)
       }
     }
     ws.onclose = () => {
@@ -179,5 +191,15 @@ export class Net {
   sendClock(hours: number, running: boolean): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'clock', hours, running }))
+  }
+
+  sendBlockPlace(gx: number, gy: number, gz: number, m: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'bplace', gx, gy, gz, m }))
+  }
+
+  sendBlockHit(gx: number, gy: number, gz: number, dmg: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }))
   }
 }

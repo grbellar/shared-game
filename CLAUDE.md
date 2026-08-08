@@ -99,6 +99,14 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   list and replays it in `welcome`; `world.heightAt` subtracts craters as an
   order-independent clamped sum, and prop destruction (trees/rocks caught in
   a crater) is derived from craters, never messaged. See `destruction.ts`.
+- client→server `bplace`: a built block, `{gx, gy, gz, m}` (grid cell +
+  material). The server stores blocks in a Map keyed by cell (first placement
+  wins, capped — over the cap it evicts the oldest by broadcasting a killing
+  `bhit` to everyone) and replays them in `welcome` with remaining hp.
+- client→server `bhit`: block damage, `{gx, gy, gz, dmg}`. The attacker mints
+  damage (katana 1, shovel 2, rocket blast 3 from the rocket's owner); hp is
+  a commutative sum of relayed dmg, so clients converge regardless of hit
+  order, and hits on missing blocks are no-ops. See `building.ts`/`blocks.ts`.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world

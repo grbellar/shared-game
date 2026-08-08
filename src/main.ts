@@ -12,6 +12,9 @@ import { Effects } from './effects'
 import { Arrows } from './arrows'
 import { Destruction } from './destruction'
 import { DayNight } from './daynight'
+import { Building } from './building'
+import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
+import { initBuildHud } from './buildhud'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
 import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
@@ -46,6 +49,7 @@ const camera = new THREE.PerspectiveCamera(70, VIEW_W / VIEW_H, 0.1, 500)
 // In the scene graph so camera children (the first-person view model) render.
 scene.add(camera)
 createWorld(scene)
+initBlocks(scene)
 
 const player = new Player(scene, color, name)
 const remotes = new Remotes(scene)
@@ -61,7 +65,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters) => {
+net.onWelcome = (players, craters, blocks) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -71,6 +75,8 @@ net.onWelcome = (players, craters) => {
   // Catch up on world damage. Silent: no debris bursts, and reconnect
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
+  // Blocks get a full reset instead: some may have died while we were away.
+  building.replay(blocks)
 }
 net.onState = (p) => {
   const isNew = !remotes.getGroup(p.id)
@@ -83,8 +89,9 @@ net.onLeave = (id) => {
 }
 net.connect()
 
-let weapon: 'none' | 'gun' | 'sword' | 'shovel' | 'bow' = 'none'
+let weapon: 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' = 'none'
 let ride: 'none' | 'wheelchair' = 'none'
+let material = 0 // index into MATERIALS, picked with 1-4 while building
 
 setInterval(() => {
   net.sendState({
@@ -111,12 +118,22 @@ net.onArrow = (id, origin, dir, power) => {
   arrows.spawn(id, from, new THREE.Vector3(...dir), power)
 }
 const destruction = new Destruction(effects, net)
+const building = new Building(effects, net)
+building.volumeAt = (pos) => distVol(pos, 50)
+const buildHud = initBuildHud()
 player.onSplash = (x, z) => effects.spawnSplash(x, z)
 remotes.onSplash = (x, z) => {
   effects.spawnSplash(x, z)
   sfx.splash(distVol(new THREE.Vector3(x, 0, z), 50))
 }
-effects.onOwnExplosion = (center) => destruction.rocketCrater(center)
+// Rockets detonate on built blocks, and our own blasts chew through them.
+effects.solidAt = (p) => blockAtPoint(p.x, p.y, p.z) !== undefined
+effects.onOwnExplosion = (center) => {
+  destruction.rocketCrater(center)
+  building.blastDamage(center)
+}
+net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
+net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
 net.onCrater = (c) => {
   // Dig-sized craters get a scoop sound; rocket craters already boomed.
   if (c.r < 3) sfx.dig(distVol(new THREE.Vector3(c.x, player.group.position.y, c.z), 50))
@@ -193,6 +210,31 @@ function releaseBow(): void {
   sfx.bowShot(power)
 }
 
+// The built block a melee swing would connect with: the column just ahead,
+// (there's no pitch aim in third person, so a swing just sweeps the volume
+// in front of you). Both axes are swept rather than sampled once, because
+// cells are 1.5 wide and the grid is fixed in absolute space: one fixed
+// reach can land in the column beside the one the builder fills, and a
+// ground-level block is half-sunk into the hillside, so its top sits below
+// the chest height you'd naively probe.
+const MELEE_REACH = [1.1, 1.7, 2.3]
+const MELEE_HEIGHTS = [0.2, 1.2, 2.2] // above the feet: sunk block, chest, head
+function meleeBlockTarget(): BlockSpec | undefined {
+  const p = player.group.position
+  const ry = player.group.rotation.y
+  const sin = Math.sin(ry)
+  const cos = Math.cos(ry)
+  for (const dist of MELEE_REACH) {
+    const tx = p.x + sin * dist
+    const tz = p.z + cos * dist
+    for (const h of MELEE_HEIGHTS) {
+      const hit = blockAtPoint(tx, p.y + h, tz)
+      if (hit) return hit
+    }
+  }
+  return undefined
+}
+
 let lastAttack = 0
 const SWORD_DAMAGE = 55 // two clean swings takes a head off
 function attack(): void {
@@ -218,7 +260,8 @@ function attack(): void {
     fp.swing()
     startSlash(player.group)
     net.sendSlash()
-    // Check for a hit at the midpoint of the swing.
+    // Check for a hit at the midpoint of the swing. Players first — a block
+    // behind a victim never eats the killing blow.
     setTimeout(() => {
       for (const { id, pos } of remotes.targets()) {
         const to = pos.clone().sub(player.group.position)
@@ -232,9 +275,11 @@ function attack(): void {
           // announces it, so the head pops when their `kill` comes back.
           net.sendHit(id, SWORD_DAMAGE)
           sfx.hitmark()
-          break
+          return
         }
       }
+      const block = meleeBlockTarget()
+      if (block) building.hit(block.gx, block.gy, block.gz, 1)
     }, SLASH_DURATION * 500)
   } else if (weapon === 'shovel' && now - lastAttack > 600) {
     lastAttack = now
@@ -242,10 +287,15 @@ function attack(): void {
     fp.swing()
     startSlash(player.group)
     net.sendSlash()
-    // Scoop at the bottom of the swing: the aimed ground point in first
-    // person (fall back to in-front when pointing at the sky), else just
-    // ahead of the feet.
+    // Scoop at the bottom of the swing: a built block in front takes the
+    // hit (a shovel pries harder than a katana slashes), otherwise dig —
+    // the aimed ground point in first person, else just ahead of the feet.
     setTimeout(() => {
+      const block = meleeBlockTarget()
+      if (block) {
+        building.hit(block.gx, block.gy, block.gz, 2)
+        return
+      }
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
       destruction.dig(
@@ -253,6 +303,17 @@ function attack(): void {
         aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6,
       )
     }, SLASH_DURATION * 500)
+  } else if (weapon === 'builder' && now - lastAttack > 250) {
+    lastAttack = now
+    sfx.slash(0.35)
+    fp.swing()
+    startSlash(player.group)
+    net.sendSlash()
+    // Place immediately — snappy building beats swing-synced building. The
+    // target is the crosshair's ground point in first person, else the
+    // column just ahead; either way the column stacks upward.
+    const aimed = fp.isActive ? fp.aimedDigPoint() : null
+    building.place(player.group.position, player.group.rotation.y, material, aimed)
   }
 }
 window.addEventListener('mousedown', (e) => {
@@ -336,22 +397,36 @@ window.addEventListener('keydown', (e) => {
     weapon = weapon === 'gun' ? 'none' : 'gun'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
+    buildHud.setVisible(false)
   }
   if (e.code === 'KeyH') {
     weapon = weapon === 'sword' ? 'none' : 'sword'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
+    buildHud.setVisible(false)
   }
   if (e.code === 'KeyF') {
     weapon = weapon === 'shovel' ? 'none' : 'shovel'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
+    buildHud.setVisible(false)
   }
   if (e.code === 'KeyB') {
     weapon = weapon === 'bow' ? 'none' : 'bow'
     bowDrawStart = -1
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
+    buildHud.setVisible(false)
+  }
+  if (e.code === 'KeyT') {
+    weapon = weapon === 'builder' ? 'none' : 'builder'
+    setWeapon(player.group, weapon)
+    sfx.equip(weapon !== 'none')
+    buildHud.setVisible(weapon === 'builder')
+  }
+  if (weapon === 'builder' && /^Digit[1-4]$/.test(e.code)) {
+    material = Number(e.code.slice(5)) - 1
+    buildHud.setMaterial(material)
   }
   if (e.code === 'KeyR') {
     ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
@@ -385,7 +460,7 @@ settings.onClockChange = (fromToggle) => {
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music, building }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {

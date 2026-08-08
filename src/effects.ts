@@ -49,6 +49,9 @@ export class Effects {
   // exactly one client (the shooter) mints the world damage — per-client sim
   // divergence must never fork the terrain.
   onOwnExplosion: (center: THREE.Vector3) => void = () => {}
+  // Extra rocket-stopping solids beyond terrain and props (built blocks).
+  // A callback so effects stays ignorant of the blocks module; main.ts wires it.
+  solidAt: (p: THREE.Vector3) => boolean = () => false
   private rockets: Rocket[] = []
   private puffs: Puff[] = []
   private explosions: Explosion[] = []
@@ -131,7 +134,7 @@ export class Effects {
       const hitPlayer = targets.some(
         (t) => t.id !== r.ownerId && this.tmp.set(t.pos.x, t.pos.y + 1.2, t.pos.z).distanceTo(p) < 1.5,
       )
-      if (hitGround || hitPlayer || propInPath(p) || r.life <= 0) {
+      if (hitGround || hitPlayer || propInPath(p) || this.solidAt(p) || r.life <= 0) {
         this.explode(p.clone(), r.ownerId)
         this.scene.remove(r.mesh)
         this.rockets.splice(i, 1)

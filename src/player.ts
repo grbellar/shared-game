@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createCharacter, animateCharacter, type Pose } from './character'
 import { heightAt } from './world'
+import { blockFloorAt, wallAt } from './blocks'
 import { sfx } from './audio'
 
 const SPEED = 9
@@ -68,6 +69,16 @@ export class Player {
     if (y > 0) this.onGround = false
   }
 
+  // Horizontal move with per-axis wall checks against built blocks: a
+  // single block auto-steps (the floor resolve pops you up), anything
+  // taller stops that axis. Terrain itself never blocks — only blocks do.
+  private tryMove(mx: number, mz: number): void {
+    const p = this.group.position
+    const R = 0.35 // leading edge of the blocky torso
+    if (mx !== 0 && !wallAt(p.x + mx + Math.sign(mx) * R, p.z, p.y)) p.x += mx
+    if (mz !== 0 && !wallAt(p.x, p.z + mz + Math.sign(mz) * R, p.y)) p.z += mz
+  }
+
   // Headless pause, then respawn somewhere fresh on the island.
   die(): void {
     if (this.dead) return
@@ -112,8 +123,7 @@ export class Player {
       dz /= len
       const analog = Math.min(mag, 1)
       const moveSpeed = this.riding ? RIDE_SPEED : SPEED
-      this.group.position.x += dx * moveSpeed * speedMul * analog * dt
-      this.group.position.z += dz * moveSpeed * speedMul * analog * dt
+      this.tryMove(dx * moveSpeed * speedMul * analog * dt, dz * moveSpeed * speedMul * analog * dt)
       // Face the direction of travel, taking the short way around —
       // unless the mouse owns the facing (first-person strafe).
       if (!input.strafe) {
@@ -133,17 +143,19 @@ export class Player {
     }
 
     // Knockback impulses decay with heavy friction.
-    this.group.position.x += this.velX * dt
-    this.group.position.z += this.velZ * dt
+    this.tryMove(this.velX * dt, this.velZ * dt)
     const friction = Math.pow(0.03, dt)
     this.velX *= friction
     this.velZ *= friction
 
-    // Gravity, then ground or water-surface collision.
+    // Gravity, then ground, block-top, or water-surface collision.
     this.velY -= GRAVITY * dt
     this.group.position.y += this.velY * dt
     const ground = heightAt(this.group.position.x, this.group.position.z)
-    const overDeepWater = ground < WATER_LEVEL - 0.01
+    // Highest built block we could stand on here. A block breaching the
+    // surface turns deep water into a dock; a deeply sunk one stays swimmable.
+    const blockTop = blockFloorAt(this.group.position.x, this.group.position.z, this.group.position.y)
+    const overDeepWater = ground < WATER_LEVEL - 0.01 && blockTop < WATER_LEVEL - 0.01
     let floating = false
     if (
       overDeepWater &&
@@ -161,7 +173,7 @@ export class Player {
       this.onGround = true
       floating = true
     } else {
-      const floor = Math.max(ground, WATER_LEVEL)
+      const floor = Math.max(ground, WATER_LEVEL, blockTop)
       if (this.group.position.y <= floor) {
         if (!this.onGround && this.velY < -5 && floor < -0.05) {
           // Landing feet-underwater in the shallows: splash, not thud.
