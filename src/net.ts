@@ -58,6 +58,8 @@ type ServerMsg =
   | { t: 'face'; id: string; d: string }
   | { t: 'shark'; x: number; z: number; ry: number; hp: number; st: string; grab: string }
   | { t: 'sharkhit'; dmg: number }
+  | { t: 'skel'; s: number[] }
+  | { t: 'skelhit'; i: number; dmg: number }
 
 export class Net {
   id: string | null = null
@@ -94,6 +96,9 @@ export class Net {
   onFace: (id: string, dataUrl: string) => void = () => {}
   onShark: (s: SharkNetState) => void = () => {}
   onSharkHit: (dmg: number) => void = () => {}
+  // The castle garrison, packed five numbers per skeleton (see skeletons.ts).
+  onSkeletons: (packed: number[]) => void = () => {}
+  onSkeletonHit: (index: number, dmg: number) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -169,6 +174,10 @@ export class Net {
         })
       } else if (msg.t === 'sharkhit') {
         this.onSharkHit(msg.dmg)
+      } else if (msg.t === 'skel') {
+        if (Array.isArray(msg.s)) this.onSkeletons(msg.s)
+      } else if (msg.t === 'skelhit') {
+        this.onSkeletonHit(msg.i, msg.dmg)
       }
     }
     ws.onclose = () => {
@@ -227,6 +236,17 @@ export class Net {
   sendSharkHit(dmg: number): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'sharkhit', dmg }))
+  }
+
+  // Host-only: the whole garrison in one packed array, ~10x/sec.
+  sendSkeletons(packed: number[]): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'skel', s: packed }))
+  }
+
+  sendSkeletonHit(index: number, dmg: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'skelhit', i: index, dmg }))
   }
 
   // Voice-chat signaling (offer/answer/ICE), relayed to one target peer.

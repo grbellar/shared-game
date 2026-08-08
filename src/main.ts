@@ -27,6 +27,7 @@ import { FirstPersonAim } from './firstperson'
 import { Minimap } from './minimap'
 import { Health } from './health'
 import { Shark } from './shark'
+import { Skeletons } from './skeletons'
 import { Cats } from './cats'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
@@ -258,6 +259,9 @@ net.onArrow = (id, origin, dir, power) => {
 }
 const destruction = new Destruction(effects, net)
 const shark = new Shark(scene, net, effects, remotes, health)
+// The castle garrison. Hosted by one client like the shark, and only ever a
+// problem for people who went through the portal.
+const skeletons = new Skeletons(scene, net, remotes, effects, health)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
@@ -334,6 +338,7 @@ effects.onOwnExplosion = (center) => {
   // Same rule as craters: only the rocket's owner scores the hit, so one
   // blast can't be counted once per client in the room.
   shark.blast(center)
+  skeletons.blast(center)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
@@ -491,6 +496,10 @@ function attack(): void {
           return
         }
       }
+      if (skeletons.swing(player.group.position, player.group.rotation.y, 40)) {
+        sfx.hitmark()
+        return
+      }
       if (shark.swing(player.group.position, player.group.rotation.y, 34)) return
       const block = meleeBlockTarget()
       if (block) building.hit(block.gx, block.gy, block.gz, 1)
@@ -505,6 +514,12 @@ function attack(): void {
     // hit (a shovel pries harder than a katana slashes), otherwise dig —
     // the aimed ground point in first person, else just ahead of the feet.
     setTimeout(() => {
+      // A shovel to the skull first — a wall behind a skeleton shouldn't eat
+      // the swing while something is actively trying to kill you.
+      if (skeletons.swing(player.group.position, player.group.rotation.y, 26)) {
+        sfx.hitmark()
+        return
+      }
       const block = meleeBlockTarget()
       if (block) {
         building.hit(block.gx, block.gy, block.gz, 2)
@@ -842,6 +857,7 @@ function crossTo(gate: Gate): void {
   portals,
   gameCamera,
   blocks,
+  skeletons,
   faceBar,
   scene,
   camera,
@@ -854,6 +870,8 @@ renderer.setAnimationLoop(() => {
 
   gameCamera.addYaw(touch.consumeYaw())
   music.setEnabled(settings.music && !sfx.muted)
+  // The score follows you through the portal.
+  music.setScore(shadow ? 'shadow' : 'island')
   fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen // a wheel borrows the mouse
   fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
   fp.update(dt)
@@ -917,6 +935,7 @@ renderer.setAnimationLoop(() => {
   // After the player and remotes have moved: the shark chases current
   // positions, and when it has you it overrides where you ended up.
   shark.update(dt, player)
+  skeletons.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
   gameCamera.update(dt, player, settings, fp)
@@ -932,7 +951,7 @@ renderer.setAnimationLoop(() => {
     dt,
   )
   daynight.update(settings, camera.position, shadow ? 1 : 0)
-  minimap.update(player, remotes, settings, voice.level)
+  minimap.update(player, remotes, settings, voice.level, skeletons)
 
   renderer.render(scene, camera)
 })

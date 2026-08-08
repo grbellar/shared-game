@@ -44,6 +44,28 @@ const RUNS: [number, number][][] = [
 // line up on this.
 export const CASTLE_GATE_Z = REALM_Z - WALL * BLOCK
 
+// Where the garrison stands, in world units. Fixed posts rather than random
+// scatter: a skeleton wants somewhere to go back to, and a fixed list means
+// every client agrees on the roster even before the host's first update.
+// `y` is the walking surface — the courtyard, the wall walk at WALL_TOP, the
+// keep's storeys, the roof deck.
+const RAMPART_Y = (WALL_TOP + 1) * BLOCK
+const FLOOR1_Y = (STOREYS[0] + 1) * BLOCK
+const DECK_Y = (KEEP_TOP + 1) * BLOCK
+export const GUARD_POSTS: { x: number; y: number; z: number }[] = [
+  { x: REALM_X - 18, y: REALM_GROUND, z: REALM_Z - 12 }, // courtyard, four corners of it
+  { x: REALM_X + 15, y: REALM_GROUND, z: REALM_Z - 14 },
+  { x: REALM_X - 16, y: REALM_GROUND, z: REALM_Z + 15 },
+  { x: REALM_X + 19, y: REALM_GROUND, z: REALM_Z + 7 },
+  { x: REALM_X, y: REALM_GROUND, z: REALM_Z - 42 }, // the road, outside the gate
+  { x: REALM_X - 9, y: REALM_GROUND, z: REALM_Z - 36 },
+  { x: (0 - WALL + 1) * BLOCK + REALM_X, y: RAMPART_Y, z: REALM_Z + 6 }, // wall walk
+  { x: (WALL - 1) * BLOCK + REALM_X, y: RAMPART_Y, z: REALM_Z - 6 },
+  { x: REALM_X + 3, y: REALM_GROUND, z: (KEEP_V + 1) * BLOCK + REALM_Z }, // throne room
+  { x: REALM_X - 3, y: FLOOR1_Y, z: (KEEP_V - 2) * BLOCK + REALM_Z }, // keep, first storey
+  { x: REALM_X, y: DECK_Y, z: (KEEP_V + 3) * BLOCK + REALM_Z }, // roof deck lookout
+]
+
 function put(u: number, v: number, gy: number, m: number): void {
   placeBlock({ gx: CGX + u, gy, gz: CGZ + v, m, hp: MATERIALS[m].hp })
 }
