@@ -138,6 +138,11 @@ split as blast knockback.
   damage (katana 1, shovel 2, rocket blast 3 from the rocket's owner); hp is
   a commutative sum of relayed dmg, so clients converge regardless of hit
   order, and hits on missing blocks are no-ops. See `building.ts`/`blocks.ts`.
+  The builder's right-click is the one exception to chewing through hp: it
+  sends the block's whole remaining hp as one `bhit`, so the tool that builds
+  also unbuilds in a click. `building.aim()` is the single source of truth for
+  what's targeted — the ghost preview (`blockghost.ts`) and both clicks all go
+  through it, so what you see outlined is exactly what the click acts on.
 - client→server `pet`: someone petted a cat, `{cat: index}`; relayed with the
   petter's id so everyone sees the heart. Cats themselves are never synced —
   see `cats.ts`, where position is a closed-form function of the clock. That's

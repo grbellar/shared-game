@@ -17,6 +17,7 @@ import { DayNight } from './daynight'
 import { Building } from './building'
 import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
+import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
@@ -243,7 +244,15 @@ const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
 buildHud.setMaterial(material)
-buildHud.setVisible(weapon === 'builder')
+const blockGhost = new BlockGhost(scene)
+// Everything that only makes sense with the builder out: the material chips
+// and (on touch, which has no right button) the break key.
+function setBuildUi(v: boolean): void {
+  buildHud.setVisible(v)
+  const breakBtn = document.getElementById('touch-break')
+  if (breakBtn) breakBtn.style.display = v ? 'flex' : 'none'
+}
+setBuildUi(weapon === 'builder')
 
 // Everything equip goes through these two, whether it came from a hotkey or
 // a wheel wedge — so the sound, the build HUD, and the saved loadout can
@@ -253,7 +262,7 @@ function equipWeapon(next: Weapon): void {
   bowDrawStart = -1
   setWeapon(player.group, weapon)
   sfx.equip(weapon !== 'none')
-  buildHud.setVisible(weapon === 'builder')
+  setBuildUi(weapon === 'builder')
   saveLoadout()
 }
 function equipRide(next: Ride): void {
@@ -522,6 +531,37 @@ function attack(): void {
   }
 }
 
+// Where the builder is pointing this instant: the cell a click fills and the
+// block it would knock out. The ghost draws it and both clicks act on it, so
+// there's no second copy of the aiming math to drift.
+function buildAim(): ReturnType<Building['aim']> {
+  if (weapon !== 'builder' || player.dead) return null
+  return building.aim(
+    player.group.position,
+    player.group.rotation.y,
+    fp.isActive ? fp.aimedDigPoint() : null,
+  )
+}
+
+// Right-click with the builder equipped: pop out the block the cage is around.
+let lastBreak = 0
+function breakBlock(): void {
+  const now = performance.now()
+  if (player.dead || now - lastBreak < 200) return
+  lastBreak = now
+  emotes.stop()
+  fp.swing()
+  startSlash(player.group)
+  net.sendSlash()
+  if (!building.breakAt(
+    player.group.position,
+    player.group.rotation.y,
+    fp.isActive ? fp.aimedDigPoint() : null,
+  )) {
+    sfx.slash(0.25) // whiffed at empty air
+  }
+}
+
 // Light every firework we've planted. They also self-launch when the fuse
 // burns down, so touch players (no keyboard) still get the show.
 function launchFireworks(): void {
@@ -535,6 +575,12 @@ window.addEventListener('mousedown', (e) => {
   if (target !== document.body && target.tagName !== 'CANVAS') return
   // In first person the first click grabs the mouse; later clicks attack.
   if (fp.claimClickForLock()) return
+  // Right-click is the builder's eraser. Every other tool ignores it — it
+  // used to fire whatever you were holding, which nobody meant to do.
+  if (e.button !== 0) {
+    if (e.button === 2 && weapon === 'builder') breakBlock()
+    return
+  }
   if (weapon === 'bow') {
     bowDrawStart = performance.now()
     sfx.bowDraw()
@@ -559,6 +605,15 @@ if (touch.active) {
     e.preventDefault()
     attack()
   })
+  // Touch has no right button, so the eraser gets its own key — shown only
+  // while the builder is out (setBuildUi owns that).
+  const dig = document.createElement('div')
+  dig.id = 'touch-break'
+  dig.textContent = '⛏'
+  dig.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    breakBlock()
+  })
   const mic = document.createElement('div')
   mic.id = 'mic-open'
   mic.textContent = '🎤'
@@ -570,7 +625,8 @@ if (touch.active) {
       sfx.equip(on)
     })
   })
-  document.body.append(fire, mic)
+  document.body.append(fire, dig, mic)
+  setBuildUi(weapon === 'builder') // the break key only exists now
 }
 
 // Voice chat is ON by default: the mic starts as soon as you join (browser
@@ -709,6 +765,7 @@ settings.onClockChange = (fromToggle) => {
   effects,
   music,
   building,
+  blockGhost,
   cats,
   fireworks,
   webcam,
@@ -763,6 +820,17 @@ renderer.setAnimationLoop(() => {
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
   gameCamera.update(dt, keys, player, settings, fp)
+  // After the player has settled: the ghost is aimed from where you actually
+  // ended up this frame, so it never lags a step behind your feet.
+  const aim = buildAim()
+  blockGhost.update(
+    aim && {
+      place: { gx: aim.gx, gy: aim.gy, gz: aim.gz, valid: aim.valid },
+      break: aim.breakGy === null ? null : { gx: aim.gx, gy: aim.breakGy, gz: aim.gz },
+      m: material,
+    },
+    dt,
+  )
   daynight.update(settings, camera.position)
 
   renderer.render(scene, camera)
