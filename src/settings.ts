@@ -116,12 +116,14 @@ export function initSettings(): Settings {
   row.className = 'settings-row'
 
   const label = document.createElement('span')
+  label.id = 'settings-camera-follow-label'
   label.textContent = 'camera always behind me'
 
   const toggle = document.createElement('button')
   toggle.type = 'button'
   toggle.className = 'settings-switch'
   toggle.setAttribute('role', 'switch')
+  toggle.setAttribute('aria-labelledby', label.id)
 
   const knob = document.createElement('span')
   knob.className = 'settings-knob'
@@ -141,6 +143,9 @@ export function initSettings(): Settings {
     toggle.blur()
   })
 
+  // Clicking the label text toggles the switch too.
+  label.addEventListener('click', () => toggle.click())
+
   const setOpen = (open: boolean): void => {
     panel.hidden = !open
     gear.classList.toggle('open', open)
@@ -150,7 +155,7 @@ export function initSettings(): Settings {
     gear.blur()
   })
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'Escape') setOpen(panel.hidden)
+    if (e.code === 'Escape' && !e.repeat) setOpen(panel.hidden)
   })
 
   row.append(label, toggle)

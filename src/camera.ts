@@ -30,7 +30,8 @@ export class GameCamera {
 
     // Follow cam: while the player moves, ease in behind the character
     // (their yaw + π), taking the short way around. Q/E peeks still work —
-    // this pull just wins over time. Standing still, a peek sticks.
+    // while held they settle at a small offset; on release the camera
+    // glides back behind. Standing still, a peek sticks.
     if (settings.cameraFollow && player.moving) {
       const behind = player.group.rotation.y + Math.PI
       const delta = Math.atan2(Math.sin(behind - this.camYaw), Math.cos(behind - this.camYaw))
