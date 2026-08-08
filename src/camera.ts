@@ -1,19 +1,31 @@
 import * as THREE from 'three'
+import { heightAt } from './world'
 import type { Player } from './player'
 import type { Settings } from './settings'
 import type { FirstPersonAim } from './firstperson'
 
-const ORBIT_SPEED = 2.2
-const DISTANCE = 9
-const HEIGHT = 6
+const SENSITIVITY = 0.0035 // rad per px of mouse travel, matches first person
+const LOOK_SMOOTH = 30 // how fast the camera chases the mouse (per second)
+const DISTANCE = 10.8 // boom length from pivot to camera
+const PITCH_DEFAULT = 0.59 // matches the old fixed framing (9 out, 6 up)
+const PITCH_MIN = 0.06 // don't quite go flat — the boom would scrape the dirt
+const PITCH_MAX = 1.3
 const LOOK_HEIGHT = 2
-const POSITION_LERP = 8
+const PIVOT_LERP = 8
 const FOLLOW_RATE = 4
 
-// Third-person orbit camera, steered with the left/right arrow keys
-// (Q and E belong to the item wheels).
+// Third-person mouse-look camera. Clicking the canvas grabs the pointer
+// (main.ts routes locked mouse movement here), the mouse orbits yaw and
+// pitch, Esc lets go. Mouse input steers a target angle and the camera
+// chases it with a short lag — that filter, plus a smoothed pivot instead
+// of a smoothed camera, is what keeps flicks fluid instead of jittery.
 export class GameCamera {
   private camYaw = 0
+  private camPitch = PITCH_DEFAULT
+  private targetYaw = 0
+  private targetPitch = PITCH_DEFAULT
+  private readonly pivot = new THREE.Vector3()
+  private started = false
   private readonly offset = new THREE.Vector3()
   private readonly lookTarget = new THREE.Vector3()
 
@@ -26,20 +38,37 @@ export class GameCamera {
     return this.camYaw
   }
 
-  // Direct yaw steering from outside the keyboard path (touch drag).
+  // Direct yaw steering from outside the mouse path (touch drag).
   addYaw(delta: number): void {
-    this.camYaw += delta
+    this.targetYaw += delta
+  }
+
+  // Pointer-locked mouse movement; main.ts routes it here in third person.
+  // Mouse right pans the view right, mouse up looks up (camera dips).
+  addLook(dx: number, dy: number): void {
+    this.targetYaw -= dx * SENSITIVITY
+    this.targetPitch = Math.max(
+      PITCH_MIN,
+      Math.min(PITCH_MAX, this.targetPitch + dy * SENSITIVITY),
+    )
   }
 
   // Cut, don't glide. After a teleport the smoothing lerp would spend a
-  // second flying the camera across 1800 units of ocean.
+  // second flying the camera (and its pivot) across 1800 units of ocean.
   snapTo(player: Player): void {
-    this.camYaw = player.group.rotation.y + Math.PI
-    this.offset.set(Math.sin(this.camYaw) * DISTANCE, HEIGHT, Math.cos(this.camYaw) * DISTANCE)
-    this.camera.position.copy(player.group.position).add(this.offset)
+    this.camYaw = this.targetYaw = player.group.rotation.y + Math.PI
+    this.pivot.copy(player.group.position)
+    this.started = true
+    const cp = Math.cos(this.camPitch)
+    this.offset.set(
+      Math.sin(this.camYaw) * DISTANCE * cp,
+      Math.sin(this.camPitch) * DISTANCE,
+      Math.cos(this.camYaw) * DISTANCE * cp,
+    )
+    this.camera.position.copy(this.pivot).add(this.offset)
   }
 
-  update(dt: number, keys: Set<string>, player: Player, settings: Settings, fp: FirstPersonAim): void {
+  update(dt: number, player: Player, settings: Settings, fp: FirstPersonAim): void {
     if (fp.isActive) {
       // Rigid eye camera: at the head, looking along the crosshair. Follows
       // the crouch squat via the animation blend so ducking actually ducks.
@@ -48,29 +77,48 @@ export class GameCamera {
       this.camera.position.set(player.group.position.x, eyeY, player.group.position.z)
       fp.aimDir(this.lookTarget).add(this.camera.position)
       this.camera.lookAt(this.lookTarget)
-      // Park the orbit yaw behind the player: movement input stays aligned
-      // with facing, and dropping out of first person doesn't snap the view.
-      this.camYaw = player.group.rotation.y + Math.PI
+      // Park the orbit behind the player at the default framing: movement
+      // input stays aligned with facing, and dropping out of first person
+      // doesn't snap the view.
+      this.camYaw = this.targetYaw = player.group.rotation.y + Math.PI
+      this.camPitch = this.targetPitch = PITCH_DEFAULT
+      this.pivot.copy(player.group.position)
+      this.started = true
       return
     }
 
-    if (keys.has('ArrowLeft')) this.camYaw += ORBIT_SPEED * dt
-    if (keys.has('ArrowRight')) this.camYaw -= ORBIT_SPEED * dt
-
     // Follow cam: while the player moves, ease in behind the character
-    // (their yaw + π), taking the short way around. Q/E peeks still work —
-    // while held they settle at a small offset; on release the camera
-    // glides back behind. Standing still, a peek sticks.
+    // (their yaw + π), taking the short way around. A mouse peek still
+    // works — on release the camera glides back behind. Standing still,
+    // a peek sticks.
     if (settings.cameraFollow && player.moving) {
       const behind = player.group.rotation.y + Math.PI
-      const delta = Math.atan2(Math.sin(behind - this.camYaw), Math.cos(behind - this.camYaw))
-      this.camYaw += delta * Math.min(1, FOLLOW_RATE * dt)
+      const delta = Math.atan2(Math.sin(behind - this.targetYaw), Math.cos(behind - this.targetYaw))
+      this.targetYaw += delta * Math.min(1, FOLLOW_RATE * dt)
     }
 
-    this.offset.set(Math.sin(this.camYaw) * DISTANCE, HEIGHT, Math.cos(this.camYaw) * DISTANCE)
-    this.lookTarget.copy(player.group.position).add(this.offset)
-    this.camera.position.lerp(this.lookTarget, Math.min(1, POSITION_LERP * dt))
-    this.lookTarget.copy(player.group.position)
+    const k = Math.min(1, LOOK_SMOOTH * dt)
+    this.camYaw += (this.targetYaw - this.camYaw) * k
+    this.camPitch += (this.targetPitch - this.camPitch) * k
+
+    if (this.started) {
+      this.pivot.lerp(player.group.position, Math.min(1, PIVOT_LERP * dt))
+    } else {
+      this.started = true
+      this.pivot.copy(player.group.position)
+    }
+
+    const cp = Math.cos(this.camPitch)
+    this.offset.set(
+      Math.sin(this.camYaw) * DISTANCE * cp,
+      Math.sin(this.camPitch) * DISTANCE,
+      Math.cos(this.camYaw) * DISTANCE * cp,
+    )
+    this.camera.position.copy(this.pivot).add(this.offset)
+    // Never sink under the island — low pitches can run the boom into a hill.
+    const ground = Math.max(heightAt(this.camera.position.x, this.camera.position.z), 0) + 0.4
+    if (this.camera.position.y < ground) this.camera.position.y = ground
+    this.lookTarget.copy(this.pivot)
     this.lookTarget.y += LOOK_HEIGHT
     this.camera.lookAt(this.lookTarget)
   }

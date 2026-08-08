@@ -295,7 +295,7 @@ function equipRide(next: Ride): void {
 // Item wheels: hold E and sweep for what's in your hand, hold Q for how you
 // get around. Tap instead to pin the wheel open and click. The single-key
 // toggles below still work for muscle memory.
-new ItemWheel(
+const handWheel = new ItemWheel(
   'KeyE',
   'hand',
   [
@@ -310,7 +310,7 @@ new ItemWheel(
   () => weapon,
   (id) => equipWeapon(id as Weapon),
 )
-new ItemWheel(
+const rideWheel = new ItemWheel(
   'KeyQ',
   'ride',
   [
@@ -591,8 +591,15 @@ window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
   if (touch.active || chat.isOpen || emoteWheel.isOpen) return
   if (target !== document.body && target.tagName !== 'CANVAS') return
-  // In first person the first click grabs the mouse; later clicks attack.
+  // The first click grabs the mouse (both camera modes); later clicks attack.
   if (fp.claimClickForLock()) return
+  if (!document.pointerLockElement) {
+    // Chrome enforces a short cooldown after Esc; a too-quick click rejects
+    // and the one after lands. Keep the console quiet about it.
+    const lock = renderer.domElement.requestPointerLock() as unknown as Promise<void> | undefined
+    void lock?.catch(() => {})
+    return
+  }
   // Right-click is the builder's eraser. Every other tool ignores it — it
   // used to fire whatever you were holding, which nobody meant to do.
   if (e.button !== 0) {
@@ -609,6 +616,13 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', () => {
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
+})
+// Third-person mouse look: locked mouse movement orbits the camera — unless
+// first person owns it (it turns the player instead) or a wheel is sweeping.
+window.addEventListener('mousemove', (e) => {
+  if (!document.pointerLockElement || fp.isActive) return
+  if (emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen) return
+  gameCamera.addLook(e.movementX, e.movementY)
 })
 // Right-click is reserved for in-game actions; the chat input keeps the
 // browser menu so paste still works.
@@ -840,7 +854,7 @@ renderer.setAnimationLoop(() => {
 
   gameCamera.addYaw(touch.consumeYaw())
   music.setEnabled(settings.music && !sfx.muted)
-  fp.paused = emoteWheel.isOpen // the wheel borrows the mouse
+  fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen // a wheel borrows the mouse
   fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
   fp.update(dt)
 
@@ -905,7 +919,7 @@ renderer.setAnimationLoop(() => {
   shark.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
-  gameCamera.update(dt, keys, player, settings, fp)
+  gameCamera.update(dt, player, settings, fp)
   // After the player has settled: the ghost is aimed from where you actually
   // ended up this frame, so it never lags a step behind your feet.
   const aim = buildAim()
