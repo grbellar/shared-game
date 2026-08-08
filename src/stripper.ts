@@ -106,6 +106,15 @@ function buildSandy(): THREE.Group {
 
   const top = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.38, 0.56), pink)
   top.position.y = 1.38
+  // Deliberately ridiculous low-poly curves, still covered by her stage top.
+  // The coarse dodecahedrons keep the silhouette readable and on-style.
+  const bustGeo = new THREE.DodecahedronGeometry(0.46, 0)
+  const bustL = new THREE.Mesh(bustGeo, pink)
+  const bustR = new THREE.Mesh(bustGeo, pink)
+  bustL.position.set(-0.29, 1.39, 0.38)
+  bustR.position.set(0.29, 1.39, 0.38)
+  bustL.scale.set(1, 0.88, 1.18)
+  bustR.scale.copy(bustL.scale)
   const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.55, 0.42, 4), pink)
   skirt.rotation.y = Math.PI / 4
   skirt.position.y = 0.78
@@ -137,7 +146,7 @@ function buildSandy(): THREE.Group {
   if (oldTag) group.remove(oldTag)
   const tag = makeNameTag('Scandalous Sandy')
   tag.scale.x = 4.6
-  group.add(top, skirt, belt, hairBack, fringe, pony, tag)
+  group.add(top, bustL, bustR, skirt, belt, hairBack, fringe, pony, tag)
   group.userData.sandy = { skirt }
   return group
 }
