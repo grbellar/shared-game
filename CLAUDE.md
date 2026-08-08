@@ -54,6 +54,10 @@ build) is the only gate.
     players.
   - `player.ts` — local movement, physics, input.
   - `net.ts` — websocket client and message types.
+  - `profile.ts` — persistent per-character identity in localStorage: a secret
+    save token (never broadcast it — it's the key for future server-side
+    saves), plus name, color, and equipped loadout. Settings persist
+    separately in `settings.ts`.
   - `remotes.ts` — rendering/interpolation of other players.
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from

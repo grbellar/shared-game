@@ -18,6 +18,7 @@ import { initBuildHud } from './buildhud'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
 import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
+import { loadProfile, saveProfile } from './profile'
 import { sfx } from './audio'
 import { Voice } from './voice'
 import { music } from './music'
@@ -26,11 +27,11 @@ import { music } from './music'
 const VIEW_W = 320
 const VIEW_H = 240
 
-const NAMES = ['Goober', 'Turnip', 'Moose', 'Bandit', 'Noodle', 'Crouton', 'Gremlin', 'Pebble', 'Sprout', 'Wizard']
-const COLORS = ['#e23b3b', '#3b6fe2', '#2fa84f', '#e2a53b', '#9b4fd4', '#e26fb0', '#33c2c2', '#c2e23b']
-
-const name = `${NAMES[Math.floor(Math.random() * NAMES.length)]}${Math.floor(Math.random() * 90) + 10}`
-const color = COLORS[Math.floor(Math.random() * COLORS.length)]
+// Who you are survives reloads now: token, name, color, and loadout all come
+// from the browser-storage profile (minted on your very first visit).
+const profile = loadProfile()
+const name = profile.name
+const color = profile.color
 
 const renderer = new THREE.WebGLRenderer({ antialias: false })
 renderer.setSize(VIEW_W, VIEW_H, false)
@@ -89,9 +90,22 @@ net.onLeave = (id) => {
 }
 net.connect()
 
-let weapon: 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' = 'none'
-let ride: 'none' | 'wheelchair' | 'ramsey' = 'none'
-let material = 0 // index into MATERIALS, picked with 1-4 while building
+type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder'
+type Ride = 'none' | 'wheelchair' | 'ramsey'
+// Loadout picks up where you left off last session (profile validates them).
+let weapon = profile.weapon as Weapon
+let ride = profile.ride as Ride
+let material = profile.material // index into MATERIALS, picked with 1-4 while building
+setWeapon(player.group, weapon)
+setRide(player.group, ride)
+player.ride = ride
+
+function saveLoadout(): void {
+  profile.weapon = weapon
+  profile.ride = ride
+  profile.material = material
+  saveProfile(profile)
+}
 
 setInterval(() => {
   net.sendState({
@@ -121,6 +135,8 @@ const destruction = new Destruction(effects, net)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
+buildHud.setMaterial(material)
+buildHud.setVisible(weapon === 'builder')
 player.onSplash = (x, z) => effects.spawnSplash(x, z)
 remotes.onSplash = (x, z) => {
   effects.spawnSplash(x, z)
@@ -398,18 +414,21 @@ window.addEventListener('keydown', (e) => {
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyH') {
     weapon = weapon === 'sword' ? 'none' : 'sword'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyF') {
     weapon = weapon === 'shovel' ? 'none' : 'shovel'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyB') {
     weapon = weapon === 'bow' ? 'none' : 'bow'
@@ -417,22 +436,26 @@ window.addEventListener('keydown', (e) => {
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyT') {
     weapon = weapon === 'builder' ? 'none' : 'builder'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(weapon === 'builder')
+    saveLoadout()
   }
   if (weapon === 'builder' && /^Digit[1-4]$/.test(e.code)) {
     material = Number(e.code.slice(5)) - 1
     buildHud.setMaterial(material)
+    saveLoadout()
   }
   if (e.code === 'KeyR') {
     ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
     setRide(player.group, ride)
     player.ride = ride
     sfx.equip(ride !== 'none')
+    saveLoadout()
   }
   if (e.code === 'KeyY') {
     ride = ride === 'ramsey' ? 'none' : 'ramsey'
@@ -440,6 +463,7 @@ window.addEventListener('keydown', (e) => {
     player.ride = ride
     sfx.equip(ride !== 'none')
     if (ride === 'ramsey') sfx.ramseyMount()
+    saveLoadout()
   }
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat) void voice.toggle().then((on) => sfx.equip(on))
