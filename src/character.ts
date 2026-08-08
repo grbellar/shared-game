@@ -54,23 +54,28 @@ export function animateCharacter(group: THREE.Group, walkPhase: number, moving: 
 }
 
 function makeNameTag(name: string): THREE.Sprite {
+  // Low-res canvas + nearest filtering: the game renders at 320x240, so a big
+  // smooth texture just gets minified into mush. Chunky pixels read better.
   const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 64
+  canvas.width = 128
+  canvas.height = 32
   const ctx = canvas.getContext('2d')!
-  ctx.font = 'bold 30px monospace'
+  ctx.font = 'bold 18px monospace'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.lineWidth = 6
-  ctx.strokeStyle = 'rgba(0,0,0,0.8)'
-  ctx.strokeText(name, 128, 32)
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'
+  const w = Math.min(124, ctx.measureText(name).width + 10)
+  ctx.fillRect(64 - w / 2, 3, w, 26)
   ctx.fillStyle = '#ffffff'
-  ctx.fillText(name, 128, 32)
+  ctx.fillText(name, 64, 17)
   const texture = new THREE.CanvasTexture(canvas)
+  texture.minFilter = THREE.NearestFilter
+  texture.magFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }),
   )
-  sprite.scale.set(2.4, 0.6, 1)
-  sprite.position.y = 2.7
+  sprite.scale.set(3.4, 0.85, 1)
+  sprite.position.y = 2.8
   return sprite
 }
