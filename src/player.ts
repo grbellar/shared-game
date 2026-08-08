@@ -10,6 +10,19 @@ const JUMP_VELOCITY = 11
 const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
 
+// A random dry-land spot so players don't stack on one point. Rejection
+// sampling against heightAt (crater-aware, so nobody wakes up at the bottom
+// of a freshly dug pond); center of the island as a last resort.
+function randomSpawn(): { x: number; y: number; z: number } {
+  for (let i = 0; i < 40; i++) {
+    const x = (Math.random() - 0.5) * 100
+    const z = (Math.random() - 0.5) * 100
+    const h = heightAt(x, z)
+    if (h > 1.5) return { x, y: h, z }
+  }
+  return { x: 0, y: heightAt(0, 0), z: 0 }
+}
+
 export interface PlayerInput {
   f: number
   s: number
@@ -37,7 +50,9 @@ export class Player {
 
   constructor(scene: THREE.Scene, color: string, name: string) {
     this.group = createCharacter(color, name)
-    this.group.position.set(0, heightAt(0, 0), 0)
+    const spawn = randomSpawn()
+    this.group.position.set(spawn.x, spawn.y, spawn.z)
+    this.group.rotation.y = Math.random() * Math.PI * 2
     scene.add(this.group)
   }
 
@@ -49,14 +64,13 @@ export class Player {
     if (y > 0) this.onGround = false
   }
 
-  // Headless pause, then respawn near the island center.
+  // Headless pause, then respawn somewhere fresh on the island.
   die(): void {
     if (this.dead) return
     this.dead = true
     setTimeout(() => {
-      const x = (Math.random() - 0.5) * 10
-      const z = (Math.random() - 0.5) * 10
-      this.group.position.set(x, heightAt(x, z), z)
+      const spawn = randomSpawn()
+      this.group.position.set(spawn.x, spawn.y, spawn.z)
       this.velX = this.velY = this.velZ = 0
       this.dead = false
     }, 2500)
