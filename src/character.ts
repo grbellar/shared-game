@@ -1,7 +1,10 @@
 import * as THREE from 'three'
 
+export type Pose = 'stand' | 'crouch' | 'swim'
+
 // Blocky N64-style character. Front of the character faces +Z.
-// Limbs are stashed in userData so animateCharacter can swing them.
+// Limbs pivot at the hip/shoulder and are stashed in userData so
+// animateCharacter can pose them.
 export function createCharacter(color: string, name: string): THREE.Group {
   const group = new THREE.Group()
   const bodyMat = new THREE.MeshLambertMaterial({ color })
@@ -22,35 +25,70 @@ export function createCharacter(color: string, name: string): THREE.Group {
   head.add(eyeL, eyeR)
 
   const legGeo = new THREE.BoxGeometry(0.3, 0.6, 0.3)
+  legGeo.translate(0, -0.3, 0) // pivot at the hip
   const legL = new THREE.Mesh(legGeo, darkMat)
   const legR = new THREE.Mesh(legGeo, darkMat)
-  legL.position.set(-0.22, 0.3, 0)
-  legR.position.set(0.22, 0.3, 0)
+  legL.position.set(-0.22, 0.6, 0)
+  legR.position.set(0.22, 0.6, 0)
 
   const armGeo = new THREE.BoxGeometry(0.22, 0.7, 0.22)
+  armGeo.translate(0, -0.35, 0) // pivot at the shoulder
   const armL = new THREE.Mesh(armGeo, bodyMat)
   const armR = new THREE.Mesh(armGeo, bodyMat)
-  armL.position.set(-0.55, 1.25, 0)
-  armR.position.set(0.55, 1.25, 0)
+  armL.position.set(-0.55, 1.6, 0)
+  armR.position.set(0.55, 1.6, 0)
 
   group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
-  group.userData.limbs = { legL, legR, armL, armR }
+  group.userData.rig = { body, head, legL, legR, armL, armR }
+  group.userData.anim = { crouch: 0, swim: 0 }
   return group
 }
 
-export function animateCharacter(group: THREE.Group, walkPhase: number, moving: number): void {
-  const limbs = group.userData.limbs as {
-    legL: THREE.Mesh
-    legR: THREE.Mesh
-    armL: THREE.Mesh
-    armR: THREE.Mesh
-  }
-  const swing = Math.sin(walkPhase) * 0.8 * moving
-  limbs.legL.rotation.x = swing
-  limbs.legR.rotation.x = -swing
-  limbs.armL.rotation.x = -swing * 0.7
-  limbs.armR.rotation.x = swing * 0.7
+interface Rig {
+  body: THREE.Mesh
+  head: THREE.Mesh
+  legL: THREE.Mesh
+  legR: THREE.Mesh
+  armL: THREE.Mesh
+  armR: THREE.Mesh
+}
+
+export function animateCharacter(
+  group: THREE.Group,
+  dt: number,
+  walkPhase: number,
+  moving: number,
+  pose: Pose = 'stand',
+): void {
+  const rig = group.userData.rig as Rig
+  const anim = group.userData.anim as { crouch: number; swim: number }
+  const k = Math.min(1, 10 * dt)
+  anim.crouch += ((pose === 'crouch' ? 1 : 0) - anim.crouch) * k
+  anim.swim += ((pose === 'swim' ? 1 : 0) - anim.swim) * k
+  const { crouch, swim } = anim
+
+  // Squat: body and head drop, legs squash so the feet stay planted.
+  rig.body.position.y = 1.1 - 0.3 * crouch
+  rig.head.position.y = 1.95 - 0.5 * crouch
+  rig.legL.position.y = rig.legR.position.y = 0.6 - 0.3 * crouch
+  rig.legL.scale.y = rig.legR.scale.y = 1 - 0.5 * crouch
+  rig.armL.position.y = rig.armR.position.y = 1.6 - 0.3 * crouch
+
+  // Legs: stride on land (shorter while crouched), flutter kick in water.
+  const stride = Math.sin(walkPhase) * 0.8 * moving * (1 - 0.55 * crouch)
+  const kick = Math.sin(walkPhase * 2.6) * (0.35 + 0.25 * moving)
+  rig.legL.rotation.x = stride * (1 - swim) + kick * swim
+  rig.legR.rotation.x = -stride * (1 - swim) - kick * swim
+
+  // Arms: swing opposite the legs on land, windmill a front crawl in water.
+  // Wrapped to one turn so blending in/out of swim doesn't pinwheel forever.
+  const stroke = -(walkPhase % (Math.PI * 2))
+  rig.armL.rotation.x = -stride * 0.7 * (1 - swim) + stroke * swim
+  rig.armR.rotation.x = stride * 0.7 * (1 - swim) + (stroke + Math.PI) * swim
+  // Flare the arms out a touch when squatting or paddling.
+  rig.armL.rotation.z = -(0.4 * crouch + 0.25 * swim)
+  rig.armR.rotation.z = 0.4 * crouch + 0.25 * swim
 }
 
 function makeNameTag(name: string): THREE.Sprite {

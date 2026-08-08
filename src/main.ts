@@ -50,6 +50,7 @@ setInterval(() => {
     ry: player.group.rotation.y,
     color,
     name,
+    pose: player.pose,
   })
 }, 66)
 
