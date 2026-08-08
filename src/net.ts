@@ -41,6 +41,8 @@ type ServerMsg =
       wdmg?: WorldDamage[]
       clock?: { hours: number; running: boolean }
       faces?: Face[]
+      // Where each Meckie was left: [index, x, z, carrierId].
+      meck?: [number, number, number, string][]
     }
   | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
@@ -62,6 +64,7 @@ type ServerMsg =
   | { t: 'shark'; x: number; z: number; ry: number; hp: number; st: string; grab: string }
   | { t: 'sharkhit'; dmg: number }
   | { t: 'land'; id: string; x: number; y: number; z: number }
+  | { t: 'meck'; id: string; i: number; x: number; z: number; by: string }
   | { t: 'mob'; i: number; x: number; z: number; ry: number; hp: number; st: string }
   | { t: 'mobhit'; i: number; dmg: number }
   | { t: 'skel'; s: number[] }
@@ -75,6 +78,7 @@ export class Net {
     blocks: BlockSpec[],
     worldDamage: WorldDamage[],
     faces: Face[],
+    meck: [number, number, number, string][],
   ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
@@ -104,6 +108,9 @@ export class Net {
   onSharkHit: (dmg: number) => void = () => {}
   // Somebody's rocket trip touching down near us.
   onLand: (id: string, pos: [number, number, number]) => void = () => {}
+  // A Meckie was picked up or set down. `by` is the carrier's id, '' if they
+  // were put down. The sender's own id arrives so 'me' can be resolved.
+  onMeckie: (id: string, i: number, x: number, z: number, by: string) => void = () => {}
   onMob: (s: MobNetState) => void = () => {}
   onMobHit: (i: number, dmg: number) => void = () => {}
   // The castle garrison, packed five numbers per skeleton (see skeletons.ts).
@@ -132,6 +139,7 @@ export class Net {
           msg.blocks ?? [],
           msg.wdmg ?? [],
           msg.faces ?? [],
+          msg.meck ?? [],
         )
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
@@ -192,6 +200,8 @@ export class Net {
         this.onSkeletonHit(msg.i, msg.dmg)
       } else if (msg.t === 'land') {
         if (msg.id !== this.id) this.onLand(msg.id, [msg.x, msg.y, msg.z])
+      } else if (msg.t === 'meck') {
+        if (msg.id !== this.id) this.onMeckie(msg.id, msg.i, msg.x, msg.z, msg.by)
       } else if (msg.t === 'mob') {
         const st = msg.st
         this.onMob({
@@ -351,6 +361,14 @@ export class Net {
   sendFireworkLaunch(): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'fwgo' }))
+  }
+
+  // Picked a Meckie up ('me' as `by`) or set them down (''). Where a carried
+  // Meckie actually is needs no traffic at all — it's derived from the
+  // carrier's position, which already streams.
+  sendMeckie(i: number, x: number, z: number, by: string): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'meck', i, x, z, by }))
   }
 
   // A 64px webcam frame as a JPEG data URL, or '' to drop back to a blocky

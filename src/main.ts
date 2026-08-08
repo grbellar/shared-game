@@ -30,6 +30,7 @@ import { Shark } from './shark'
 import { Mobs } from './mobs'
 import { Skeletons } from './skeletons'
 import { Cats } from './cats'
+import { Meckies } from './meckies'
 import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
@@ -160,6 +161,8 @@ const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
 const cats = new Cats(scene, touch.active)
+// The Meckies: residents you can pick up and carry somewhere else.
+const meckies = new Meckies(scene, touch.active)
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -168,7 +171,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, worldDamage, faces) => {
+net.onWelcome = (players, craters, blocks, worldDamage, faces, meck) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -191,6 +194,8 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces) => {
   // The castle regenerates pristine inside this call, then takes the room's
   // accumulated damage back on top.
   building.replay(blocks, worldDamage)
+  // Wherever the Meckies were left, including in somebody's arms.
+  for (const [i, x, z, by] of meck) meckies.applyRemote(i, x, z, by)
 }
 net.onState = (p) => {
   const isNew = !remotes.getGroup(p.id)
@@ -198,6 +203,7 @@ net.onState = (p) => {
   if (isNew) voice.peerJoined(p.id)
 }
 net.onLeave = (id) => {
+  meckies.dropCarriedBy(id)
   remotes.remove(id)
   faceBar.remove(id)
   voice.peerLeft(id)
@@ -466,6 +472,10 @@ function rocketToNextIsland(): void {
   map.onPickDest(next)
 }
 
+meckies.onMove = (i, x, z, by) => net.sendMeckie(i, x, z, by)
+// 'me' on the wire means the sender, so resolve it to their id before it
+// reaches the Meckies — to us they're just another carrier.
+net.onMeckie = (id, i, x, z, by) => meckies.applyRemote(i, x, z, by === 'me' ? id : by)
 cats.onPet = (index) => net.sendPet(index)
 net.onPet = (index) => cats.pet(index)
 net.onSlash = (id) => {
@@ -867,6 +877,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
   if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
   if (e.code === 'KeyJ') rocketToNextIsland()
+  if (e.code === 'KeyU') meckies.toggleNearest()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat)
@@ -951,6 +962,7 @@ function crossTo(gate: Gate): void {
   building,
   blockGhost,
   cats,
+  meckies,
   stripper,
   fireworks,
   webcam,
@@ -1092,6 +1104,7 @@ renderer.setAnimationLoop(() => {
   skeletons.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
+  meckies.update(dt, player.group.position, camera.position, (id) => remotes.getGroup(id)?.position)
   stripper.update(dt, [player.group.position, ...remotes.targets().map(({ pos }) => pos)])
   gameCamera.update(dt, player, settings, fp)
   // After the player has settled: the ghost is aimed from where you actually
