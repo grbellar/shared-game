@@ -435,11 +435,39 @@ if (touch.active) {
   mic.addEventListener('pointerdown', (e) => {
     e.preventDefault()
     void voice.toggle().then((on) => {
-      mic.style.opacity = on ? '1' : '0.4'
+      setVoicePref(on)
       sfx.equip(on)
     })
   })
   document.body.append(fire, mic)
+}
+
+// Voice chat is ON by default: the mic starts as soon as you join (browser
+// permitting). V or the mic button mutes, and the choice sticks in the
+// profile. An explicit toggle saves; a failed auto-start doesn't — so a
+// one-time permission hiccup won't silently flip the default off.
+function setVoicePref(on: boolean): void {
+  profile.voice = on
+  saveProfile(profile)
+  const mic = document.getElementById('mic-open')
+  if (mic) mic.style.opacity = on ? '1' : '0.4'
+}
+if (profile.voice) {
+  void voice.toggle().then((on) => {
+    if (on) {
+      setVoicePref(true)
+      return
+    }
+    // Blocked pre-gesture (autoplay policy) — retry once on the first click.
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if ((e.target as HTMLElement)?.id === 'mic-open') return // its own handler toggles
+        if (profile.voice && !voice.enabled) void voice.toggle().then((ok) => ok && setVoicePref(true))
+      },
+      { once: true },
+    )
+  })
 }
 
 const chat = new Chat()
@@ -546,7 +574,11 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
-  if (e.code === 'KeyV' && !e.repeat) void voice.toggle().then((on) => sfx.equip(on))
+  if (e.code === 'KeyV' && !e.repeat)
+    void voice.toggle().then((on) => {
+      setVoicePref(on)
+      sfx.equip(on)
+    })
 })
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 

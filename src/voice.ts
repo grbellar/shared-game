@@ -45,9 +45,11 @@ export class Voice {
         .catch(() => {}) // a dropped signal just means that pair stays silent
     }
     // Autoplay policy can block remote audio before the first interaction;
-    // retry every receiver on the next gesture.
+    // retry every receiver on the next gesture. An auto-started mic's
+    // AudioContext can also wake up suspended — resume it here too.
     const unstick = (): void => {
       for (const { audio } of this.receivers.values()) void audio.play().catch(() => {})
+      if (this.ac?.state === 'suspended') void this.ac.resume()
     }
     window.addEventListener('pointerdown', unstick)
     window.addEventListener('keydown', unstick)

@@ -14,6 +14,7 @@ export interface Profile {
   ride: string
   skin: string
   material: number
+  voice: boolean
 }
 
 const STORAGE_KEY = 'shared-game.profile'
@@ -33,6 +34,7 @@ function mint(): Profile {
     ride: 'none',
     skin: 'none',
     material: 0,
+    voice: true, // proximity voice chat defaults ON; V mutes
   }
 }
 
@@ -52,6 +54,7 @@ export function loadProfile(): Profile {
         typeof obj.material === 'number' && obj.material >= 0 && obj.material <= 3
           ? Math.floor(obj.material)
           : 0,
+      voice: obj.voice !== false, // absence means on
     }
     saveProfile(profile) // heal partial/corrupt records, persist first-run mints
     return profile
