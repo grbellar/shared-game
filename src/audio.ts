@@ -12,7 +12,7 @@ const MUTE_KEY = 'shared-game.sfx-muted'
 class Sfx {
   private ctx: AudioContext | null = null
   private out: GainNode | null = null
-  private masterGain = 0.5
+  private masterGain = 0.4 // sits under voice chat, which has no gain stage of ours
   private mutedFlag = false
   private squeakHigh = false
   private sharkNext = 0
