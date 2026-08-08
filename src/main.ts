@@ -4,7 +4,8 @@ import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
 import { GameCamera } from './camera'
-import { initSettings } from './settings'
+import { initSettings, setSetting } from './settings'
+import { Webcam } from './webcam'
 import { TouchControls } from './touch'
 import { Chat } from './chat'
 import { Bubbles } from './bubbles'
@@ -19,7 +20,16 @@ import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
 import { Cats } from './cats'
-import { setWeapon, setRide, setName, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
+import {
+  setWeapon,
+  setRide,
+  setName,
+  setFace,
+  startSlash,
+  startJabber,
+  popHead,
+  SLASH_DURATION,
+} from './character'
 import { loadProfile, saveProfile } from './profile'
 import { SKINS, applySkin } from './skins'
 import { sfx } from './audio'
@@ -72,6 +82,11 @@ function renameCharacter(raw: string): string {
   }
   return profile.name
 }
+const webcam = new Webcam()
+webcam.onFrame = (dataUrl) => {
+  setFace(player.group, dataUrl)
+  net.sendFace(dataUrl)
+}
 const settings = initSettings(
   {
     current: skin,
@@ -85,6 +100,19 @@ const settings = initSettings(
     },
   },
   { current: profile.name, onChange: renameCharacter },
+  (key, value) => {
+    if (key !== 'webcamFace') return
+    if (value) {
+      // Prompts for the camera. Denied (or no camera) flips the switch back.
+      void webcam.start().then((ok) => {
+        if (!ok) setSetting('webcamFace', false)
+      })
+    } else {
+      webcam.stop()
+      setFace(player.group, null)
+      net.sendFace('')
+    }
+  },
 )
 const touch = new TouchControls()
 const health = new Health()
@@ -98,13 +126,15 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks) => {
+net.onWelcome = (players, craters, blocks, faces) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
     remotes.upsert(p)
     voice.peerJoined(p.id)
   })
+  // Our own face reappears for everyone else on the next captured frame.
+  faces.forEach((f) => remotes.setFace(f.id, f.d))
   // Catch up on world damage. Silent: no debris bursts, and reconnect
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
@@ -120,6 +150,7 @@ net.onLeave = (id) => {
   remotes.remove(id)
   voice.peerLeft(id)
 }
+net.onFace = (id, dataUrl) => remotes.setFace(id, dataUrl)
 net.connect()
 
 type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
@@ -620,6 +651,7 @@ settings.onClockChange = (fromToggle) => {
   building,
   cats,
   fireworks,
+  webcam,
   scene,
   camera,
   draw: () => renderer.render(scene, camera),

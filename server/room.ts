@@ -62,6 +62,11 @@ export class GameRoom extends DurableObject<Env> {
     return (this.clock.hours + ((Date.now() - this.clock.atMs) / 1000) * (24 / DAY_LENGTH_S)) % 24
   }
 
+  // Last webcam frame per player (a small JPEG data URL), replayed in
+  // `welcome` so late joiners see faces immediately instead of waiting up to
+  // 200ms. Dropped when the player leaves or turns their camera off.
+  private faces = new Map<string, string>()
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('Expected WebSocket', { status: 426 })
@@ -79,6 +84,7 @@ export class GameRoom extends DurableObject<Env> {
         craters: this.craters,
         blocks: [...this.blocks.values()],
         clock: { hours: this.clockHours(), running: this.clock.running },
+        faces: [...this.faces].map(([fid, d]) => ({ id: fid, d })),
       }),
     )
     return new Response(null, { status: 101, webSocket: client })
@@ -271,6 +277,20 @@ export class GameRoom extends DurableObject<Env> {
       )
     } else if (msg.t === 'fwgo') {
       this.broadcast(JSON.stringify({ t: 'fwgo', id: att.id }), ws)
+    } else if (msg.t === 'face') {
+      const d = String(msg.d)
+      if (!d) {
+        // Camera switched off: clear it everywhere.
+        this.faces.delete(att.id)
+        this.broadcast(JSON.stringify({ t: 'face', id: att.id, d: '' }), ws)
+        return
+      }
+      // Only ever relay a small JPEG data URL. Clients feed this straight to
+      // an Image, so don't let anything else through, and cap the size well
+      // above a 64px frame (~1.5KB) but far below anything abusive.
+      if (!d.startsWith('data:image/jpeg;base64,') || d.length > 8000) return
+      this.faces.set(att.id, d)
+      this.broadcast(JSON.stringify({ t: 'face', id: att.id, d }), ws)
     }
   }
 
@@ -286,6 +306,7 @@ export class GameRoom extends DurableObject<Env> {
     const att = ws.deserializeAttachment() as { id: string } | null
     if (!att) return
     this.states.delete(att.id)
+    this.faces.delete(att.id)
     this.broadcast(JSON.stringify({ t: 'leave', id: att.id }), ws)
   }
 

@@ -8,6 +8,7 @@ export interface Settings {
   clockRun: boolean // day/night cycle advances on its own
   timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
   music: boolean
+  webcamFace: boolean
   // Fired when the USER scrubs the time slider or flips the clock toggle
   // (not when the network updates them) — main.ts broadcasts the new clock.
   // fromToggle distinguishes "freeze/unfreeze now" from "jump to this time".
@@ -47,9 +48,19 @@ function load(): Settings {
       timeOfDay: typeof obj.timeOfDay === 'number' && isFinite(obj.timeOfDay) ? obj.timeOfDay : 10,
       // Music defaults on, so absence means true.
       music: obj.music !== false,
+      // Never restored from storage: the camera is opt-in every session, so
+      // reloading the page can't silently reopen a webcam.
+      webcamFace: false,
     }
   } catch {
-    return { cameraFollow: false, firstPerson: false, clockRun: true, timeOfDay: 10, music: true }
+    return {
+      cameraFollow: false,
+      firstPerson: false,
+      clockRun: true,
+      timeOfDay: 10,
+      music: true,
+      webcamFace: false,
+    }
   }
 }
 
@@ -61,8 +72,27 @@ function persist(settings: Settings): void {
   }
 }
 
-export function initSettings(character?: CharacterPicker, nameEditor?: NameEditor): Settings {
+// Re-sync callbacks per row, so setSetting() can drive a switch from code
+// (e.g. flipping the webcam back off when permission is denied).
+const syncs = new Map<BoolKey, () => void>()
+let live: Settings | null = null
+
+export function setSetting(key: BoolKey, value: boolean): void {
+  if (!live || live[key] === value) return
+  live[key] = value
+  persist(live)
+  syncs.get(key)?.()
+}
+
+// onToggle fires when the player flips a switch (not for setSetting), for
+// settings that need to do something rather than just be read each frame.
+export function initSettings(
+  character?: CharacterPicker,
+  nameEditor?: NameEditor,
+  onToggle: (key: BoolKey, value: boolean) => void = () => {},
+): Settings {
   const settings = load()
+  live = settings
 
   const style = document.createElement('style')
   style.textContent = `
@@ -205,6 +235,7 @@ export function initSettings(character?: CharacterPicker, nameEditor?: NameEdito
       toggle.setAttribute('aria-checked', String(settings[key]))
     }
     sync()
+    syncs.set(key, sync)
 
     toggle.addEventListener('click', () => {
       settings[key] = !settings[key]
@@ -213,6 +244,7 @@ export function initSettings(character?: CharacterPicker, nameEditor?: NameEdito
       if (key === 'clockRun') settings.onClockChange?.(true)
       // Drop focus so Space stays the jump key instead of re-clicking the switch.
       toggle.blur()
+      onToggle(key, settings[key])
     })
 
     // Clicking the label text toggles the switch too.
@@ -345,6 +377,7 @@ export function initSettings(character?: CharacterPicker, nameEditor?: NameEdito
     timeRow,
     slider,
     makeRow('settings-music-label', 'music', 'music'),
+    makeRow('settings-webcam-label', 'my webcam on my head', 'webcamFace'),
   )
   document.body.append(gear, panel)
 

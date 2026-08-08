@@ -5,6 +5,7 @@ import {
   setWeapon,
   setRide,
   setName,
+  setFace,
   startSlash,
   popHead,
   type Pose,
@@ -29,6 +30,9 @@ export class Remotes {
   // Fired when a remote player hits the water (their pose flips to swim).
   onSplash: (x: number, z: number) => void = () => {}
   private players = new Map<string, Remote>()
+  // Latest webcam frame per id, kept separately because a `face` message can
+  // land before that player's first `state` creates their character.
+  private faces = new Map<string, string>()
 
   constructor(private scene: THREE.Scene) {}
 
@@ -55,6 +59,8 @@ export class Remotes {
         name: p.name,
       }
       this.players.set(p.id, remote)
+      const face = this.faces.get(p.id)
+      if (face) setFace(group, face)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
     const pose = p.pose ?? 'stand'
@@ -98,6 +104,14 @@ export class Remotes {
     return this.players.get(id)?.group
   }
 
+  // Paint a webcam frame on a player's head; '' turns their camera off.
+  setFace(id: string, dataUrl: string): void {
+    if (dataUrl) this.faces.set(id, dataUrl)
+    else this.faces.delete(id)
+    const remote = this.players.get(id)
+    if (remote) setFace(remote.group, dataUrl || null)
+  }
+
   slash(id: string): void {
     const remote = this.players.get(id)
     if (remote) startSlash(remote.group)
@@ -125,6 +139,7 @@ export class Remotes {
     if (!remote) return
     this.scene.remove(remote.group)
     this.players.delete(id)
+    this.faces.delete(id)
   }
 
   clear(): void {

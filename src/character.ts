@@ -21,6 +21,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   const eyeMat = new THREE.MeshLambertMaterial({ color: 0x111111 })
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat)
   const eyeR = new THREE.Mesh(eyeGeo, eyeMat)
+  eyeL.name = eyeR.name = 'eye'
   eyeL.position.set(-0.14, 0.05, 0.31)
   eyeR.position.set(0.14, 0.05, 0.31)
   // Mouth: a dark slot that animateCharacter scales open while the player
@@ -202,6 +203,89 @@ export function popHead(group: THREE.Group): THREE.Vector3 | null {
   head.visible = false
   setTimeout(() => (head.visible = true), 2600)
   return group.position.clone().add(new THREE.Vector3(0, 1.95, 0))
+}
+
+const FACE_PX = 64
+
+interface FaceStore {
+  ctx: CanvasRenderingContext2D
+  texture: THREE.CanvasTexture
+  mat: THREE.MeshLambertMaterial
+  skin: THREE.Material
+  blocky: THREE.Object3D[] // the painted-on eyes and mouth
+  img: HTMLImageElement
+  url: string | null // last frame shown, so refreshFace can re-assert it
+}
+
+// Paint a webcam frame (a JPEG data URL from webcam.ts) on the front of the
+// head, or pass null to go back to the blocky face. Synced over the network
+// via `face` messages, not PlayerState — frames are far too big to ride along
+// at the state rate.
+export function setFace(group: THREE.Group, dataUrl: string | null): void {
+  const head = group.getObjectByName('head') as THREE.Mesh | undefined
+  if (!head) return
+  let store = group.userData.face as FaceStore | undefined
+
+  if (!dataUrl) {
+    if (!store || store.url === null) return
+    head.material = store.skin
+    for (const part of store.blocky) part.visible = true
+    store.url = null
+    return
+  }
+
+  if (!store) {
+    // One canvas + texture per character, reused for every frame: repainting
+    // is a texture upload, not a new GPU allocation every 200ms.
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = FACE_PX
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.minFilter = THREE.NearestFilter
+    texture.magFilter = THREE.NearestFilter
+    texture.generateMipmaps = false
+    const s: FaceStore = {
+      ctx: canvas.getContext('2d')!,
+      texture,
+      mat: new THREE.MeshLambertMaterial({ map: texture }),
+      skin: head.material as THREE.Material,
+      url: null,
+      blocky: [
+        ...head.children.filter((c) => c.name === 'eye'),
+        (group.userData.rig as { mouth?: THREE.Mesh }).mouth,
+      ].filter(Boolean) as THREE.Object3D[],
+      img: new Image(),
+    }
+    s.img.onload = () => {
+      s.ctx.drawImage(s.img, 0, 0, FACE_PX, FACE_PX)
+      s.texture.needsUpdate = true
+    }
+    store = s
+    group.userData.face = s
+  }
+
+  // Re-read the head material every time: applySkin swaps in a fresh one, so
+  // a stored reference goes stale the moment someone changes outfit.
+  const current = head.material
+  const skin = (Array.isArray(current) ? current[0] : current) as THREE.Material
+  store.skin = skin
+  // The character faces +Z, which is BoxGeometry's 5th material slot. The
+  // other five stay skin so the head keeps its flat-shaded sides.
+  head.material = [skin, skin, skin, skin, store.mat, skin]
+  // Hide the stick-on eyes and mouth: they poke out past the front face and
+  // would float in front of the real ones. animateCharacter keeps posing the
+  // mouth underneath, so it animates again the moment the camera goes off.
+  for (const part of store.blocky) part.visible = false
+  store.url = dataUrl
+  store.img.src = dataUrl
+}
+
+// Re-assert the webcam face after something rebuilt the head material —
+// applySkin throws the old one away, which would otherwise drop the face
+// until the next captured frame (and never, for a remote who stopped moving).
+// No-op when the camera is off.
+export function refreshFace(group: THREE.Group): void {
+  const store = group.userData.face as FaceStore | undefined
+  if (store?.url) setFace(group, store.url)
 }
 
 // Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand),

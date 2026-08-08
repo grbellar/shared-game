@@ -124,6 +124,14 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   see `cats.ts`, where position is a closed-form function of the clock. That's
   why petting is purely cosmetic: it must never move a cat.
 
+- client→server `face`: a 64x64 JPEG data URL from the player's webcam
+  (`{d}`), sent ~5x/sec while the gear-panel toggle is on; `''` means the
+  camera went off. The server validates the prefix and size, keeps the last
+  frame per player for `welcome` replay, and relays it with the sender's id.
+  Clients paint it on the front face of that character's head. Opt-in every
+  session — the setting is deliberately never restored from localStorage. See
+  `webcam.ts` and `setFace` in `character.ts`.
+
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world
 content, keep it deterministic or sync it through the room. Terrain damage is

@@ -19,6 +19,11 @@ export interface PlayerState {
   talk: number // 0..1 mic level, drives the mouth on remote screens
 }
 
+export interface Face {
+  id: string
+  d: string
+}
+
 type ServerMsg =
   | {
       t: 'welcome'
@@ -27,6 +32,7 @@ type ServerMsg =
       craters?: Crater[]
       blocks?: BlockSpec[]
       clock?: { hours: number; running: boolean }
+      faces?: Face[]
     }
   | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
@@ -44,10 +50,16 @@ type ServerMsg =
   | { t: 'pet'; id: string; cat: number }
   | { t: 'fw'; id: string; x: number; z: number; c: number }
   | { t: 'fwgo'; id: string }
+  | { t: 'face'; id: string; d: string }
 
 export class Net {
   id: string | null = null
-  onWelcome: (players: PlayerState[], craters: Crater[], blocks: BlockSpec[]) => void = () => {}
+  onWelcome: (
+    players: PlayerState[],
+    craters: Crater[],
+    blocks: BlockSpec[],
+    faces: Face[],
+  ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
   onChat: (id: string, name: string, text: string) => void = () => {}
@@ -71,6 +83,7 @@ export class Net {
   onPet: (cat: number) => void = () => {}
   onFirework: (id: string, x: number, z: number, c: number) => void = () => {}
   onFireworkLaunch: (id: string) => void = () => {}
+  onFace: (id: string, dataUrl: string) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -86,7 +99,7 @@ export class Net {
       }
       if (msg.t === 'welcome') {
         this.id = msg.id
-        this.onWelcome(msg.players, msg.craters ?? [], msg.blocks ?? [])
+        this.onWelcome(msg.players, msg.craters ?? [], msg.blocks ?? [], msg.faces ?? [])
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
         // No self-echo check needed: the server never echoes to the sender.
@@ -126,6 +139,8 @@ export class Net {
         this.onFirework(msg.id, msg.x, msg.z, msg.c)
       } else if (msg.t === 'fwgo') {
         this.onFireworkLaunch(msg.id)
+      } else if (msg.t === 'face') {
+        if (msg.id !== this.id) this.onFace(msg.id, msg.d)
       }
     }
     ws.onclose = () => {
@@ -232,5 +247,12 @@ export class Net {
   sendFireworkLaunch(): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'fwgo' }))
+  }
+
+  // A 64px webcam frame as a JPEG data URL, or '' to drop back to a blocky
+  // face. Sent ~5x/sec while the setting is on; see webcam.ts.
+  sendFace(dataUrl: string): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'face', d: dataUrl }))
   }
 }

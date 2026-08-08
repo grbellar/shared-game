@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { refreshFace } from './character'
 
 // Character skins: every genre of fiction mashed together. Each skin dresses
 // the base blocky character by recoloring its part materials and bolting
@@ -214,4 +215,6 @@ export function applySkin(group: THREE.Group, skin: string): void {
     rig.body.add(bodyParts)
     build(rig, headParts, bodyParts)
   }
+  // The fresh head material above just threw away any webcam face; put it back.
+  refreshFace(group)
 }
