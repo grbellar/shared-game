@@ -58,6 +58,10 @@ build) is the only gate.
     players.
   - `player.ts` — local movement, physics, input.
   - `net.ts` — websocket client and message types.
+  - `profile.ts` — persistent per-character identity in localStorage: a secret
+    save token (never broadcast it — it's the key for future server-side
+    saves), plus name, color, and equipped loadout. Settings persist
+    separately in `settings.ts`.
   - `remotes.ts` — rendering/interpolation of other players.
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
@@ -76,7 +80,11 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 `server/room.ts` — **keep them in sync when you add messages**:
 
 - server→client `welcome`: your id + everyone's last known state
-- client→server `state`: your position/rotation/color/name/weapon/ride (~15x/sec)
+- client→server `state`: your position/rotation/color/name/weapon/ride/skin/
+  talk/emote (~15x/sec). `emote` is the radial-menu pose you're playing (see
+  `emotes.ts`); it rides in `state` rather than being its own message, so
+  late joiners see a dance already in progress. Each client animates it off
+  its own clock.
 - server→client `state`: another player's state (relayed)
 - server→client `leave`: a player disconnected
 - client→server `chat`: a chat message; server relays it to everyone else as
@@ -97,6 +105,14 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   `{hours, running}`. The server re-anchors its room clock (replayed to late
   joiners in `welcome`) and relays it to everyone else; each client re-anchors
   its local clock on receipt (see `daynight.ts`).
+- client→server `fw`: plant a firework at `{x, z, c}` (`c` = shell palette
+  index); relayed with the planter's id. Ground height is resolved per-client
+  from `heightAt`, and the ascent is deterministic (fixed rise time, lean
+  hashed from the plant spot), so everyone sees the shell open in the same
+  patch of sky. Not stored for late joiners — fuses burn down in seconds.
+- client→server `fwgo`: light every firework this player has planted; relayed
+  with the sender's id so a whole battery goes up in sync. Unlit tubes launch
+  themselves after a 5s fuse. See `fireworks.ts`.
 - client→server `crater`: a bowl carved out of the terrain (rocket blast or
   shovel dig), `{x, z, r, d}`. Only the rocket's owner mints its crater (so
   per-client sim divergence can't fork the world). The server stores a capped
@@ -113,9 +129,22 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   order, and hits on missing blocks are no-ops. See `building.ts`/`blocks.ts`.
   Hits on cells the server has no block for are relayed anyway and their
   damage accumulates in a separate map — that's how the castle stays broken
-  (below). Relaying is safe precisely because a hit on nothing is a no-op.
+  (see The shadow realm). Relaying is safe precisely because a hit on nothing
+  is a no-op.
 - `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
   world-generated blocks. Replayed onto a freshly regenerated castle.
+- client→server `pet`: someone petted a cat, `{cat: index}`; relayed with the
+  petter's id so everyone sees the heart. Cats themselves are never synced —
+  see `cats.ts`, where position is a closed-form function of the clock. That's
+  why petting is purely cosmetic: it must never move a cat.
+
+- client→server `face`: a 64x64 JPEG data URL from the player's webcam
+  (`{d}`), sent ~5x/sec while the gear-panel toggle is on; `''` means the
+  camera went off. The server validates the prefix and size, keeps the last
+  frame per player for `welcome` replay, and relays it with the sender's id.
+  Clients paint it on the front face of that character's head. Opt-in every
+  session — the setting is deliberately never restored from localStorage. See
+  `webcam.ts` and `setFace` in `character.ts`.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world

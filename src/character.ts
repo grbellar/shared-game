@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { applyEmote, clearEmotePose } from './emotes'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
 
@@ -21,6 +22,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   const eyeMat = new THREE.MeshLambertMaterial({ color: 0x111111 })
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat)
   const eyeR = new THREE.Mesh(eyeGeo, eyeMat)
+  eyeL.name = eyeR.name = 'eye'
   eyeL.position.set(-0.14, 0.05, 0.31)
   eyeR.position.set(0.14, 0.05, 0.31)
   // Mouth: a dark slot that animateCharacter scales open while the player
@@ -47,14 +49,18 @@ export function createCharacter(color: string, name: string): THREE.Group {
   armL.position.set(-0.55, 1.6, 0)
   armR.position.set(0.55, 1.6, 0)
 
+  // Yaw first, then pitch, so an emote's forward tilt (see emotes.ts) stays
+  // forward no matter which way the character is facing.
+  group.rotation.order = 'YXZ'
   group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
   group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
   group.userData.anim = { crouch: 0, swim: 0, mouth: 0 }
+  group.userData.baseColor = color // skins.ts resets to this when undressing
   return group
 }
 
-interface Rig {
+export interface Rig {
   body: THREE.Mesh
   head: THREE.Mesh
   legL: THREE.Mesh
@@ -162,11 +168,16 @@ export function animateCharacter(
     if (held) held.position.y = (weapon === 'gun' ? 1.8 : 1.5) - 0.3 * crouch
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
-  } else if (weapon === 'sword' || weapon === 'shovel' || weapon === 'builder') {
+  } else if (
+    weapon === 'sword' ||
+    weapon === 'shovel' ||
+    weapon === 'builder' ||
+    weapon === 'firework'
+  ) {
     const t = (performance.now() - ((group.userData.attackStart as number) ?? 0)) / 1000
     if (t < SLASH_DURATION) {
       // Overhead chop: wind up behind the head, slice down past the knees.
-      // Doubles as the shovel's dig scoop.
+      // Doubles as the shovel's dig scoop and the firework's plant.
       rig.armR.rotation.x = -2.8 + (t / SLASH_DURATION) * 3.6
       rig.armR.rotation.z = 0
     } else if (!riding) {
@@ -174,6 +185,21 @@ export function animateCharacter(
       rig.armR.rotation.z = 0
     }
   }
+
+  // Emotes pose last so they win over the walk cycle and the weapon arm.
+  clearEmotePose(group, rig)
+  const emote = group.userData.emote as string | undefined
+  if (emote) {
+    const t = (performance.now() - ((group.userData.emoteStart as number) ?? 0)) / 1000
+    applyEmote(group, rig, emote, t, riding)
+  }
+}
+
+// Start (or clear, with 'none') an emote on a character. Synced via the
+// `emote` field in PlayerState; each client runs its own animation clock.
+export function setEmote(group: THREE.Group, emote: string): void {
+  group.userData.emote = emote === 'none' ? undefined : emote
+  group.userData.emoteStart = performance.now()
 }
 
 export const SLASH_DURATION = 0.3
@@ -198,9 +224,92 @@ export function popHead(group: THREE.Group): THREE.Vector3 | null {
   return group.position.clone().add(new THREE.Vector3(0, 1.95, 0))
 }
 
+const FACE_PX = 64
+
+interface FaceStore {
+  ctx: CanvasRenderingContext2D
+  texture: THREE.CanvasTexture
+  mat: THREE.MeshLambertMaterial
+  skin: THREE.Material
+  blocky: THREE.Object3D[] // the painted-on eyes and mouth
+  img: HTMLImageElement
+  url: string | null // last frame shown, so refreshFace can re-assert it
+}
+
+// Paint a webcam frame (a JPEG data URL from webcam.ts) on the front of the
+// head, or pass null to go back to the blocky face. Synced over the network
+// via `face` messages, not PlayerState — frames are far too big to ride along
+// at the state rate.
+export function setFace(group: THREE.Group, dataUrl: string | null): void {
+  const head = group.getObjectByName('head') as THREE.Mesh | undefined
+  if (!head) return
+  let store = group.userData.face as FaceStore | undefined
+
+  if (!dataUrl) {
+    if (!store || store.url === null) return
+    head.material = store.skin
+    for (const part of store.blocky) part.visible = true
+    store.url = null
+    return
+  }
+
+  if (!store) {
+    // One canvas + texture per character, reused for every frame: repainting
+    // is a texture upload, not a new GPU allocation every 200ms.
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = FACE_PX
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.minFilter = THREE.NearestFilter
+    texture.magFilter = THREE.NearestFilter
+    texture.generateMipmaps = false
+    const s: FaceStore = {
+      ctx: canvas.getContext('2d')!,
+      texture,
+      mat: new THREE.MeshLambertMaterial({ map: texture }),
+      skin: head.material as THREE.Material,
+      url: null,
+      blocky: [
+        ...head.children.filter((c) => c.name === 'eye'),
+        (group.userData.rig as { mouth?: THREE.Mesh }).mouth,
+      ].filter(Boolean) as THREE.Object3D[],
+      img: new Image(),
+    }
+    s.img.onload = () => {
+      s.ctx.drawImage(s.img, 0, 0, FACE_PX, FACE_PX)
+      s.texture.needsUpdate = true
+    }
+    store = s
+    group.userData.face = s
+  }
+
+  // Re-read the head material every time: applySkin swaps in a fresh one, so
+  // a stored reference goes stale the moment someone changes outfit.
+  const current = head.material
+  const skin = (Array.isArray(current) ? current[0] : current) as THREE.Material
+  store.skin = skin
+  // The character faces +Z, which is BoxGeometry's 5th material slot. The
+  // other five stay skin so the head keeps its flat-shaded sides.
+  head.material = [skin, skin, skin, skin, store.mat, skin]
+  // Hide the stick-on eyes and mouth: they poke out past the front face and
+  // would float in front of the real ones. animateCharacter keeps posing the
+  // mouth underneath, so it animates again the moment the camera goes off.
+  for (const part of store.blocky) part.visible = false
+  store.url = dataUrl
+  store.img.src = dataUrl
+}
+
+// Re-assert the webcam face after something rebuilt the head material —
+// applySkin throws the old one away, which would otherwise drop the face
+// until the next captured frame (and never, for a remote who stopped moving).
+// No-op when the camera is off.
+export function refreshFace(group: THREE.Group): void {
+  const store = group.userData.face as FaceStore | undefined
+  if (store?.url) setFace(group, store.url)
+}
+
 // Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand),
-// 'shovel' or 'builder' (also right hand), or 'none'. Synced over the
-// network via the `weapon` field in PlayerState.
+// 'shovel', 'builder' or 'firework' (also right hand), or 'none'. Synced over
+// the network via the `weapon` field in PlayerState.
 export function setWeapon(group: THREE.Group, weapon: string): void {
   const existing = group.getObjectByName('weapon')
   if (existing) existing.parent!.remove(existing)
@@ -221,6 +330,8 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
     group.add(bow)
   } else if (weapon === 'builder') {
     armR.add(buildBuilder())
+  } else if (weapon === 'firework') {
+    armR.add(buildFirework())
   }
 }
 
@@ -244,13 +355,14 @@ export function setRide(group: THREE.Group, ride: string): void {
   }
 }
 
-// Ramsey: a loyal guy on all fours you ride like a horse. White tee, jeans,
-// and his signature flat-top army cap. His back lines up with the rider's
-// seat; limbs pivot at the shoulder/hip so he can bound (see animateCharacter).
+// Ramsey: a loyal guy on all fours you ride like a horse. Dark gray tee,
+// jeans, and his signature black flat-top army cap. His back lines up with
+// the rider's seat; limbs pivot at the shoulder/hip so he can bound (see
+// animateCharacter).
 function buildRamsey(): THREE.Group {
   const ramsey = new THREE.Group()
   ramsey.name = 'ride'
-  const tee = new THREE.MeshLambertMaterial({ color: 0xcfc9b8 })
+  const tee = new THREE.MeshLambertMaterial({ color: 0x4a4a50 })
   const jeans = new THREE.MeshLambertMaterial({ color: 0x3d4f73 })
   const skin = new THREE.MeshLambertMaterial({ color: 0xe0b088 })
 
@@ -290,11 +402,11 @@ function buildRamsey(): THREE.Group {
   return ramsey
 }
 
-// Ramsey's brown flat-top army cap: oval crown, stubby brim, and a tiny
+// Ramsey's black flat-top army cap: oval crown, stubby brim, and a tiny
 // canvas-drawn KANGOL label on the front. Built in head-local space.
 function buildArmyCap(): THREE.Group {
   const cap = new THREE.Group()
-  const cloth = new THREE.MeshLambertMaterial({ color: 0x6b5747, flatShading: true })
+  const cloth = new THREE.MeshLambertMaterial({ color: 0x1e1e22, flatShading: true })
   // Crown flares slightly outward toward the flat top, military-cadet style.
   const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.36, 0.24, 10), cloth)
   crown.position.y = 0.38
@@ -498,7 +610,35 @@ export function buildBuilder(): THREE.Group {
   return mallet
 }
 
-function makeNameTag(name: string): THREE.Sprite {
+// An unlit firework carried by its stick, tube-end down past the fist
+// (local -Y) like the shovel — so the same overhead chop reads as jamming it
+// into the dirt.
+export function buildFirework(): THREE.Group {
+  const rocket = new THREE.Group()
+  rocket.name = 'weapon'
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8a5a2b, flatShading: true })
+  const paper = new THREE.MeshLambertMaterial({ color: 0xd93b3b, flatShading: true })
+  const gold = new THREE.MeshLambertMaterial({ color: 0xffc93b, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x2a2016, flatShading: true })
+
+  const stick = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.0, 0.05), wood)
+  stick.position.y = -0.85
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.62, 6), paper)
+  tube.position.y = -1.62
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.175, 0.11, 6), gold)
+  band.position.y = -1.45
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.3, 6).rotateX(Math.PI), gold)
+  nose.position.y = -2.08
+  const fuse = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.2, 0.045), dark)
+  fuse.position.set(0.16, -1.34, 0)
+  fuse.rotation.z = 0.5
+
+  rocket.add(stick, tube, band, nose, fuse)
+  return rocket
+}
+
+// Exported for cats.ts, which hangs a smaller one over each cat.
+export function makeNameTag(name: string): THREE.Sprite {
   // Low-res canvas + nearest filtering: the game renders at 320x240, so a big
   // smooth texture just gets minified into mush. Chunky pixels read better.
   const canvas = document.createElement('canvas')
@@ -520,7 +660,19 @@ function makeNameTag(name: string): THREE.Sprite {
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }),
   )
+  sprite.name = 'nametag'
   sprite.scale.set(3.4, 0.85, 1)
   sprite.position.y = 2.8
   return sprite
+}
+
+// Swap the floating name tag (players can rename themselves at any time).
+export function setName(group: THREE.Group, name: string): void {
+  const old = group.getObjectByName('nametag') as THREE.Sprite | undefined
+  if (old) {
+    old.material.map?.dispose()
+    old.material.dispose()
+    group.remove(old)
+  }
+  group.add(makeNameTag(name))
 }

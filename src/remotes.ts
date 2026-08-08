@@ -4,10 +4,15 @@ import {
   animateCharacter,
   setWeapon,
   setRide,
+  setName,
+  setFace,
+  setEmote,
   startSlash,
   popHead,
   type Pose,
 } from './character'
+import { applySkin } from './skins'
+import { emoteById } from './emotes'
 import type { PlayerState } from './net'
 import type { Effects } from './effects'
 
@@ -18,13 +23,21 @@ interface Remote {
   pose: Pose
   weapon: string
   ride: string
+  skin: string
+  name: string
+  emote: string
 }
 
 // Renders and interpolates the other players in the room.
 export class Remotes {
   // Fired when a remote player hits the water (their pose flips to swim).
   onSplash: (x: number, z: number) => void = () => {}
+  // Fires when someone starts an emote, so main.ts can play its sound.
+  onEmote: (id: string, emote: string) => void = () => {}
   private players = new Map<string, Remote>()
+  // Latest webcam frame per id, kept separately because a `face` message can
+  // land before that player's first `state` creates their character.
+  private faces = new Map<string, string>()
 
   constructor(private scene: THREE.Scene) {}
 
@@ -47,8 +60,13 @@ export class Remotes {
         pose: 'stand',
         weapon: 'none',
         ride: 'none',
+        skin: 'none',
+        name: p.name,
+        emote: 'none',
       }
       this.players.set(p.id, remote)
+      const face = this.faces.get(p.id)
+      if (face) setFace(group, face)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
     const pose = p.pose ?? 'stand'
@@ -62,7 +80,8 @@ export class Remotes {
       p.weapon === 'sword' ||
       p.weapon === 'shovel' ||
       p.weapon === 'bow' ||
-      p.weapon === 'builder'
+      p.weapon === 'builder' ||
+      p.weapon === 'firework'
         ? p.weapon
         : 'none'
     if (remote.weapon !== weapon) {
@@ -74,10 +93,35 @@ export class Remotes {
       remote.ride = ride
       setRide(remote.group, ride)
     }
+    // Unknown ids (older clients, garbage) just reset to the base look.
+    const skin = p.skin ?? 'none'
+    if (remote.skin !== skin) {
+      remote.skin = skin
+      applySkin(remote.group, skin)
+    }
+    // Renames redraw the floating tag.
+    if (remote.name !== p.name) {
+      remote.name = p.name
+      setName(remote.group, p.name)
+    }
+    const emote = emoteById(p.emote) ? p.emote : 'none'
+    if (remote.emote !== emote) {
+      remote.emote = emote
+      setEmote(remote.group, emote)
+      if (emote !== 'none') this.onEmote(p.id, emote)
+    }
   }
 
   getGroup(id: string): THREE.Group | undefined {
     return this.players.get(id)?.group
+  }
+
+  // Paint a webcam frame on a player's head; '' turns their camera off.
+  setFace(id: string, dataUrl: string): void {
+    if (dataUrl) this.faces.set(id, dataUrl)
+    else this.faces.delete(id)
+    const remote = this.players.get(id)
+    if (remote) setFace(remote.group, dataUrl || null)
   }
 
   slash(id: string): void {
@@ -107,6 +151,7 @@ export class Remotes {
     if (!remote) return
     this.scene.remove(remote.group)
     this.players.delete(id)
+    this.faces.delete(id)
   }
 
   clear(): void {

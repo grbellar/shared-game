@@ -37,7 +37,9 @@ interface PlayerState {
   pose: 'stand' | 'crouch' | 'swim'
   weapon: string
   ride: string
+  skin: string
   talk: number
+  emote: string
 }
 
 // Real seconds per full in-game day. Keep in sync with src/daynight.ts.
@@ -71,6 +73,11 @@ export class GameRoom extends DurableObject<Env> {
     return (this.clock.hours + ((Date.now() - this.clock.atMs) / 1000) * (24 / DAY_LENGTH_S)) % 24
   }
 
+  // Last webcam frame per player (a small JPEG data URL), replayed in
+  // `welcome` so late joiners see faces immediately instead of waiting up to
+  // 200ms. Dropped when the player leaves or turns their camera off.
+  private faces = new Map<string, string>()
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('Expected WebSocket', { status: 426 })
@@ -89,6 +96,7 @@ export class GameRoom extends DurableObject<Env> {
         blocks: [...this.blocks.values()],
         wdmg: [...this.worldDmg].map(([cell, dmg]) => [...cell.split(',').map(Number), dmg]),
         clock: { hours: this.clockHours(), running: this.clock.running },
+        faces: [...this.faces].map(([fid, d]) => ({ id: fid, d })),
       }),
     )
     return new Response(null, { status: 101, webSocket: client })
@@ -116,7 +124,9 @@ export class GameRoom extends DurableObject<Env> {
         pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
         weapon: String(msg.weapon).slice(0, 8),
         ride: String(msg.ride).slice(0, 12),
+        skin: String(msg.skin ?? 'none').slice(0, 12),
         talk: Math.max(0, Math.min(1, Number(msg.talk) || 0)),
+        emote: String(msg.emote ?? 'none').slice(0, 12),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -267,6 +277,47 @@ export class GameRoom extends DurableObject<Env> {
       // hp is a commutative sum of relayed dmg, so clients that see hits in
       // different orders still agree on when a block dies.
       this.broadcast(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }), ws)
+    } else if (msg.t === 'pet') {
+      // Cats are deterministic (src/cats.ts), so the index is all anyone
+      // needs to pop a heart over the right one.
+      const cat = Math.floor(Number(msg.cat))
+      if (!Number.isFinite(cat) || cat < 0 || cat > 15) return
+      this.broadcast(JSON.stringify({ t: 'pet', id: att.id, cat }), ws)
+    } else if (msg.t === 'fw') {
+      // A planted firework. Not replayed to late joiners: fuses burn down in
+      // seconds, so there'd be nothing left to show them.
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      const c = Math.floor(Number(msg.c))
+      if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(c)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'fw',
+          id: att.id,
+          // Wide enough to reach the shadow realm: clamping to the island
+          // would relay someone's realm firework to everyone else's beach.
+          x: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x)),
+          z: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z)),
+          c: Math.max(0, Math.min(15, c)),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'fwgo') {
+      this.broadcast(JSON.stringify({ t: 'fwgo', id: att.id }), ws)
+    } else if (msg.t === 'face') {
+      const d = String(msg.d)
+      if (!d) {
+        // Camera switched off: clear it everywhere.
+        this.faces.delete(att.id)
+        this.broadcast(JSON.stringify({ t: 'face', id: att.id, d: '' }), ws)
+        return
+      }
+      // Only ever relay a small JPEG data URL. Clients feed this straight to
+      // an Image, so don't let anything else through, and cap the size well
+      // above a 64px frame (~1.5KB) but far below anything abusive.
+      if (!d.startsWith('data:image/jpeg;base64,') || d.length > 8000) return
+      this.faces.set(att.id, d)
+      this.broadcast(JSON.stringify({ t: 'face', id: att.id, d }), ws)
     }
   }
 
@@ -282,6 +333,7 @@ export class GameRoom extends DurableObject<Env> {
     const att = ws.deserializeAttachment() as { id: string } | null
     if (!att) return
     this.states.delete(att.id)
+    this.faces.delete(att.id)
     this.broadcast(JSON.stringify({ t: 'leave', id: att.id }), ws)
   }
 

@@ -213,8 +213,11 @@ export class Player {
     // treading water in place the cycle still ticks, as quiet lapping.
     if (Math.floor(this.walkPhase / Math.PI) !== prevStep && !this.dead) {
       if (floating) moving > 0.15 ? sfx.paddle() : sfx.lap()
-      else if (moving > 0.15 && this.onGround)
-        this.ride === 'wheelchair' ? sfx.squeak() : sfx.step()
+      else if (moving > 0.15 && this.onGround) {
+        if (this.ride === 'wheelchair') sfx.squeak()
+        else if (this.ride === 'ramsey') sfx.gallop()
+        else sfx.step()
+      }
     }
     this.wasFloating = floating
 

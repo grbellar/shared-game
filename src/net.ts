@@ -13,9 +13,16 @@ export interface PlayerState {
   color: string
   name: string
   pose: Pose
-  weapon: string // 'none' | 'gun' | 'sword' | 'shovel'
+  weapon: string // 'none' | 'gun' | 'sword' | 'shovel' | 'firework'
   ride: string // 'none' | 'wheelchair' | 'ramsey'
+  skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
+  emote: string // 'none' or an id from src/emotes.ts
+}
+
+export interface Face {
+  id: string
+  d: string
 }
 
 type ServerMsg =
@@ -29,6 +36,7 @@ type ServerMsg =
       // remembers even though it never stored the blocks themselves.
       wdmg?: WorldDamage[]
       clock?: { hours: number; running: boolean }
+      faces?: Face[]
     }
   | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
@@ -43,6 +51,10 @@ type ServerMsg =
   | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
   | { t: 'bplace'; gx: number; gy: number; gz: number; m: number }
   | { t: 'bhit'; gx: number; gy: number; gz: number; dmg: number }
+  | { t: 'pet'; id: string; cat: number }
+  | { t: 'fw'; id: string; x: number; z: number; c: number }
+  | { t: 'fwgo'; id: string }
+  | { t: 'face'; id: string; d: string }
 
 export class Net {
   id: string | null = null
@@ -51,6 +63,7 @@ export class Net {
     craters: Crater[],
     blocks: BlockSpec[],
     worldDamage: WorldDamage[],
+    faces: Face[],
   ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
@@ -72,6 +85,10 @@ export class Net {
   onClock: (hours: number, running: boolean) => void = () => {}
   onBlockPlace: (gx: number, gy: number, gz: number, m: number) => void = () => {}
   onBlockHit: (gx: number, gy: number, gz: number, dmg: number) => void = () => {}
+  onPet: (cat: number) => void = () => {}
+  onFirework: (id: string, x: number, z: number, c: number) => void = () => {}
+  onFireworkLaunch: (id: string) => void = () => {}
+  onFace: (id: string, dataUrl: string) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -87,7 +104,13 @@ export class Net {
       }
       if (msg.t === 'welcome') {
         this.id = msg.id
-        this.onWelcome(msg.players, msg.craters ?? [], msg.blocks ?? [], msg.wdmg ?? [])
+        this.onWelcome(
+          msg.players,
+          msg.craters ?? [],
+          msg.blocks ?? [],
+          msg.wdmg ?? [],
+          msg.faces ?? [],
+        )
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
         // No self-echo check needed: the server never echoes to the sender.
@@ -121,6 +144,14 @@ export class Net {
         // Cap-eviction bhits DO come back to their own trigger (broadcast to
         // all) — safe, because damaging a missing block is a no-op.
         this.onBlockHit(msg.gx, msg.gy, msg.gz, msg.dmg)
+      } else if (msg.t === 'pet') {
+        if (msg.id !== this.id) this.onPet(msg.cat)
+      } else if (msg.t === 'fw') {
+        this.onFirework(msg.id, msg.x, msg.z, msg.c)
+      } else if (msg.t === 'fwgo') {
+        this.onFireworkLaunch(msg.id)
+      } else if (msg.t === 'face') {
+        if (msg.id !== this.id) this.onFace(msg.id, msg.d)
       }
     }
     ws.onclose = () => {
@@ -209,5 +240,30 @@ export class Net {
   sendBlockHit(gx: number, gy: number, gz: number, dmg: number): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }))
+  }
+
+  sendPet(cat: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'pet', cat }))
+  }
+
+  // Plant a firework at (x, z) with shell palette `c`. Ground height is
+  // resolved per-client, so it isn't sent.
+  sendFirework(x: number, z: number, c: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'fw', x, z, c }))
+  }
+
+  // Light every firework we have planted.
+  sendFireworkLaunch(): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'fwgo' }))
+  }
+
+  // A 64px webcam frame as a JPEG data URL, or '' to drop back to a blocky
+  // face. Sent ~5x/sec while the setting is on; see webcam.ts.
+  sendFace(dataUrl: string): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'face', d: dataUrl }))
   }
 }

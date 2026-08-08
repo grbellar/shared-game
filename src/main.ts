@@ -4,7 +4,8 @@ import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
 import { GameCamera } from './camera'
-import { initSettings } from './settings'
+import { initSettings, setSetting } from './settings'
+import { Webcam } from './webcam'
 import { TouchControls } from './touch'
 import { Chat } from './chat'
 import { Bubbles } from './bubbles'
@@ -19,9 +20,25 @@ import { Portals, type Gate } from './portal'
 import * as blocks from './blocks'
 import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
+import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
-import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
+import { Cats } from './cats'
+import { EmoteController } from './emotes'
+import { EmoteWheel } from './emotewheel'
+import {
+  setWeapon,
+  setRide,
+  setName,
+  setFace,
+  setEmote,
+  startSlash,
+  startJabber,
+  popHead,
+  SLASH_DURATION,
+} from './character'
+import { loadProfile, saveProfile } from './profile'
+import { SKINS, applySkin } from './skins'
 import { sfx } from './audio'
 import { Voice } from './voice'
 import { music } from './music'
@@ -30,11 +47,10 @@ import { music } from './music'
 const VIEW_W = 320
 const VIEW_H = 240
 
-const NAMES = ['Goober', 'Turnip', 'Moose', 'Bandit', 'Noodle', 'Crouton', 'Gremlin', 'Pebble', 'Sprout', 'Wizard']
-const COLORS = ['#e23b3b', '#3b6fe2', '#2fa84f', '#e2a53b', '#9b4fd4', '#e26fb0', '#33c2c2', '#c2e23b']
-
-const name = `${NAMES[Math.floor(Math.random() * NAMES.length)]}${Math.floor(Math.random() * 90) + 10}`
-const color = COLORS[Math.floor(Math.random() * COLORS.length)]
+// Who you are survives reloads now: token, name, color, and loadout all come
+// from the browser-storage profile (minted on your very first visit).
+const profile = loadProfile()
+const color = profile.color
 
 const renderer = new THREE.WebGLRenderer({ antialias: false })
 renderer.setSize(VIEW_W, VIEW_H, false)
@@ -59,12 +75,60 @@ createRealm(scene)
 initBlocks(scene, buildCastle)
 const portals = new Portals(scene)
 
-const player = new Player(scene, color, name)
+const player = new Player(scene, color, profile.name)
 const remotes = new Remotes(scene)
-const settings = initSettings()
+// Your skin: picked in the settings panel, worn immediately, remembered in
+// the profile, and broadcast in state so everyone sees your outfit.
+let skin = profile.skin
+applySkin(player.group, skin)
+// Rename yourself any time (settings panel). The new name saves to the
+// profile, redraws your tag, and reaches everyone else through the regular
+// state broadcast — remotes redraw on the next tick.
+function renameCharacter(raw: string): string {
+  const next = raw.trim().slice(0, 24)
+  if (next && next !== profile.name) {
+    profile.name = next
+    saveProfile(profile)
+    setName(player.group, next)
+  }
+  return profile.name
+}
+const webcam = new Webcam()
+webcam.onFrame = (dataUrl) => {
+  setFace(player.group, dataUrl)
+  net.sendFace(dataUrl)
+}
+const settings = initSettings(
+  {
+    current: skin,
+    options: SKINS,
+    onChange: (id) => {
+      skin = id
+      applySkin(player.group, skin)
+      profile.skin = skin
+      saveProfile(profile)
+      sfx.equip(true)
+    },
+  },
+  { current: profile.name, onChange: renameCharacter },
+  (key, value) => {
+    if (key !== 'webcamFace') return
+    if (value) {
+      // Prompts for the camera. Denied (or no camera) flips the switch back.
+      void webcam.start().then((ok) => {
+        if (!ok) setSetting('webcamFace', false)
+      })
+    } else {
+      webcam.stop()
+      setFace(player.group, null)
+      net.sendFace('')
+    }
+  },
+)
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
+const cats = new Cats(scene, touch.active)
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -73,13 +137,15 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, worldDamage) => {
+net.onWelcome = (players, craters, blocks, worldDamage, faces) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
     remotes.upsert(p)
     voice.peerJoined(p.id)
   })
+  // Our own face reappears for everyone else on the next captured frame.
+  faces.forEach((f) => remotes.setFace(f.id, f.d))
   // Catch up on world damage. Silent: no debris bursts, and reconnect
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
@@ -97,11 +163,39 @@ net.onLeave = (id) => {
   remotes.remove(id)
   voice.peerLeft(id)
 }
+net.onFace = (id, dataUrl) => remotes.setFace(id, dataUrl)
 net.connect()
 
-let weapon: 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' = 'none'
-let ride: 'none' | 'wheelchair' | 'ramsey' = 'none'
-let material = 0 // index into MATERIALS, picked with 1-4 while building
+type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
+type Ride = 'none' | 'wheelchair' | 'ramsey'
+// Loadout picks up where you left off last session (profile validates them).
+let weapon = profile.weapon as Weapon
+let ride = profile.ride as Ride
+let material = profile.material // index into MATERIALS, picked with 1-4 while building
+setWeapon(player.group, weapon)
+setRide(player.group, ride)
+player.ride = ride
+
+function saveLoadout(): void {
+  profile.weapon = weapon
+  profile.ride = ride
+  profile.material = material
+  saveProfile(profile)
+}
+
+// Emotes: the wheel picks one, the controller times it out, and the id rides
+// along in the state we already broadcast so remotes replay the pose.
+const emotes = new EmoteController()
+emotes.onChange = (id) => {
+  setEmote(player.group, id)
+  if (id !== 'none') sfx.emote(id)
+}
+const emoteWheel = new EmoteWheel(touch.active)
+emoteWheel.onPick = (id) => emotes.play(id)
+remotes.onEmote = (id, emote) => {
+  const group = remotes.getGroup(id)
+  sfx.emote(emote, group ? distVol(group.position, 60) : 0.6)
+}
 
 setInterval(() => {
   net.sendState({
@@ -110,11 +204,13 @@ setInterval(() => {
     z: player.group.position.z,
     ry: player.group.rotation.y,
     color,
-    name,
+    name: profile.name,
     pose: player.pose,
     weapon,
     ride,
+    skin,
     talk: Math.round(voice.level * 100) / 100,
+    emote: emotes.current,
   })
 }, 66)
 
@@ -131,6 +227,8 @@ const destruction = new Destruction(effects, net)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
+buildHud.setMaterial(material)
+buildHud.setVisible(weapon === 'builder')
 player.onSplash = (x, z) => effects.spawnSplash(x, z)
 remotes.onSplash = (x, z) => {
   effects.spawnSplash(x, z)
@@ -144,6 +242,13 @@ effects.onOwnExplosion = (center) => {
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
+
+const fireworks = new Fireworks(scene)
+// Fireworks are loud and high up, so they carry much further than gunfire.
+fireworks.onLaunch = (pos) => sfx.whistle(distVol(pos, 110))
+fireworks.onBurst = (pos) => sfx.burst(distVol(pos, 200))
+net.onFirework = (id, x, z, c) => fireworks.plant(id, x, z, c)
+net.onFireworkLaunch = (id) => fireworks.launchAll(id)
 net.onCrater = (c) => {
   // Dig-sized craters get a scoop sound; rocket craters already boomed.
   if (c.r < 3) sfx.dig(distVol(new THREE.Vector3(c.x, player.group.position.y, c.z), 50))
@@ -169,6 +274,8 @@ net.onFire = (id, origin, dir) => {
   sfx.rocket(distVol(from))
   effects.spawnRocket(id, from, new THREE.Vector3(...dir))
 }
+cats.onPet = (index) => net.sendPet(index)
+net.onPet = (index) => cats.pet(index)
 net.onSlash = (id) => {
   const group = remotes.getGroup(id)
   sfx.slash(group ? distVol(group.position) : 0.7)
@@ -250,6 +357,7 @@ const SWORD_DAMAGE = 55 // two clean swings takes a head off
 function attack(): void {
   if (player.dead) return
   const now = performance.now()
+  emotes.stop() // no waving mid-rocket
   if (weapon === 'gun' && now - lastAttack > 800) {
     lastAttack = now
     sfx.rocket()
@@ -324,11 +432,35 @@ function attack(): void {
     // column just ahead; either way the column stacks upward.
     const aimed = fp.isActive ? fp.aimedDigPoint() : null
     building.place(player.group.position, player.group.rotation.y, material, aimed)
+  } else if (weapon === 'firework' && now - lastAttack > 450) {
+    lastAttack = now
+    sfx.plant()
+    fp.swing()
+    startSlash(player.group)
+    net.sendSlash()
+    // Plant at the bottom of the swing, same reach rules as the shovel.
+    setTimeout(() => {
+      const aimed = fp.isActive ? fp.aimedDigPoint() : null
+      const ry = player.group.rotation.y
+      const x = aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6
+      const z = aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6
+      const shell = Math.floor(Math.random() * SHELLS.length)
+      fireworks.plant('me', x, z, shell)
+      net.sendFirework(x, z, shell)
+    }, SLASH_DURATION * 500)
   }
+}
+
+// Light every firework we've planted. They also self-launch when the fuse
+// burns down, so touch players (no keyboard) still get the show.
+function launchFireworks(): void {
+  if (!fireworks.hasPlanted('me')) return
+  fireworks.launchAll('me')
+  net.sendFireworkLaunch()
 }
 window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
-  if (touch.active || chat.isOpen) return
+  if (touch.active || chat.isOpen || emoteWheel.isOpen) return
   if (target !== document.body && target.tagName !== 'CANVAS') return
   // In first person the first click grabs the mouse; later clicks attack.
   if (fp.claimClickForLock()) return
@@ -342,6 +474,11 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', () => {
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
+})
+// Right-click is reserved for in-game actions; the chat input keeps the
+// browser menu so paste still works.
+window.addEventListener('contextmenu', (e) => {
+  if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault()
 })
 if (touch.active) {
   const fire = document.createElement('div')
@@ -358,11 +495,39 @@ if (touch.active) {
   mic.addEventListener('pointerdown', (e) => {
     e.preventDefault()
     void voice.toggle().then((on) => {
-      mic.style.opacity = on ? '1' : '0.4'
+      setVoicePref(on)
       sfx.equip(on)
     })
   })
   document.body.append(fire, mic)
+}
+
+// Voice chat is ON by default: the mic starts as soon as you join (browser
+// permitting). V or the mic button mutes, and the choice sticks in the
+// profile. An explicit toggle saves; a failed auto-start doesn't — so a
+// one-time permission hiccup won't silently flip the default off.
+function setVoicePref(on: boolean): void {
+  profile.voice = on
+  saveProfile(profile)
+  const mic = document.getElementById('mic-open')
+  if (mic) mic.style.opacity = on ? '1' : '0.4'
+}
+if (profile.voice) {
+  void voice.toggle().then((on) => {
+    if (on) {
+      setVoicePref(true)
+      return
+    }
+    // Blocked pre-gesture (autoplay policy) — retry once on the first click.
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if ((e.target as HTMLElement)?.id === 'mic-open') return // its own handler toggles
+        if (profile.voice && !voice.enabled) void voice.toggle().then((ok) => ok && setVoicePref(true))
+      },
+      { once: true },
+    )
+  })
 }
 
 const chat = new Chat()
@@ -374,7 +539,7 @@ chat.onSend = (text) => {
   net.sendChat(text)
   bubbles.show(player.group, text)
   startJabber(player.group, jabberFor(text))
-  chat.addMessage(name, text)
+  chat.addMessage(profile.name, text)
 }
 net.onChat = (id, senderName, text) => {
   sfx.chat()
@@ -393,8 +558,8 @@ setInterval(() => {
   const mic = voice.enabled ? ' · 🎤 live (V)' : ''
   const where = shadow ? ' · 🌑 shadow realm' : ''
   status.textContent = net.connected
-    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here${where}${mute}${mic}`
-    : `${name} · connecting...${mute}${mic}`
+    ? `${profile.name} · ${others} other ${others === 1 ? 'player' : 'players'} here${where}${mute}${mic}`
+    : `${profile.name} · connecting...${mute}${mic}`
 }, 500)
 
 const keys = new Set<string>()
@@ -409,18 +574,21 @@ window.addEventListener('keydown', (e) => {
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyH') {
     weapon = weapon === 'sword' ? 'none' : 'sword'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyF') {
     weapon = weapon === 'shovel' ? 'none' : 'shovel'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyB') {
     weapon = weapon === 'bow' ? 'none' : 'bow'
@@ -428,31 +596,50 @@ window.addEventListener('keydown', (e) => {
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(false)
+    saveLoadout()
   }
   if (e.code === 'KeyT') {
     weapon = weapon === 'builder' ? 'none' : 'builder'
     setWeapon(player.group, weapon)
     sfx.equip(weapon !== 'none')
     buildHud.setVisible(weapon === 'builder')
+    saveLoadout()
   }
   if (weapon === 'builder' && /^Digit[1-4]$/.test(e.code)) {
     material = Number(e.code.slice(5)) - 1
     buildHud.setMaterial(material)
+    saveLoadout()
   }
+  if (e.code === 'KeyK') {
+    weapon = weapon === 'firework' ? 'none' : 'firework'
+    setWeapon(player.group, weapon)
+    sfx.equip(weapon !== 'none')
+    buildHud.setVisible(false)
+    saveLoadout()
+  }
+  if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') {
     ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
     setRide(player.group, ride)
     player.ride = ride
     sfx.equip(ride !== 'none')
+    saveLoadout()
   }
   if (e.code === 'KeyY') {
     ride = ride === 'ramsey' ? 'none' : 'ramsey'
     setRide(player.group, ride)
     player.ride = ride
     sfx.equip(ride !== 'none')
+    if (ride === 'ramsey') sfx.ramseyMount()
+    saveLoadout()
   }
+  if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
-  if (e.code === 'KeyV' && !e.repeat) void voice.toggle().then((on) => sfx.equip(on))
+  if (e.code === 'KeyV' && !e.repeat)
+    void voice.toggle().then((on) => {
+      setVoicePref(on)
+      sfx.equip(on)
+    })
 })
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 
@@ -509,8 +696,33 @@ function crossTo(gate: Gate): void {
 }
 
 // Debug handle so agents (and curious friends) can poke the game from the
-// console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music, building, portals, gameCamera, blocks }
+// console: game.player, game.remotes, game.net. `draw()` forces a frame,
+// which is the only way to see anything in a background tab (Chrome throttles
+// requestAnimationFrame to 0fps there, so the canvas just goes stale).
+;(window as unknown as Record<string, unknown>).game = {
+  player,
+  remotes,
+  net,
+  fp,
+  settings,
+  daynight,
+  voice,
+  arrows,
+  health,
+  effects,
+  music,
+  building,
+  cats,
+  fireworks,
+  webcam,
+  emotes,
+  portals,
+  gameCamera,
+  blocks,
+  scene,
+  camera,
+  draw: () => renderer.render(scene, camera),
+}
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -518,6 +730,7 @@ renderer.setAnimationLoop(() => {
 
   gameCamera.addYaw(touch.consumeYaw())
   music.setEnabled(settings.music && !sfx.muted)
+  fp.paused = emoteWheel.isOpen // the wheel borrows the mouse
   fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
   fp.update(dt)
 
@@ -570,10 +783,14 @@ renderer.setAnimationLoop(() => {
       ? Math.min(1, (performance.now() - bowDrawStart) / BOW_DRAW_MS)
       : 0,
   )
+  // Moving, jumping or dying drops you out of an emote.
+  emotes.update(player.moving || player.dead || keys.has('Space') || touch.jumpHeld)
   bubbles.update()
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
+  fireworks.update(dt)
   remotes.update(dt)
+  cats.update(dt, player.group.position)
   gameCamera.update(dt, keys, player, settings, fp)
   daynight.update(settings, camera.position, shadow ? 1 : 0)
 

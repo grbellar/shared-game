@@ -157,6 +157,63 @@ class Sfx {
     this.tone('triangle', f, f * 1.25, 0.09, 0.05)
   }
 
+  // A throaty vocal burst: sawtooth through a bandpass "mouth" so it reads
+  // as a human noise instead of a synth beep.
+  private voice(
+    freqFrom: number,
+    freqTo: number,
+    formant: number,
+    dur: number,
+    peak: number,
+    delay = 0,
+  ): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime + delay
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(Math.max(1, freqFrom), t0)
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqTo), t0 + dur)
+    const filter = this.ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = formant
+    filter.Q.value = 1.4 // wide enough to keep some body; the peak makes up the rest
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(0.001, t0)
+    g.gain.exponentialRampToValueAtTime(peak, t0 + 0.03)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur)
+    osc.connect(filter)
+    filter.connect(g)
+    g.connect(this.out)
+    osc.start(t0)
+    osc.stop(t0 + dur + 0.02)
+  }
+
+  // Ramsey's human engine, one call per stride: palms slapping the dirt,
+  // winded panting, and sometimes an edgy grunt or a long put-upon groan
+  // from the guy being ridden.
+  gallop(): void {
+    this.noise('lowpass', 550 + Math.random() * 250, 160, 0.07, 0.16)
+    const r = Math.random()
+    if (r < 0.3) {
+      // Winded two-puff pant: "hh-hh".
+      this.noise('bandpass', 1100, 700, 0.08, 0.16)
+      this.noise('bandpass', 900, 600, 0.1, 0.14, 0.12)
+    } else if (r < 0.5) {
+      // Effort grunt: "ugh".
+      this.voice(160 + Math.random() * 50, 80, 480, 0.2, 1.5)
+    } else if (r < 0.58) {
+      // He has opinions about this arrangement.
+      this.voice(125, 100, 430, 0.5, 1.2)
+      this.voice(100, 60, 380, 0.4, 1.1, 0.5)
+    }
+  }
+
+  // The "oof" of taking a rider's full weight on your back.
+  ramseyMount(): void {
+    this.voice(180, 75, 520, 0.25, 1.5, 0.12)
+    this.noise('bandpass', 1000, 600, 0.09, 0.15, 0.12)
+  }
+
   splash(vol = 1): void {
     this.noise('lowpass', 2500, 250, 0.35, 0.3 * vol)
     this.tone('sine', 320, 85, 0.22, 0.2 * vol)
@@ -276,6 +333,108 @@ class Sfx {
     this.noise('lowpass', 320, 90, 0.3, 0.14)
   }
 
+  // --- critters ---
+
+  // Two-part "me-ow": the pitch rises, then falls away. The vibrato is what
+  // sells it as a voice instead of a siren, and the sweeping bandpass is a
+  // mouth opening and closing.
+  meow(vol = 1, pitch = 1): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime
+    const base = 520 * pitch
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(base * 0.8, t0)
+    osc.frequency.exponentialRampToValueAtTime(base * 1.35, t0 + 0.13)
+    osc.frequency.exponentialRampToValueAtTime(base * 0.6, t0 + 0.45)
+    const lfo = this.ctx.createOscillator()
+    lfo.frequency.value = 11
+    const lfoGain = this.ctx.createGain()
+    lfoGain.gain.value = base * 0.05
+    lfo.connect(lfoGain)
+    lfoGain.connect(osc.frequency)
+    const mouth = this.ctx.createBiquadFilter()
+    mouth.type = 'bandpass'
+    mouth.Q.value = 3
+    mouth.frequency.setValueAtTime(700, t0)
+    mouth.frequency.linearRampToValueAtTime(1600, t0 + 0.15)
+    mouth.frequency.linearRampToValueAtTime(600, t0 + 0.5)
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t0)
+    g.gain.exponentialRampToValueAtTime(0.24 * vol, t0 + 0.06)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.5)
+    osc.connect(mouth)
+    mouth.connect(g)
+    g.connect(this.out)
+    osc.start(t0)
+    osc.stop(t0 + 0.55)
+    lfo.start(t0)
+    lfo.stop(t0 + 0.55)
+  }
+
+  // Low rumble under a ~26 Hz tremolo — the rattle is the whole purr.
+  purr(vol = 1): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime
+    const src = this.ctx.createBufferSource()
+    src.buffer = this.noiseBuffer(1.2, 6000)
+    const lp = this.ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 260
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t0)
+    g.gain.exponentialRampToValueAtTime(0.3 * vol, t0 + 0.1)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 1.1)
+    const lfo = this.ctx.createOscillator()
+    lfo.frequency.value = 26
+    const lfoGain = this.ctx.createGain()
+    lfoGain.gain.value = 0.22 * vol
+    lfo.connect(lfoGain)
+    lfoGain.connect(g.gain)
+    src.connect(lp)
+    lp.connect(g)
+    g.connect(this.out)
+    src.start(t0)
+    src.stop(t0 + 1.15)
+    lfo.start(t0)
+    lfo.stop(t0 + 1.15)
+  }
+
+  // --- fireworks ---
+
+  // Jamming a tube into the dirt: a thunk, then the fuse catching.
+  plant(): void {
+    this.tone('triangle', 160, 70, 0.13, 0.16)
+    this.noise('highpass', 2800, 6000, 0.6, 0.05)
+  }
+
+  // Ascent: a whistle sliding up over the hiss of burning fuel.
+  whistle(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sine', 360, 1600, 1.5, 0.16 * v)
+    this.noise('highpass', 1800, 5200, 1.2, 0.09 * v)
+  }
+
+  // Shell opening: a crack, a deep thump, and a tail of crackling stars.
+  burst(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('highpass', 3000, 5200, 0.05, 0.35 * v)
+    this.noise('lowpass', 2200, 55, 0.8, 0.6 * v, 0, 8000)
+    this.tone('sine', 130, 38, 0.5, 0.32 * v)
+    for (let i = 0; i < 8; i++) {
+      this.noise(
+        'bandpass',
+        2400 + Math.random() * 2600,
+        1200,
+        0.05,
+        0.09 * v,
+        0.12 + Math.random() * 0.8,
+      )
+    }
+  }
+
   // --- ui ---
 
   chat(): void {
@@ -286,6 +445,35 @@ class Sfx {
   equip(on: boolean): void {
     if (on) this.tone('square', 520, 780, 0.09, 0.12)
     else this.tone('square', 780, 520, 0.09, 0.12)
+  }
+
+  // Blip as the emote wheel highlight moves.
+  uiTick(): void {
+    this.tone('square', 950, 950, 0.03, 0.05)
+  }
+
+  // One short cue per emote, played for whoever pulled it off (remotes
+  // fade with distance).
+  emote(id: string, vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    if (id === 'wave') {
+      this.tone('square', 660, 990, 0.08, 0.1 * v)
+      this.tone('square', 990, 1320, 0.08, 0.09 * v, 0.09)
+    } else if (id === 'dance') {
+      const riff = [523, 659, 784, 1047]
+      riff.forEach((f, i) => this.tone('square', f, f, 0.09, 0.09 * v, i * 0.11))
+    } else if (id === 'clap') {
+      for (let i = 0; i < 3; i++) this.noise('bandpass', 2400, 800, 0.06, 0.22 * v, i * 0.15)
+    } else if (id === 'laugh') {
+      const has = [740, 620, 520]
+      has.forEach((f, i) => this.tone('square', f, f * 0.75, 0.09, 0.12 * v, i * 0.13))
+    } else if (id === 'flex') {
+      this.tone('sawtooth', 110, 240, 0.35, 0.11 * v)
+      this.tone('square', 440, 660, 0.18, 0.07 * v, 0.12)
+    } else if (id === 'bow') {
+      this.tone('triangle', 560, 300, 0.28, 0.11 * v)
+    }
   }
 }
 

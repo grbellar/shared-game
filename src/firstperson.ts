@@ -4,6 +4,7 @@ import {
   buildBazooka,
   buildBow,
   buildBuilder,
+  buildFirework,
   buildKatana,
   buildShovel,
   SLASH_DURATION,
@@ -24,9 +25,9 @@ const DIG_REACH = 8
 const KICK_TIME = 0.25 // bazooka recoil, seconds
 
 // View-model pose per weapon, in camera space (camera looks down -Z).
-// The bazooka is built pointing +Z so it flips around; the katana and
-// shovel are built blade-down (-Y) so a positive X tilt raises the
-// business end up-forward into a ready stance. `hand` is where the handle
+// The bazooka is built pointing +Z so it flips around; the katana, shovel
+// and firework are built business-end-down (-Y) so a positive X tilt raises
+// that end up-forward into a ready stance. `hand` is where the handle
 // ends up after that rotation — the fist and sleeve anchor there.
 const VIEW_POSES: Record<
   string,
@@ -39,11 +40,15 @@ const VIEW_POSES: Record<
   // a proper FPS bow so the limbs stay clear of the crosshair.
   bow: { pos: [0.38, -0.34, -0.9], rot: [0, 0, 0.3], hand: [0, -0.02, 0] },
   builder: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12], hand: [0.05, 0, -0.4] },
+  firework: { pos: [0.44, -0.34, -0.6], rot: [1.5, 0, 0.12], hand: [0.05, 0, -0.4] },
 }
 const BOW_VIEW_SCALE = 0.85
 
 export class FirstPersonAim {
   pitch = 0
+  // Set while a menu owns the mouse (the emote wheel), so sweeping the
+  // wheel doesn't also spin the player around.
+  paused = false
   private active = false
   private readonly crosshair: HTMLDivElement
   private viewModel: THREE.Group | null = null
@@ -88,7 +93,7 @@ export class FirstPersonAim {
     document.body.append(this.crosshair)
 
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked) return
+      if (!this.locked || this.paused) return
       // Mouse right turns right: facing is (sin ry, cos ry), and with the
       // camera looking along it screen-right is -X, so yaw decreases.
       this.player.group.rotation.y -= e.movementX * SENSITIVITY
@@ -150,7 +155,9 @@ export class FirstPersonAim {
             ? buildShovel()
             : weapon === 'builder'
               ? buildBuilder()
-              : buildBow()
+              : weapon === 'firework'
+                ? buildFirework()
+                : buildBow()
     model.position.set(0, 0, 0) // strip the shoulder-mount offset baked into buildBazooka
     model.rotation.set(...pose.rot)
     held.add(model)

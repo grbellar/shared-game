@@ -8,6 +8,7 @@ export interface Settings {
   clockRun: boolean // day/night cycle advances on its own
   timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
   music: boolean
+  webcamFace: boolean
   // Fired when the USER scrubs the time slider or flips the clock toggle
   // (not when the network updates them) — main.ts broadcasts the new clock.
   // fromToggle distinguishes "freeze/unfreeze now" from "jump to this time".
@@ -16,6 +17,23 @@ export interface Settings {
 
 // Keys makeRow may bind — the boolean toggles only.
 type BoolKey = { [K in keyof Settings]-?: Settings[K] extends boolean ? K : never }[keyof Settings]
+
+// The character picker is profile-backed (skins.ts / profile.ts), not part of
+// Settings — main.ts passes the options and current choice in, and gets the
+// change callback out.
+export interface CharacterPicker {
+  current: string
+  options: { id: string; label: string }[]
+  onChange: (id: string) => void
+}
+
+// Rename field, also profile-backed. onChange returns the accepted name
+// (trimmed/clamped, or the old one if the input was empty) so the field can
+// snap back to what actually stuck.
+export interface NameEditor {
+  current: string
+  onChange: (name: string) => string
+}
 
 const STORAGE_KEY = 'shared-game.settings'
 
@@ -30,9 +48,19 @@ function load(): Settings {
       timeOfDay: typeof obj.timeOfDay === 'number' && isFinite(obj.timeOfDay) ? obj.timeOfDay : 10,
       // Music defaults on, so absence means true.
       music: obj.music !== false,
+      // Never restored from storage: the camera is opt-in every session, so
+      // reloading the page can't silently reopen a webcam.
+      webcamFace: false,
     }
   } catch {
-    return { cameraFollow: false, firstPerson: false, clockRun: true, timeOfDay: 10, music: true }
+    return {
+      cameraFollow: false,
+      firstPerson: false,
+      clockRun: true,
+      timeOfDay: 10,
+      music: true,
+      webcamFace: false,
+    }
   }
 }
 
@@ -44,8 +72,27 @@ function persist(settings: Settings): void {
   }
 }
 
-export function initSettings(): Settings {
+// Re-sync callbacks per row, so setSetting() can drive a switch from code
+// (e.g. flipping the webcam back off when permission is denied).
+const syncs = new Map<BoolKey, () => void>()
+let live: Settings | null = null
+
+export function setSetting(key: BoolKey, value: boolean): void {
+  if (!live || live[key] === value) return
+  live[key] = value
+  persist(live)
+  syncs.get(key)?.()
+}
+
+// onToggle fires when the player flips a switch (not for setSetting), for
+// settings that need to do something rather than just be read each frame.
+export function initSettings(
+  character?: CharacterPicker,
+  nameEditor?: NameEditor,
+  onToggle: (key: BoolKey, value: boolean) => void = () => {},
+): Settings {
   const settings = load()
+  live = settings
 
   const style = document.createElement('style')
   style.textContent = `
@@ -124,6 +171,30 @@ export function initSettings(): Settings {
       margin: 2px 0 0;
       accent-color: #4f9e3f;
     }
+    #settings-skin {
+      width: 118px;
+      font: 11px monospace;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      border: 2px solid rgba(255, 255, 255, 0.28);
+      border-radius: 0;
+    }
+    #settings-skin:focus-visible {
+      outline: 2px solid #fff;
+    }
+    #settings-name {
+      width: 110px;
+      font: 11px monospace;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      border: 2px solid rgba(255, 255, 255, 0.28);
+      border-radius: 0;
+      padding: 2px 4px;
+      outline: none;
+    }
+    #settings-name:focus {
+      border-color: rgba(255, 255, 255, 0.6);
+    }
   `
   document.head.appendChild(style)
 
@@ -164,6 +235,7 @@ export function initSettings(): Settings {
       toggle.setAttribute('aria-checked', String(settings[key]))
     }
     sync()
+    syncs.set(key, sync)
 
     toggle.addEventListener('click', () => {
       settings[key] = !settings[key]
@@ -172,6 +244,7 @@ export function initSettings(): Settings {
       if (key === 'clockRun') settings.onClockChange?.(true)
       // Drop focus so Space stays the jump key instead of re-clicking the switch.
       toggle.blur()
+      onToggle(key, settings[key])
     })
 
     // Clicking the label text toggles the switch too.
@@ -179,6 +252,59 @@ export function initSettings(): Settings {
 
     row.append(label, toggle)
     return row
+  }
+
+  // Name field: rename yourself any time; commits on Enter or focus loss.
+  const nameRow = document.createElement('div')
+  nameRow.className = 'settings-row'
+  if (nameEditor) {
+    const nameLabel = document.createElement('span')
+    nameLabel.textContent = 'name'
+    const nameInput = document.createElement('input')
+    nameInput.id = 'settings-name'
+    nameInput.type = 'text'
+    nameInput.maxLength = 24
+    nameInput.value = nameEditor.current
+    nameInput.setAttribute('aria-label', 'Player name')
+    // Typing a name must not equip weapons or move the player: stop keys
+    // from reaching the window-level game handlers (same trick as chat).
+    nameInput.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') nameInput.blur()
+    })
+    nameInput.addEventListener('keyup', (e) => e.stopPropagation())
+    nameInput.addEventListener('blur', () => {
+      nameInput.value = nameEditor.onChange(nameInput.value)
+    })
+    nameRow.append(nameLabel, nameInput)
+  } else {
+    nameRow.hidden = true
+  }
+
+  // Character picker: a dropdown of skins from skins.ts.
+  const charRow = document.createElement('div')
+  charRow.className = 'settings-row'
+  if (character) {
+    const charLabel = document.createElement('span')
+    charLabel.textContent = 'character'
+    const select = document.createElement('select')
+    select.id = 'settings-skin'
+    select.setAttribute('aria-label', 'Character')
+    for (const opt of character.options) {
+      const option = document.createElement('option')
+      option.value = opt.id
+      option.textContent = opt.label
+      select.appendChild(option)
+    }
+    select.value = character.current
+    select.addEventListener('change', () => {
+      character.onChange(select.value)
+      // Drop focus so WASD/arrows go back to being game keys.
+      select.blur()
+    })
+    charRow.append(charLabel, select)
+  } else {
+    charRow.hidden = true
   }
 
   // Time-of-day scrubber: live clock readout plus a slider over 0-24h.
@@ -243,12 +369,15 @@ export function initSettings(): Settings {
 
   panel.append(
     title,
+    nameRow,
+    charRow,
     makeRow('settings-camera-follow-label', 'camera always behind me', 'cameraFollow'),
     makeRow('settings-first-person-label', 'first-person aim (with weapon)', 'firstPerson'),
     makeRow('settings-clock-run-label', 'day/night clock runs', 'clockRun'),
     timeRow,
     slider,
     makeRow('settings-music-label', 'music', 'music'),
+    makeRow('settings-webcam-label', 'my webcam on my head', 'webcamFace'),
   )
   document.body.append(gear, panel)
 
