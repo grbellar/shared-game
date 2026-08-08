@@ -420,6 +420,35 @@ class Sfx {
     if (on) this.tone('square', 520, 780, 0.09, 0.12)
     else this.tone('square', 780, 520, 0.09, 0.12)
   }
+
+  // Blip as the emote wheel highlight moves.
+  uiTick(): void {
+    this.tone('square', 950, 950, 0.03, 0.05)
+  }
+
+  // One short cue per emote, played for whoever pulled it off (remotes
+  // fade with distance).
+  emote(id: string, vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    if (id === 'wave') {
+      this.tone('square', 660, 990, 0.08, 0.1 * v)
+      this.tone('square', 990, 1320, 0.08, 0.09 * v, 0.09)
+    } else if (id === 'dance') {
+      const riff = [523, 659, 784, 1047]
+      riff.forEach((f, i) => this.tone('square', f, f, 0.09, 0.09 * v, i * 0.11))
+    } else if (id === 'clap') {
+      for (let i = 0; i < 3; i++) this.noise('bandpass', 2400, 800, 0.06, 0.22 * v, i * 0.15)
+    } else if (id === 'laugh') {
+      const has = [740, 620, 520]
+      has.forEach((f, i) => this.tone('square', f, f * 0.75, 0.09, 0.12 * v, i * 0.13))
+    } else if (id === 'flex') {
+      this.tone('sawtooth', 110, 240, 0.35, 0.11 * v)
+      this.tone('square', 440, 660, 0.18, 0.07 * v, 0.12)
+    } else if (id === 'bow') {
+      this.tone('triangle', 560, 300, 0.28, 0.11 * v)
+    }
+  }
 }
 
 export const sfx = new Sfx()

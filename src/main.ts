@@ -20,11 +20,14 @@ import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
 import { Cats } from './cats'
+import { EmoteController } from './emotes'
+import { EmoteWheel } from './emotewheel'
 import {
   setWeapon,
   setRide,
   setName,
   setFace,
+  setEmote,
   startSlash,
   startJabber,
   popHead,
@@ -170,6 +173,20 @@ function saveLoadout(): void {
   saveProfile(profile)
 }
 
+// Emotes: the wheel picks one, the controller times it out, and the id rides
+// along in the state we already broadcast so remotes replay the pose.
+const emotes = new EmoteController()
+emotes.onChange = (id) => {
+  setEmote(player.group, id)
+  if (id !== 'none') sfx.emote(id)
+}
+const emoteWheel = new EmoteWheel(touch.active)
+emoteWheel.onPick = (id) => emotes.play(id)
+remotes.onEmote = (id, emote) => {
+  const group = remotes.getGroup(id)
+  sfx.emote(emote, group ? distVol(group.position, 60) : 0.6)
+}
+
 setInterval(() => {
   net.sendState({
     x: player.group.position.x,
@@ -183,6 +200,7 @@ setInterval(() => {
     ride,
     skin,
     talk: Math.round(voice.level * 100) / 100,
+    emote: emotes.current,
   })
 }, 66)
 
@@ -329,6 +347,7 @@ const SWORD_DAMAGE = 55 // two clean swings takes a head off
 function attack(): void {
   if (player.dead) return
   const now = performance.now()
+  emotes.stop() // no waving mid-rocket
   if (weapon === 'gun' && now - lastAttack > 800) {
     lastAttack = now
     sfx.rocket()
@@ -431,7 +450,7 @@ function launchFireworks(): void {
 }
 window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
-  if (touch.active || chat.isOpen) return
+  if (touch.active || chat.isOpen || emoteWheel.isOpen) return
   if (target !== document.body && target.tagName !== 'CANVAS') return
   // In first person the first click grabs the mouse; later clicks attack.
   if (fp.claimClickForLock()) return
@@ -652,6 +671,7 @@ settings.onClockChange = (fromToggle) => {
   cats,
   fireworks,
   webcam,
+  emotes,
   scene,
   camera,
   draw: () => renderer.render(scene, camera),
@@ -663,6 +683,7 @@ renderer.setAnimationLoop(() => {
 
   gameCamera.addYaw(touch.consumeYaw())
   music.setEnabled(settings.music && !sfx.muted)
+  fp.paused = emoteWheel.isOpen // the wheel borrows the mouse
   fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
   fp.update(dt)
 
@@ -687,6 +708,8 @@ renderer.setAnimationLoop(() => {
       ? Math.min(1, (performance.now() - bowDrawStart) / BOW_DRAW_MS)
       : 0,
   )
+  // Moving, jumping or dying drops you out of an emote.
+  emotes.update(player.moving || player.dead || keys.has('Space') || touch.jumpHeld)
   bubbles.update()
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])

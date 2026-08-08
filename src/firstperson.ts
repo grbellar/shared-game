@@ -46,6 +46,9 @@ const BOW_VIEW_SCALE = 0.85
 
 export class FirstPersonAim {
   pitch = 0
+  // Set while a menu owns the mouse (the emote wheel), so sweeping the
+  // wheel doesn't also spin the player around.
+  paused = false
   private active = false
   private readonly crosshair: HTMLDivElement
   private viewModel: THREE.Group | null = null
@@ -90,7 +93,7 @@ export class FirstPersonAim {
     document.body.append(this.crosshair)
 
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked) return
+      if (!this.locked || this.paused) return
       // Mouse right turns right: facing is (sin ry, cos ry), and with the
       // camera looking along it screen-right is -X, so yaw decreases.
       this.player.group.rotation.y -= e.movementX * SENSITIVITY

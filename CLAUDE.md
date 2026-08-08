@@ -76,7 +76,11 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 `server/room.ts` — **keep them in sync when you add messages**:
 
 - server→client `welcome`: your id + everyone's last known state
-- client→server `state`: your position/rotation/color/name/weapon/ride (~15x/sec)
+- client→server `state`: your position/rotation/color/name/weapon/ride/skin/
+  talk/emote (~15x/sec). `emote` is the radial-menu pose you're playing (see
+  `emotes.ts`); it rides in `state` rather than being its own message, so
+  late joiners see a dance already in progress. Each client animates it off
+  its own clock.
 - server→client `state`: another player's state (relayed)
 - server→client `leave`: a player disconnected
 - client→server `chat`: a chat message; server relays it to everyone else as

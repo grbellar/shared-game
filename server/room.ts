@@ -34,6 +34,7 @@ interface PlayerState {
   ride: string
   skin: string
   talk: number
+  emote: string
 }
 
 // Real seconds per full in-game day. Keep in sync with src/daynight.ts.
@@ -114,6 +115,7 @@ export class GameRoom extends DurableObject<Env> {
         ride: String(msg.ride).slice(0, 12),
         skin: String(msg.skin ?? 'none').slice(0, 12),
         talk: Math.max(0, Math.min(1, Number(msg.talk) || 0)),
+        emote: String(msg.emote ?? 'none').slice(0, 12),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)

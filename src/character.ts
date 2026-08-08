@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { applyEmote, clearEmotePose } from './emotes'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
 
@@ -48,6 +49,9 @@ export function createCharacter(color: string, name: string): THREE.Group {
   armL.position.set(-0.55, 1.6, 0)
   armR.position.set(0.55, 1.6, 0)
 
+  // Yaw first, then pitch, so an emote's forward tilt (see emotes.ts) stays
+  // forward no matter which way the character is facing.
+  group.rotation.order = 'YXZ'
   group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
   group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
@@ -56,7 +60,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   return group
 }
 
-interface Rig {
+export interface Rig {
   body: THREE.Mesh
   head: THREE.Mesh
   legL: THREE.Mesh
@@ -181,6 +185,21 @@ export function animateCharacter(
       rig.armR.rotation.z = 0
     }
   }
+
+  // Emotes pose last so they win over the walk cycle and the weapon arm.
+  clearEmotePose(group, rig)
+  const emote = group.userData.emote as string | undefined
+  if (emote) {
+    const t = (performance.now() - ((group.userData.emoteStart as number) ?? 0)) / 1000
+    applyEmote(group, rig, emote, t, riding)
+  }
+}
+
+// Start (or clear, with 'none') an emote on a character. Synced via the
+// `emote` field in PlayerState; each client runs its own animation clock.
+export function setEmote(group: THREE.Group, emote: string): void {
+  group.userData.emote = emote === 'none' ? undefined : emote
+  group.userData.emoteStart = performance.now()
 }
 
 export const SLASH_DURATION = 0.3
