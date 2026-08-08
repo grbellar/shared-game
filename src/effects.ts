@@ -36,6 +36,13 @@ interface Explosion {
   t: number
 }
 
+const SPLASH_RING_TIME = 0.7
+
+interface SplashRing {
+  mesh: THREE.Mesh
+  t: number
+}
+
 export class Effects {
   onBlast: (center: THREE.Vector3) => void = () => {}
   // Fires only for the local player's own rockets. Craters hang off this so
@@ -45,6 +52,7 @@ export class Effects {
   private rockets: Rocket[] = []
   private puffs: Puff[] = []
   private explosions: Explosion[] = []
+  private splashRings: SplashRing[] = []
   private tmp = new THREE.Vector3()
 
   constructor(private scene: THREE.Scene) {}
@@ -67,6 +75,26 @@ export class Effects {
       life: ROCKET_LIFE,
       smokeT: 0,
     })
+  }
+
+  // Someone hit the water: foam droplets flying up plus a ring spreading on
+  // the surface. Purely cosmetic, so each client spawns its own.
+  spawnSplash(x: number, z: number): void {
+    const surface = new THREE.Vector3(x, 0.15, z)
+    this.burst(surface, 0xffffff, 6, 5)
+    this.burst(surface, 0xa8d4ef, 8, 6)
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.5, 0.75, 12).rotateX(-Math.PI / 2),
+      new THREE.MeshLambertMaterial({
+        color: 0xdff2ff,
+        emissive: 0x86aec7,
+        transparent: true,
+        opacity: 0.85,
+      }),
+    )
+    ring.position.set(x, 0.03, z)
+    this.scene.add(ring)
+    this.splashRings.push({ mesh: ring, t: 0 })
   }
 
   spawnHeadPop(pos: THREE.Vector3): void {
@@ -121,6 +149,19 @@ export class Effects {
       e.mesh.scale.setScalar(0.6 + 8 * e.t)
       const mat = e.mesh.material as THREE.MeshLambertMaterial
       mat.opacity = 0.95 * (1 - e.t)
+    }
+
+    for (let i = this.splashRings.length - 1; i >= 0; i--) {
+      const r = this.splashRings[i]
+      r.t += dt / SPLASH_RING_TIME
+      if (r.t >= 1) {
+        this.scene.remove(r.mesh)
+        this.splashRings.splice(i, 1)
+        continue
+      }
+      r.mesh.scale.setScalar(1 + 3.2 * r.t)
+      const mat = r.mesh.material as THREE.MeshLambertMaterial
+      mat.opacity = 0.85 * (1 - r.t)
     }
 
     for (let i = this.puffs.length - 1; i >= 0; i--) {

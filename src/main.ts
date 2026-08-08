@@ -17,6 +17,7 @@ import { Health } from './health'
 import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
 import { sfx } from './audio'
 import { Voice } from './voice'
+import { music } from './music'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -110,6 +111,11 @@ net.onArrow = (id, origin, dir, power) => {
   arrows.spawn(id, from, new THREE.Vector3(...dir), power)
 }
 const destruction = new Destruction(effects, net)
+player.onSplash = (x, z) => effects.spawnSplash(x, z)
+remotes.onSplash = (x, z) => {
+  effects.spawnSplash(x, z)
+  sfx.splash(distVol(new THREE.Vector3(x, 0, z), 50))
+}
 effects.onOwnExplosion = (center) => destruction.rocketCrater(center)
 net.onCrater = (c) => {
   // Dig-sized craters get a scoop sound; rocket craters already boomed.
@@ -379,13 +385,14 @@ settings.onClockChange = (fromToggle) => {
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05)
 
   gameCamera.addYaw(touch.consumeYaw())
+  music.setEnabled(settings.music && !sfx.muted)
   fp.setActive(settings.firstPerson && weapon !== 'none' && !touch.active, weapon)
   fp.update(dt)
 

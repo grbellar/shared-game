@@ -22,6 +22,8 @@ interface Remote {
 
 // Renders and interpolates the other players in the room.
 export class Remotes {
+  // Fired when a remote player hits the water (their pose flips to swim).
+  onSplash: (x: number, z: number) => void = () => {}
   private players = new Map<string, Remote>()
 
   constructor(private scene: THREE.Scene) {}
@@ -32,6 +34,7 @@ export class Remotes {
 
   upsert(p: PlayerState): void {
     let remote = this.players.get(p.id)
+    const isNew = !remote
     if (!remote) {
       const group = createCharacter(p.color, p.name)
       group.position.set(p.x, p.y, p.z)
@@ -48,7 +51,11 @@ export class Remotes {
       this.players.set(p.id, remote)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
-    remote.pose = p.pose ?? 'stand'
+    const pose = p.pose ?? 'stand'
+    // Splash on the transition into water — but not for players who were
+    // already swimming when we joined (the welcome replay).
+    if (pose === 'swim' && remote.pose !== 'swim' && !isNew) this.onSplash(p.x, p.z)
+    remote.pose = pose
     remote.group.userData.talk = p.talk ?? 0 // animateCharacter opens the mouth
     const weapon =
       p.weapon === 'gun' || p.weapon === 'sword' || p.weapon === 'shovel' || p.weapon === 'bow'

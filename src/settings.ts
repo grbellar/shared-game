@@ -7,6 +7,7 @@ export interface Settings {
   firstPerson: boolean
   clockRun: boolean // day/night cycle advances on its own
   timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
+  music: boolean
   // Fired when the USER scrubs the time slider or flips the clock toggle
   // (not when the network updates them) — main.ts broadcasts the new clock.
   // fromToggle distinguishes "freeze/unfreeze now" from "jump to this time".
@@ -27,9 +28,11 @@ function load(): Settings {
       firstPerson: obj.firstPerson === true,
       clockRun: obj.clockRun !== false,
       timeOfDay: typeof obj.timeOfDay === 'number' && isFinite(obj.timeOfDay) ? obj.timeOfDay : 10,
+      // Music defaults on, so absence means true.
+      music: obj.music !== false,
     }
   } catch {
-    return { cameraFollow: false, firstPerson: false, clockRun: true, timeOfDay: 10 }
+    return { cameraFollow: false, firstPerson: false, clockRun: true, timeOfDay: 10, music: true }
   }
 }
 
@@ -245,6 +248,7 @@ export function initSettings(): Settings {
     makeRow('settings-clock-run-label', 'day/night clock runs', 'clockRun'),
     timeRow,
     slider,
+    makeRow('settings-music-label', 'music', 'music'),
   )
   document.body.append(gear, panel)
 

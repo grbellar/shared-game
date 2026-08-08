@@ -157,13 +157,22 @@ class Sfx {
     this.tone('triangle', f, f * 1.25, 0.09, 0.05)
   }
 
-  splash(): void {
-    this.noise('lowpass', 2500, 250, 0.35, 0.3)
-    this.tone('sine', 320, 85, 0.22, 0.2)
+  splash(vol = 1): void {
+    this.noise('lowpass', 2500, 250, 0.35, 0.3 * vol)
+    this.tone('sine', 320, 85, 0.22, 0.2 * vol)
+    this.noise('bandpass', 1600, 500, 0.18, 0.12 * vol, 0.05)
   }
 
+  // A swim stroke: a watery scoop with a little droplet patter after it.
   paddle(): void {
-    this.noise('lowpass', 900, 300, 0.12, 0.07)
+    this.noise('lowpass', 700 + Math.random() * 400, 220, 0.16, 0.16)
+    this.noise('bandpass', 1500, 550, 0.08, 0.06, 0.04)
+    this.tone('sine', 230 + Math.random() * 60, 110, 0.1, 0.05)
+  }
+
+  // Water lapping against someone treading in place. Quiet.
+  lap(): void {
+    this.noise('lowpass', 550 + Math.random() * 300, 180, 0.28, 0.05)
   }
 
   // --- combat ---

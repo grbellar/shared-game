@@ -42,6 +42,8 @@ export class Player {
   riding = false
   // Called when the respawn timer puts you back on the island.
   onRespawn: () => void = () => {}
+  // Fired when we hit water hard enough to splash (main.ts spawns the effect).
+  onSplash: (x: number, z: number) => void = () => {}
   private velY = 0
   private velX = 0
   private velZ = 0
@@ -149,7 +151,10 @@ export class Player {
       this.group.position.y <= WATER_LEVEL + FLOAT_BAND
     ) {
       // Stick to the water surface with a gentle bob.
-      if (!this.wasFloating) sfx.splash()
+      if (!this.wasFloating) {
+        sfx.splash()
+        this.onSplash(this.group.position.x, this.group.position.z)
+      }
       this.bobPhase += dt * 2.5
       this.group.position.y = WATER_LEVEL + Math.sin(this.bobPhase) * 0.07
       this.velY = 0
@@ -158,7 +163,13 @@ export class Player {
     } else {
       const floor = Math.max(ground, WATER_LEVEL)
       if (this.group.position.y <= floor) {
-        if (!this.onGround && this.velY < -7) sfx.land(-this.velY / 25)
+        if (!this.onGround && this.velY < -5 && floor < -0.05) {
+          // Landing feet-underwater in the shallows: splash, not thud.
+          sfx.splash()
+          this.onSplash(this.group.position.x, this.group.position.z)
+        } else if (!this.onGround && this.velY < -7) {
+          sfx.land(-this.velY / 25)
+        }
         this.group.position.y = floor
         this.velY = 0
         this.onGround = true
@@ -174,10 +185,11 @@ export class Player {
 
     this.moving = moving > 0
 
-    // One footstep (or squeak, or paddle stroke) per half walk cycle.
-    if (Math.floor(this.walkPhase / Math.PI) !== prevStep && moving > 0.15 && !this.dead) {
-      if (floating) sfx.paddle()
-      else if (this.onGround) this.riding ? sfx.squeak() : sfx.step()
+    // One footstep (or squeak, or paddle stroke) per half walk cycle. While
+    // treading water in place the cycle still ticks, as quiet lapping.
+    if (Math.floor(this.walkPhase / Math.PI) !== prevStep && !this.dead) {
+      if (floating) moving > 0.15 ? sfx.paddle() : sfx.lap()
+      else if (moving > 0.15 && this.onGround) this.riding ? sfx.squeak() : sfx.step()
     }
     this.wasFloating = floating
 
