@@ -115,7 +115,7 @@ export function animateCharacter(
   const rig = group.userData.rig as Rig
   const anim = group.userData.anim as { crouch: number; swim: number; mouth: number }
   const ride = group.userData.ride as string | undefined
-  const riding = ride === 'wheelchair' || ride === 'ramsey'
+  const riding = ride === 'wheelchair' || ride === 'ramsey' || ride === 'plane'
   const k = Math.min(1, 10 * dt)
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
   anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
@@ -147,6 +147,21 @@ export function animateCharacter(
     rig.armR.rotation.x = -0.6
     rig.armL.rotation.z = 0
     rig.armR.rotation.z = 0
+    const wheels = group.userData.rideWheels as THREE.Group[] | undefined
+    if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
+  } else if (ride === 'plane') {
+    // In the cockpit: legs down the footwell, both hands forward on the stick.
+    rig.legL.rotation.x = -1.35
+    rig.legR.rotation.x = -1.35
+    rig.legL.rotation.z = 0
+    rig.legR.rotation.z = 0
+    rig.armL.rotation.x = -1.05
+    rig.armR.rotation.x = -1.05
+    rig.armL.rotation.z = 0.2
+    rig.armR.rotation.z = -0.2
+    // The prop never stops (the engine idles), and opens up with the throttle.
+    const prop = group.userData.rideProp as THREE.Object3D | undefined
+    if (prop) prop.rotation.z += dt * (14 + 55 * moving)
     const wheels = group.userData.rideWheels as THREE.Group[] | undefined
     if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
   } else if (ride === 'ramsey') {
@@ -398,15 +413,16 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
   }
 }
 
-// Mount or dismount a ride: 'wheelchair' or 'ramsey' (a guy you ride like
-// a horse). Synced via the `ride` field in PlayerState. The character sits
-// on it (see animateCharacter).
+// Mount or dismount a ride: 'wheelchair', 'ramsey' (a guy you ride like
+// a horse), or 'plane'. Synced via the `ride` field in PlayerState. The
+// character sits on it (see animateCharacter).
 export function setRide(group: THREE.Group, ride: string): void {
   const existing = group.getObjectByName('ride')
   if (existing) existing.parent!.remove(existing)
   group.userData.ride = ride
   delete group.userData.rideWheels
   delete group.userData.rideLimbs
+  delete group.userData.rideProp
   if (ride === 'wheelchair') {
     const chair = buildWheelchair()
     group.add(chair)
@@ -415,7 +431,88 @@ export function setRide(group: THREE.Group, ride: string): void {
     const ramsey = buildRamsey()
     group.add(ramsey)
     group.userData.rideLimbs = ramsey.userData.limbs
+  } else if (ride === 'plane') {
+    const plane = buildPlane()
+    group.add(plane)
+    group.userData.rideWheels = plane.userData.wheels
+    group.userData.rideProp = plane.userData.prop
   }
+}
+
+// Cherry-red open-cockpit prop plane, built around the seated rider (who
+// faces +Z, so the nose and prop are out front at +Z). Low wing under the
+// seat, tail boom out the back, fixed gear so it can taxi. The prop group
+// spins about Z (see animateCharacter).
+function buildPlane(): THREE.Group {
+  const plane = new THREE.Group()
+  plane.name = 'ride'
+  const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
+  const cream = new THREE.MeshLambertMaterial({ color: 0xe8dfc4, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+  const rubber = new THREE.MeshLambertMaterial({ color: 0x3a3d44, flatShading: true })
+
+  // Nose ahead of the footwell, engine cowl on the front of it.
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.75, 1.3), red)
+  nose.position.set(0, 0.75, 1.25)
+  const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.25), dark)
+  cowl.position.set(0, 0.75, 2.0)
+  // Cockpit tub: floor under the feet, walls beside the hips, seat back.
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.1, 1.2), red)
+  floor.position.set(0, 0.32, 0)
+  const wallL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 1.2), red)
+  const wallR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 1.2), red)
+  wallL.position.set(-0.49, 0.72, 0)
+  wallR.position.set(0.49, 0.72, 0)
+  const seatBack = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.75, 0.12), red)
+  seatBack.position.set(0, 0.85, -0.62)
+  // Tail boom tapering back to the empennage.
+  const boom = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.45, 1.7), red)
+  boom.position.set(0, 0.8, -1.5)
+  const stab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.08, 0.55), cream)
+  stab.position.set(0, 0.9, -2.25)
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.75, 0.55), cream)
+  fin.position.set(0, 1.3, -2.3)
+  // One low wing straddling the cockpit.
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.12, 1.05), cream)
+  wing.position.set(0, 0.45, 0.35)
+  plane.add(nose, cowl, floor, wallL, wallR, seatBack, boom, stab, fin, wing)
+
+  // Propeller: spinner cone plus two blades, hung off the cowl.
+  const prop = new THREE.Group()
+  const spinner = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.3, 6).rotateX(Math.PI / 2), dark)
+  spinner.position.z = 0.18
+  const bladeA = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.5, 0.06), dark)
+  const bladeB = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.14, 0.06), dark)
+  prop.add(spinner, bladeA, bladeB)
+  prop.position.set(0, 0.75, 2.15)
+  plane.add(prop)
+
+  // Fixed gear: two mains under the wing, a little tail wheel.
+  const wheels: THREE.Group[] = []
+  for (const side of [-1, 1]) {
+    const wheel = new THREE.Group()
+    const tire = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 0.22, 0.12, 8).rotateZ(Math.PI / 2),
+      rubber,
+    )
+    wheel.add(tire)
+    wheel.position.set(side * 0.75, 0.22, 0.7)
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.3, 0.07), dark)
+    strut.position.set(side * 0.75, 0.4, 0.7)
+    plane.add(wheel, strut)
+    wheels.push(wheel)
+  }
+  const tailWheel = new THREE.Group()
+  tailWheel.add(
+    new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 8).rotateZ(Math.PI / 2), rubber),
+  )
+  tailWheel.position.set(0, 0.11, -2.1)
+  plane.add(tailWheel)
+  wheels.push(tailWheel)
+
+  plane.userData.wheels = wheels
+  plane.userData.prop = prop
+  return plane
 }
 
 // Ramsey: a loyal guy on all fours you ride like a horse. Dark gray tee,

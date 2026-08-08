@@ -225,7 +225,7 @@ net.connect()
 
 type Weapon =
   | 'none' | 'gun' | 'sniper' | 'm2' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
-type Ride = 'none' | 'wheelchair' | 'ramsey'
+type Ride = 'none' | 'wheelchair' | 'ramsey' | 'plane'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
 let ride = profile.ride as Ride
@@ -353,6 +353,7 @@ const rideWheel = new ItemWheel(
     { id: 'none', icon: '🚶', label: 'on foot' },
     { id: 'wheelchair', icon: '🦽', label: 'R wheelchair' },
     { id: 'ramsey', icon: '🧍', label: 'Y ramsey' },
+    { id: 'plane', icon: '✈️', label: 'U plane' },
   ],
   () => ride,
   (id) => equipRide(id as Ride),
@@ -1016,6 +1017,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
   if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
+  if (e.code === 'KeyU') equipRide(ride === 'plane' ? 'none' : 'plane')
   if (e.code === 'KeyJ') rocketToNextIsland()
   if (e.code === 'KeyU') meckies.toggleNearest()
   if (e.code === 'KeyP') cats.petNearest()
@@ -1143,9 +1145,13 @@ renderer.setAnimationLoop(() => {
   scope.update(dt)
   // No aiming down a scope while the rocket flies you; the chase cam sells it.
   // Scoping in forces first person for as long as the scope is up, even if
-  // the player normally plays in third.
+  // the player normally plays in third. The plane counts as a reason to be in
+  // first person on its own — a cockpit view needs no weapon in hand.
   fp.setActive(
-    (settings.firstPerson || scope.active) && weapon !== 'none' && !touch.active && !rocket.active,
+    (settings.firstPerson || scope.active) &&
+      (weapon !== 'none' || ride === 'plane') &&
+      !touch.active &&
+      !rocket.active,
     weapon,
   )
   fp.setScoped(scope.active)
@@ -1275,7 +1281,11 @@ renderer.setAnimationLoop(() => {
     },
     dt,
   )
-  daynight.update(settings, camera.position, shadow ? 1 : 0, rocket.fogLift)
+  // The plane earns the rocket's view: altitude pushes the fog wall back the
+  // same way, so climbing actually reveals the world spread out below.
+  const planeLift =
+    ride === 'plane' ? Math.max(0, player.group.position.y - 20) * 4.5 : 0
+  daynight.update(settings, camera.position, shadow ? 1 : 0, Math.max(rocket.fogLift, planeLift))
   minimap.update(player, remotes, settings, voice.level, skeletons)
 
   renderer.render(scene, camera)

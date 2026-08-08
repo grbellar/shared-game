@@ -94,7 +94,8 @@ export class Remotes {
       remote.weapon = weapon
       setWeapon(remote.group, weapon)
     }
-    const ride = p.ride === 'wheelchair' || p.ride === 'ramsey' ? p.ride : 'none'
+    const ride =
+      p.ride === 'wheelchair' || p.ride === 'ramsey' || p.ride === 'plane' ? p.ride : 'none'
     if (remote.ride !== ride) {
       remote.ride = ride
       setRide(remote.group, ride)
