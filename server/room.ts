@@ -11,7 +11,8 @@ interface PlayerState {
   color: string
   name: string
   pose: 'stand' | 'crouch' | 'swim'
-  gun: boolean
+  weapon: string
+  ride: string
 }
 
 // Dumb relay: clients send their own state, the room broadcasts it to
@@ -54,7 +55,8 @@ export class GameRoom extends DurableObject<Env> {
         color: String(msg.color).slice(0, 16),
         name: String(msg.name).slice(0, 24),
         pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
-        gun: Boolean(msg.gun),
+        weapon: String(msg.weapon).slice(0, 8),
+        ride: String(msg.ride).slice(0, 12),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -63,6 +65,24 @@ export class GameRoom extends DurableObject<Env> {
       if (!text) return
       const name = this.states.get(att.id)?.name ?? 'someone'
       this.broadcast(JSON.stringify({ t: 'chat', id: att.id, name, text }), ws)
+    } else if (msg.t === 'fire') {
+      this.broadcast(
+        JSON.stringify({
+          t: 'fire',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          dx: Number(msg.dx) || 0,
+          dy: Number(msg.dy) || 0,
+          dz: Number(msg.dz) || 0,
+        }),
+        ws,
+      )
+    } else if (msg.t === 'slash') {
+      this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
+    } else if (msg.t === 'kill') {
+      this.broadcast(JSON.stringify({ t: 'kill', victim: String(msg.victim).slice(0, 16) }), ws)
     }
   }
 

@@ -104,7 +104,7 @@
         font-size: 22px;
         opacity: 0.8;
       }
-      #touch-jump {
+      #touch-jump, #touch-fire {
         position: fixed;
         right: calc(env(safe-area-inset-right) + 24px);
         bottom: calc(env(safe-area-inset-bottom) + 32px);
@@ -121,11 +121,14 @@
         touch-action: none;
         -webkit-tap-highlight-color: transparent;
       }
+      #touch-fire {
+        bottom: calc(env(safe-area-inset-bottom) + 120px);
+      }
     </style>
   </head>
   <body>
     <div id="status"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; G bazooka</div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; G bazooka &middot; H katana &middot; R wheelchair &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

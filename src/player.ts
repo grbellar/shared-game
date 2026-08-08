@@ -3,6 +3,7 @@ import { createCharacter, animateCharacter, type Pose } from './character'
 import { heightAt } from './world'
 
 const SPEED = 9
+const RIDE_SPEED = 16 // wheelchair beats walking
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
 const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
@@ -19,7 +20,11 @@ export interface PlayerInput {
 export class Player {
   group: THREE.Group
   pose: Pose = 'stand'
+  dead = false
+  riding = false
   private velY = 0
+  private velX = 0
+  private velZ = 0
   private onGround = false
   private walkPhase = 0
   private bobPhase = 0
@@ -30,14 +35,39 @@ export class Player {
     scene.add(this.group)
   }
 
+  // Shove from an explosion (or whatever else wants to throw the player).
+  applyImpulse(x: number, y: number, z: number): void {
+    this.velX += x
+    this.velZ += z
+    this.velY += y
+    if (y > 0) this.onGround = false
+  }
+
+  // Headless pause, then respawn near the island center.
+  die(): void {
+    if (this.dead) return
+    this.dead = true
+    setTimeout(() => {
+      const x = (Math.random() - 0.5) * 10
+      const z = (Math.random() - 0.5) * 10
+      this.group.position.set(x, heightAt(x, z), z)
+      this.velX = this.velY = this.velZ = 0
+      this.dead = false
+    }, 2500)
+  }
+
   update(dt: number, input: PlayerInput, camYaw: number): void {
     const swimming = this.pose === 'swim'
-    const crouching = !swimming && input.crouch
+    const crouching = !swimming && !this.riding && input.crouch
     const sprinting = !crouching && input.sprint
     let speedMul = swimming ? 0.6 : crouching ? 0.45 : 1
     if (sprinting) speedMul *= 1.6
 
     let { f, s } = input
+    if (this.dead) {
+      f = 0
+      s = 0
+    }
     const mag = Math.hypot(f, s)
 
     let moving = 0
@@ -55,8 +85,9 @@ export class Player {
       dx /= len
       dz /= len
       const analog = Math.min(mag, 1)
-      this.group.position.x += dx * SPEED * speedMul * analog * dt
-      this.group.position.z += dz * SPEED * speedMul * analog * dt
+      const moveSpeed = this.riding ? RIDE_SPEED : SPEED
+      this.group.position.x += dx * moveSpeed * speedMul * analog * dt
+      this.group.position.z += dz * moveSpeed * speedMul * analog * dt
       // Face the direction of travel, taking the short way around.
       const target = Math.atan2(dx, dz)
       const delta = Math.atan2(
@@ -71,6 +102,13 @@ export class Player {
     } else if (swimming) {
       this.walkPhase += dt * 2.8 // lazy paddle while treading water
     }
+
+    // Knockback impulses decay with heavy friction.
+    this.group.position.x += this.velX * dt
+    this.group.position.z += this.velZ * dt
+    const friction = Math.pow(0.03, dt)
+    this.velX *= friction
+    this.velZ *= friction
 
     // Gravity, then ground or water-surface collision.
     this.velY -= GRAVITY * dt
@@ -99,7 +137,7 @@ export class Player {
         this.onGround = false
       }
     }
-    if (input.jump && this.onGround) {
+    if (input.jump && this.onGround && !this.dead) {
       this.velY = JUMP_VELOCITY
       this.onGround = false
     }

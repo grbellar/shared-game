@@ -1,13 +1,23 @@
 import * as THREE from 'three'
-import { createCharacter, animateCharacter, setGun, type Pose } from './character'
+import {
+  createCharacter,
+  animateCharacter,
+  setWeapon,
+  setRide,
+  startSlash,
+  popHead,
+  type Pose,
+} from './character'
 import type { PlayerState } from './net'
+import type { Effects } from './effects'
 
 interface Remote {
   group: THREE.Group
   target: { x: number; y: number; z: number; ry: number }
   walkPhase: number
   pose: Pose
-  gun: boolean
+  weapon: string
+  ride: string
 }
 
 // Renders and interpolates the other players in the room.
@@ -32,20 +42,44 @@ export class Remotes {
         target: { x: p.x, y: p.y, z: p.z, ry: p.ry },
         walkPhase: 0,
         pose: 'stand',
-        gun: false,
+        weapon: 'none',
+        ride: 'none',
       }
       this.players.set(p.id, remote)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
     remote.pose = p.pose ?? 'stand'
-    if (remote.gun !== p.gun) {
-      remote.gun = p.gun
-      setGun(remote.group, p.gun)
+    const weapon = p.weapon === 'gun' || p.weapon === 'sword' ? p.weapon : 'none'
+    if (remote.weapon !== weapon) {
+      remote.weapon = weapon
+      setWeapon(remote.group, weapon)
+    }
+    const ride = p.ride === 'wheelchair' ? p.ride : 'none'
+    if (remote.ride !== ride) {
+      remote.ride = ride
+      setRide(remote.group, ride)
     }
   }
 
   getGroup(id: string): THREE.Group | undefined {
     return this.players.get(id)?.group
+  }
+
+  slash(id: string): void {
+    const remote = this.players.get(id)
+    if (remote) startSlash(remote.group)
+  }
+
+  decapitate(id: string, effects: Effects): void {
+    const remote = this.players.get(id)
+    if (!remote) return
+    const headPos = popHead(remote.group)
+    if (headPos) effects.spawnHeadPop(headPos)
+  }
+
+  // Positions rockets can collide with.
+  targets(): { id: string; pos: THREE.Vector3 }[] {
+    return [...this.players.entries()].map(([id, r]) => ({ id, pos: r.group.position }))
   }
 
   remove(id: string): void {

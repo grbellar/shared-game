@@ -15,6 +15,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   body.position.y = 1.1
 
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), skinMat)
+  head.name = 'head'
   head.position.y = 1.95
   const eyeGeo = new THREE.BoxGeometry(0.09, 0.12, 0.05)
   const eyeMat = new THREE.MeshLambertMaterial({ color: 0x111111 })
@@ -63,9 +64,10 @@ export function animateCharacter(
 ): void {
   const rig = group.userData.rig as Rig
   const anim = group.userData.anim as { crouch: number; swim: number }
+  const riding = group.userData.ride === 'wheelchair'
   const k = Math.min(1, 10 * dt)
-  anim.crouch += ((pose === 'crouch' ? 1 : 0) - anim.crouch) * k
-  anim.swim += ((pose === 'swim' ? 1 : 0) - anim.swim) * k
+  anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
+  anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
   const { crouch, swim } = anim
 
   // Squat: body and head drop, legs squash so the feet stay planted.
@@ -75,40 +77,157 @@ export function animateCharacter(
   rig.legL.scale.y = rig.legR.scale.y = 1 - 0.5 * crouch
   rig.armL.position.y = rig.armR.position.y = 1.6 - 0.3 * crouch
 
-  // Legs: stride on land (shorter while crouched), flutter kick in water.
   const stride = Math.sin(walkPhase) * 0.8 * moving * (1 - 0.55 * crouch)
-  const kick = Math.sin(walkPhase * 2.6) * (0.35 + 0.25 * moving)
-  rig.legL.rotation.x = stride * (1 - swim) + kick * swim
-  rig.legR.rotation.x = -stride * (1 - swim) - kick * swim
+  if (riding) {
+    // Sitting: legs out to the footrest, hands down on the push rims.
+    rig.legL.rotation.x = -1.35
+    rig.legR.rotation.x = -1.35
+    rig.armL.rotation.x = -0.6
+    rig.armR.rotation.x = -0.6
+    rig.armL.rotation.z = 0
+    rig.armR.rotation.z = 0
+    const wheels = group.userData.rideWheels as THREE.Group[] | undefined
+    if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
+  } else {
+    // Legs: stride on land (shorter while crouched), flutter kick in water.
+    const kick = Math.sin(walkPhase * 2.6) * (0.35 + 0.25 * moving)
+    rig.legL.rotation.x = stride * (1 - swim) + kick * swim
+    rig.legR.rotation.x = -stride * (1 - swim) - kick * swim
 
-  // Arms: swing opposite the legs on land, windmill a front crawl in water.
-  // Wrapped to one turn so blending in/out of swim doesn't pinwheel forever.
-  const stroke = -(walkPhase % (Math.PI * 2))
-  rig.armL.rotation.x = -stride * 0.7 * (1 - swim) + stroke * swim
-  rig.armR.rotation.x = stride * 0.7 * (1 - swim) + (stroke + Math.PI) * swim
-  // Flare the arms out a touch when squatting or paddling.
-  rig.armL.rotation.z = -(0.4 * crouch + 0.25 * swim)
-  rig.armR.rotation.z = 0.4 * crouch + 0.25 * swim
+    // Arms: swing opposite the legs on land, windmill a front crawl in water.
+    // Wrapped to one turn so blending in/out of swim doesn't pinwheel forever.
+    const stroke = -(walkPhase % (Math.PI * 2))
+    rig.armL.rotation.x = -stride * 0.7 * (1 - swim) + stroke * swim
+    rig.armR.rotation.x = stride * 0.7 * (1 - swim) + (stroke + Math.PI) * swim
+    // Flare the arms out a touch when squatting or paddling.
+    rig.armL.rotation.z = -(0.4 * crouch + 0.25 * swim)
+    rig.armR.rotation.z = 0.4 * crouch + 0.25 * swim
+  }
 
-  // The bazooka arm holds the tube steady out front, and the tube itself
-  // follows the shoulder down through a squat.
-  const gun = group.getObjectByName('gun')
-  if (gun) {
-    gun.position.y = 1.8 - 0.3 * crouch
+  // Weapon overrides for the right arm.
+  const weapon = group.userData.weapon as string | undefined
+  if (weapon === 'gun') {
+    // Bazooka arm holds the tube steady out front, and the tube itself
+    // follows the shoulder down through a squat.
+    const gun = group.getObjectByName('weapon')
+    if (gun) gun.position.y = 1.8 - 0.3 * crouch
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
+  } else if (weapon === 'sword') {
+    const t = (performance.now() - ((group.userData.attackStart as number) ?? 0)) / 1000
+    if (t < SLASH_DURATION) {
+      // Overhead chop: wind up behind the head, slice down past the knees.
+      rig.armR.rotation.x = -2.8 + (t / SLASH_DURATION) * 3.6
+      rig.armR.rotation.z = 0
+    } else if (!riding) {
+      rig.armR.rotation.x = -0.25 + stride * 0.3
+      rig.armR.rotation.z = 0
+    }
   }
 }
 
-// Attach or remove the bazooka: a big tube resting on the right shoulder,
-// pointing forward (+Z). Synced over the network via the `gun` flag in
-// PlayerState. The raised right arm (see animateCharacter) holds it up.
-export function setGun(group: THREE.Group, has: boolean): void {
-  const existing = group.getObjectByName('gun')
-  group.userData.gun = has
-  if (has && !existing) {
+export const SLASH_DURATION = 0.3
+
+export function startSlash(group: THREE.Group): void {
+  group.userData.attackStart = performance.now()
+}
+
+// Hide the head for the death window and return where it was (world space)
+// so effects can send a copy flying. Returns null if already headless.
+export function popHead(group: THREE.Group): THREE.Vector3 | null {
+  const head = group.getObjectByName('head')
+  if (!head || !head.visible) return null
+  head.visible = false
+  setTimeout(() => (head.visible = true), 2600)
+  return group.position.clone().add(new THREE.Vector3(0, 1.95, 0))
+}
+
+// Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand), or
+// 'none'. Synced over the network via the `weapon` field in PlayerState.
+export function setWeapon(group: THREE.Group, weapon: string): void {
+  const existing = group.getObjectByName('weapon')
+  if (existing) existing.parent!.remove(existing)
+  group.userData.weapon = weapon
+  if (weapon === 'gun') {
+    group.add(buildBazooka())
+  } else if (weapon === 'sword') {
+    const armR = (group.userData.rig as { armR: THREE.Mesh }).armR
+    armR.add(buildKatana())
+  }
+}
+
+// Mount or dismount the wheelchair. Synced via the `ride` field in
+// PlayerState. The character sits in it (see animateCharacter).
+export function setRide(group: THREE.Group, ride: string): void {
+  const existing = group.getObjectByName('ride')
+  if (existing) existing.parent!.remove(existing)
+  group.userData.ride = ride
+  delete group.userData.rideWheels
+  if (ride === 'wheelchair') {
+    const chair = buildWheelchair()
+    group.add(chair)
+    group.userData.rideWheels = chair.userData.wheels
+  }
+}
+
+// Classic chrome-frame wheelchair. Big rear wheels with box spokes so the
+// spin reads at 320x240; the whole wheel group rotates about X to roll.
+function buildWheelchair(): THREE.Group {
+  const chair = new THREE.Group()
+  chair.name = 'ride'
+  const chrome = new THREE.MeshLambertMaterial({ color: 0xb8bec8, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+  const rubber = new THREE.MeshLambertMaterial({ color: 0x3a3d44, flatShading: true })
+
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.6), dark)
+  seat.position.set(0, 0.56, 0)
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.08), dark)
+  back.position.set(0, 0.95, -0.34)
+  const footrest = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.25), chrome)
+  footrest.position.set(0, 0.16, 0.62)
+  chair.add(seat, back, footrest)
+
+  const wheels: THREE.Group[] = []
+  for (const side of [-1, 1]) {
+    const wheel = new THREE.Group()
+    const tire = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.55, 0.09, 10).rotateZ(Math.PI / 2),
+      rubber,
+    )
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.12, 0.12, 8).rotateZ(Math.PI / 2),
+      chrome,
+    )
+    const rim = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.44, 0.44, 0.04, 10).rotateZ(Math.PI / 2),
+      chrome,
+    )
+    rim.position.x = side * 0.09
+    const spokeA = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.95, 0.07), chrome)
+    const spokeB = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.07, 0.95), chrome)
+    wheel.add(tire, hub, rim, spokeA, spokeB)
+    wheel.position.set(side * 0.56, 0.55, -0.08)
+    chair.add(wheel)
+    wheels.push(wheel)
+  }
+  for (const side of [-1, 1]) {
+    const caster = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.14, 0.14, 0.08, 8).rotateZ(Math.PI / 2),
+      rubber,
+    )
+    caster.position.set(side * 0.34, 0.14, 0.5)
+    chair.add(caster)
+  }
+  chair.userData.wheels = wheels
+  return chair
+}
+
+// Big tube resting on the right shoulder, pointing forward (+Z). The raised
+// right arm (see animateCharacter) holds it up.
+function buildBazooka(): THREE.Group {
+  {
     const gun = new THREE.Group()
-    gun.name = 'gun'
+    gun.name = 'weapon'
     const olive = new THREE.MeshLambertMaterial({ color: 0x55603a, flatShading: true })
     const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
     const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
@@ -128,10 +247,30 @@ export function setGun(group: THREE.Group, has: boolean): void {
 
     gun.add(tube, muzzle, exhaust, band, sight, grip)
     gun.position.set(0.38, 1.8, 0.1)
-    group.add(gun)
-  } else if (!has && existing) {
-    group.remove(existing)
+    return gun
   }
+}
+
+// Katana held in the right hand, blade extending past the hand (local -Y),
+// so it hangs at the side and follows the arm during a slash.
+function buildKatana(): THREE.Group {
+  const sword = new THREE.Group()
+  sword.name = 'weapon'
+  const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+  const gold = new THREE.MeshLambertMaterial({ color: 0xb8973a, flatShading: true })
+  const steel = new THREE.MeshLambertMaterial({ color: 0xd8dde4, flatShading: true })
+
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.26, 0.07), dark)
+  handle.position.y = -0.38
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.04, 0.17), gold)
+  guard.position.y = -0.52
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.85, 0.12), steel)
+  blade.position.y = -0.97
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.24, 0.1), steel)
+  tip.position.set(0, -1.48, 0.025)
+  tip.rotation.x = 0.22
+  sword.add(handle, guard, blade, tip)
+  return sword
 }
 
 function makeNameTag(name: string): THREE.Sprite {

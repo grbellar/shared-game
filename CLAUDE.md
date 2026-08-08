@@ -36,11 +36,17 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 `server/room.ts` — **keep them in sync when you add messages**:
 
 - server→client `welcome`: your id + everyone's last known state
-- client→server `state`: your position/rotation/color/name/gun (sent ~15x/sec)
+- client→server `state`: your position/rotation/color/name/weapon/ride (~15x/sec)
 - server→client `state`: another player's state (relayed)
 - server→client `leave`: a player disconnected
 - client→server `chat`: a chat message; server relays it to everyone else as
   `chat` with the sender's id and name
+- client→server `fire`: rocket origin + direction; relayed with the shooter's
+  id. Every client simulates the rocket; each client applies blast knockback
+  to itself only (see `effects.ts`).
+- client→server `slash`: katana swing (relayed for the animation). The
+  attacker detects hits and sends `kill` with the victim's id; the server
+  relays it to everyone, and each client plays the decapitation locally.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world
