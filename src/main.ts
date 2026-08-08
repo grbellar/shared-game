@@ -59,6 +59,7 @@ setInterval(() => {
     ry: player.group.rotation.y,
     color,
     name,
+    pose: player.pose,
     weapon,
     ride,
   })
@@ -212,6 +213,8 @@ renderer.setAnimationLoop(() => {
       f: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF,
       s: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS,
       jump: keys.has('Space') || touch.jumpHeld,
+      crouch: keys.has('KeyC'),
+      sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'),
     },
     camYaw,
   )

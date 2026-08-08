@@ -1,15 +1,25 @@
 import * as THREE from 'three'
-import { createCharacter, animateCharacter } from './character'
+import { createCharacter, animateCharacter, type Pose } from './character'
 import { heightAt } from './world'
 
 const SPEED = 9
 const RIDE_SPEED = 16 // wheelchair beats walking
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
-const WATER_LEVEL = -0.6 // you float waist-deep instead of sinking forever
+const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
+const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
+
+export interface PlayerInput {
+  f: number
+  s: number
+  jump: boolean
+  crouch: boolean
+  sprint: boolean
+}
 
 export class Player {
   group: THREE.Group
+  pose: Pose = 'stand'
   dead = false
   riding = false
   private velY = 0
@@ -17,6 +27,7 @@ export class Player {
   private velZ = 0
   private onGround = false
   private walkPhase = 0
+  private bobPhase = 0
 
   constructor(scene: THREE.Scene, color: string, name: string) {
     this.group = createCharacter(color, name)
@@ -45,7 +56,13 @@ export class Player {
     }, 2500)
   }
 
-  update(dt: number, input: { f: number; s: number; jump: boolean }, camYaw: number): void {
+  update(dt: number, input: PlayerInput, camYaw: number): void {
+    const swimming = this.pose === 'swim'
+    const crouching = !swimming && !this.riding && input.crouch
+    const sprinting = !crouching && input.sprint
+    let speedMul = swimming ? 0.6 : crouching ? 0.45 : 1
+    if (sprinting) speedMul *= 1.6
+
     let { f, s } = input
     if (this.dead) {
       f = 0
@@ -67,10 +84,10 @@ export class Player {
       const len = Math.hypot(dx, dz)
       dx /= len
       dz /= len
-      const speed = Math.min(mag, 1)
+      const analog = Math.min(mag, 1)
       const moveSpeed = this.riding ? RIDE_SPEED : SPEED
-      this.group.position.x += dx * moveSpeed * speed * dt
-      this.group.position.z += dz * moveSpeed * speed * dt
+      this.group.position.x += dx * moveSpeed * speedMul * analog * dt
+      this.group.position.z += dz * moveSpeed * speedMul * analog * dt
       // Face the direction of travel, taking the short way around.
       const target = Math.atan2(dx, dz)
       const delta = Math.atan2(
@@ -78,8 +95,12 @@ export class Player {
         Math.cos(target - this.group.rotation.y),
       )
       this.group.rotation.y += delta * Math.min(1, 12 * dt)
-      moving = speed
-      this.walkPhase += dt * 11 * speed
+      moving = analog
+      let cadence = (swimming ? 7 : crouching ? 8 : 11) * analog
+      if (sprinting) cadence *= 1.5
+      this.walkPhase += dt * cadence
+    } else if (swimming) {
+      this.walkPhase += dt * 2.8 // lazy paddle while treading water
     }
 
     // Knockback impulses decay with heavy friction.
@@ -89,22 +110,39 @@ export class Player {
     this.velX *= friction
     this.velZ *= friction
 
-    // Gravity and ground (or water surface) collision.
+    // Gravity, then ground or water-surface collision.
     this.velY -= GRAVITY * dt
     this.group.position.y += this.velY * dt
-    const floor = Math.max(heightAt(this.group.position.x, this.group.position.z), WATER_LEVEL)
-    if (this.group.position.y <= floor) {
-      this.group.position.y = floor
+    const ground = heightAt(this.group.position.x, this.group.position.z)
+    const overDeepWater = ground < WATER_LEVEL - 0.01
+    let floating = false
+    if (
+      overDeepWater &&
+      this.velY <= 0 &&
+      this.group.position.y <= WATER_LEVEL + FLOAT_BAND
+    ) {
+      // Stick to the water surface with a gentle bob.
+      this.bobPhase += dt * 2.5
+      this.group.position.y = WATER_LEVEL + Math.sin(this.bobPhase) * 0.07
       this.velY = 0
       this.onGround = true
+      floating = true
     } else {
-      this.onGround = false
+      const floor = Math.max(ground, WATER_LEVEL)
+      if (this.group.position.y <= floor) {
+        this.group.position.y = floor
+        this.velY = 0
+        this.onGround = true
+      } else {
+        this.onGround = false
+      }
     }
     if (input.jump && this.onGround && !this.dead) {
       this.velY = JUMP_VELOCITY
       this.onGround = false
     }
 
-    animateCharacter(this.group, this.walkPhase, moving)
+    this.pose = floating ? 'swim' : crouching ? 'crouch' : 'stand'
+    animateCharacter(this.group, dt, this.walkPhase, moving, this.pose)
   }
 }

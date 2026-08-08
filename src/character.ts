@@ -1,7 +1,10 @@
 import * as THREE from 'three'
 
+export type Pose = 'stand' | 'crouch' | 'swim'
+
 // Blocky N64-style character. Front of the character faces +Z.
-// Limbs are stashed in userData so animateCharacter can swing them.
+// Limbs pivot at the hip/shoulder and are stashed in userData so
+// animateCharacter can pose them.
 export function createCharacter(color: string, name: string): THREE.Group {
   const group = new THREE.Group()
   const bodyMat = new THREE.MeshLambertMaterial({ color })
@@ -23,59 +26,103 @@ export function createCharacter(color: string, name: string): THREE.Group {
   head.add(eyeL, eyeR)
 
   const legGeo = new THREE.BoxGeometry(0.3, 0.6, 0.3)
+  legGeo.translate(0, -0.3, 0) // pivot at the hip
   const legL = new THREE.Mesh(legGeo, darkMat)
   const legR = new THREE.Mesh(legGeo, darkMat)
-  legL.position.set(-0.22, 0.3, 0)
-  legR.position.set(0.22, 0.3, 0)
+  legL.position.set(-0.22, 0.6, 0)
+  legR.position.set(0.22, 0.6, 0)
 
   const armGeo = new THREE.BoxGeometry(0.22, 0.7, 0.22)
+  armGeo.translate(0, -0.35, 0) // pivot at the shoulder
   const armL = new THREE.Mesh(armGeo, bodyMat)
   const armR = new THREE.Mesh(armGeo, bodyMat)
-  armL.position.set(-0.55, 1.25, 0)
-  armR.position.set(0.55, 1.25, 0)
+  armL.position.set(-0.55, 1.6, 0)
+  armR.position.set(0.55, 1.6, 0)
 
   group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
-  group.userData.limbs = { legL, legR, armL, armR }
+  group.userData.rig = { body, head, legL, legR, armL, armR }
+  group.userData.anim = { crouch: 0, swim: 0 }
   return group
 }
 
-export function animateCharacter(group: THREE.Group, walkPhase: number, moving: number): void {
-  const limbs = group.userData.limbs as {
-    legL: THREE.Mesh
-    legR: THREE.Mesh
-    armL: THREE.Mesh
-    armR: THREE.Mesh
-  }
-  const swing = Math.sin(walkPhase) * 0.8 * moving
+interface Rig {
+  body: THREE.Mesh
+  head: THREE.Mesh
+  legL: THREE.Mesh
+  legR: THREE.Mesh
+  armL: THREE.Mesh
+  armR: THREE.Mesh
+}
+
+export function animateCharacter(
+  group: THREE.Group,
+  dt: number,
+  walkPhase: number,
+  moving: number,
+  pose: Pose = 'stand',
+): void {
+  const rig = group.userData.rig as Rig
+  const anim = group.userData.anim as { crouch: number; swim: number }
   const riding = group.userData.ride === 'wheelchair'
+  const k = Math.min(1, 10 * dt)
+  anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
+  anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
+  const { crouch, swim } = anim
+
+  // Squat: body and head drop, legs squash so the feet stay planted.
+  rig.body.position.y = 1.1 - 0.3 * crouch
+  rig.head.position.y = 1.95 - 0.5 * crouch
+  rig.legL.position.y = rig.legR.position.y = 0.6 - 0.3 * crouch
+  rig.legL.scale.y = rig.legR.scale.y = 1 - 0.5 * crouch
+  rig.armL.position.y = rig.armR.position.y = 1.6 - 0.3 * crouch
+
+  const stride = Math.sin(walkPhase) * 0.8 * moving * (1 - 0.55 * crouch)
   if (riding) {
     // Sitting: legs out to the footrest, hands down on the push rims.
-    limbs.legL.rotation.x = -1.35
-    limbs.legR.rotation.x = -1.35
-    limbs.armL.rotation.x = -0.6
+    rig.legL.rotation.x = -1.35
+    rig.legR.rotation.x = -1.35
+    rig.armL.rotation.x = -0.6
+    rig.armR.rotation.x = -0.6
+    rig.armL.rotation.z = 0
+    rig.armR.rotation.z = 0
     const wheels = group.userData.rideWheels as THREE.Group[] | undefined
     if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
   } else {
-    limbs.legL.rotation.x = swing
-    limbs.legR.rotation.x = -swing
-    limbs.armL.rotation.x = -swing * 0.7
+    // Legs: stride on land (shorter while crouched), flutter kick in water.
+    const kick = Math.sin(walkPhase * 2.6) * (0.35 + 0.25 * moving)
+    rig.legL.rotation.x = stride * (1 - swim) + kick * swim
+    rig.legR.rotation.x = -stride * (1 - swim) - kick * swim
+
+    // Arms: swing opposite the legs on land, windmill a front crawl in water.
+    // Wrapped to one turn so blending in/out of swim doesn't pinwheel forever.
+    const stroke = -(walkPhase % (Math.PI * 2))
+    rig.armL.rotation.x = -stride * 0.7 * (1 - swim) + stroke * swim
+    rig.armR.rotation.x = stride * 0.7 * (1 - swim) + (stroke + Math.PI) * swim
+    // Flare the arms out a touch when squatting or paddling.
+    rig.armL.rotation.z = -(0.4 * crouch + 0.25 * swim)
+    rig.armR.rotation.z = 0.4 * crouch + 0.25 * swim
   }
 
+  // Weapon overrides for the right arm.
   const weapon = group.userData.weapon as string | undefined
   if (weapon === 'gun') {
-    // Bazooka arm is held straight out in front.
-    limbs.armR.rotation.x = -Math.PI / 2
+    // Bazooka arm holds the tube steady out front, and the tube itself
+    // follows the shoulder down through a squat.
+    const gun = group.getObjectByName('weapon')
+    if (gun) gun.position.y = 1.8 - 0.3 * crouch
+    rig.armR.rotation.x = Math.PI / 2
+    rig.armR.rotation.z = 0
   } else if (weapon === 'sword') {
-    const t = (performance.now() - (group.userData.attackStart ?? 0)) / 1000
+    const t = (performance.now() - ((group.userData.attackStart as number) ?? 0)) / 1000
     if (t < SLASH_DURATION) {
       // Overhead chop: wind up behind the head, slice down past the knees.
-      limbs.armR.rotation.x = -2.8 + (t / SLASH_DURATION) * 3.6
-    } else {
-      limbs.armR.rotation.x = -0.25 + swing * 0.3
+      rig.armR.rotation.x = -2.8 + (t / SLASH_DURATION) * 3.6
+      rig.armR.rotation.z = 0
+    } else if (!riding) {
+      rig.armR.rotation.x = -0.25 + stride * 0.3
+      rig.armR.rotation.z = 0
     }
-  } else {
-    limbs.armR.rotation.x = riding ? -0.6 : swing * 0.7
   }
 }
 
@@ -104,7 +151,7 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
   if (weapon === 'gun') {
     group.add(buildBazooka())
   } else if (weapon === 'sword') {
-    const armR = (group.userData.limbs as { armR: THREE.Mesh }).armR
+    const armR = (group.userData.rig as { armR: THREE.Mesh }).armR
     armR.add(buildKatana())
   }
 }

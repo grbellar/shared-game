@@ -1,5 +1,13 @@
 import * as THREE from 'three'
-import { createCharacter, animateCharacter, setWeapon, setRide, startSlash, popHead } from './character'
+import {
+  createCharacter,
+  animateCharacter,
+  setWeapon,
+  setRide,
+  startSlash,
+  popHead,
+  type Pose,
+} from './character'
 import type { PlayerState } from './net'
 import type { Effects } from './effects'
 
@@ -7,6 +15,7 @@ interface Remote {
   group: THREE.Group
   target: { x: number; y: number; z: number; ry: number }
   walkPhase: number
+  pose: Pose
   weapon: string
   ride: string
 }
@@ -28,10 +37,18 @@ export class Remotes {
       group.position.set(p.x, p.y, p.z)
       group.rotation.y = p.ry
       this.scene.add(group)
-      remote = { group, target: { x: p.x, y: p.y, z: p.z, ry: p.ry }, walkPhase: 0, weapon: 'none', ride: 'none' }
+      remote = {
+        group,
+        target: { x: p.x, y: p.y, z: p.z, ry: p.ry },
+        walkPhase: 0,
+        pose: 'stand',
+        weapon: 'none',
+        ride: 'none',
+      }
       this.players.set(p.id, remote)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
+    remote.pose = p.pose ?? 'stand'
     const weapon = p.weapon === 'gun' || p.weapon === 'sword' ? p.weapon : 'none'
     if (remote.weapon !== weapon) {
       remote.weapon = weapon
@@ -91,8 +108,9 @@ export class Remotes {
       group.rotation.y += delta * k
       const speed = group.position.distanceTo(before) / Math.max(dt, 1e-6)
       const moving = Math.min(1, speed / 3)
-      remote.walkPhase += dt * 11 * moving
-      animateCharacter(group, remote.walkPhase, moving)
+      // Swimmers keep paddling even when idle, matching the local player.
+      remote.walkPhase += dt * (remote.pose === 'swim' ? 2.8 + 4.2 * moving : 11 * moving)
+      animateCharacter(group, dt, remote.walkPhase, moving, remote.pose)
     }
   }
 }

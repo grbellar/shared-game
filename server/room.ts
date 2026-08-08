@@ -10,6 +10,7 @@ interface PlayerState {
   ry: number
   color: string
   name: string
+  pose: 'stand' | 'crouch' | 'swim'
   weapon: string
   ride: string
 }
@@ -53,6 +54,7 @@ export class GameRoom extends DurableObject<Env> {
         ry: Number(msg.ry) || 0,
         color: String(msg.color).slice(0, 16),
         name: String(msg.name).slice(0, 24),
+        pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
         weapon: String(msg.weapon).slice(0, 8),
         ride: String(msg.ride).slice(0, 12),
       }

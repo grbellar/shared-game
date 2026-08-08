@@ -1,5 +1,7 @@
 // Keep the message types in sync with server/room.ts
 
+import type { Pose } from './character'
+
 export interface PlayerState {
   id: string
   x: number
@@ -8,6 +10,7 @@ export interface PlayerState {
   ry: number
   color: string
   name: string
+  pose: Pose
   weapon: string // 'none' | 'gun' | 'sword'
   ride: string // 'none' | 'wheelchair'
 }
