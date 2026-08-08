@@ -157,6 +157,63 @@ class Sfx {
     this.tone('triangle', f, f * 1.25, 0.09, 0.05)
   }
 
+  // A throaty vocal burst: sawtooth through a bandpass "mouth" so it reads
+  // as a human noise instead of a synth beep.
+  private voice(
+    freqFrom: number,
+    freqTo: number,
+    formant: number,
+    dur: number,
+    peak: number,
+    delay = 0,
+  ): void {
+    if (!this.ctx || !this.out) return
+    const t0 = this.ctx.currentTime + delay
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(Math.max(1, freqFrom), t0)
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqTo), t0 + dur)
+    const filter = this.ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = formant
+    filter.Q.value = 2.2
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(0.001, t0)
+    g.gain.exponentialRampToValueAtTime(peak, t0 + 0.03)
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur)
+    osc.connect(filter)
+    filter.connect(g)
+    g.connect(this.out)
+    osc.start(t0)
+    osc.stop(t0 + dur + 0.02)
+  }
+
+  // Ramsey's human engine, one call per stride: palms slapping the dirt,
+  // winded panting, and sometimes an edgy grunt or a long put-upon groan
+  // from the guy being ridden.
+  gallop(): void {
+    this.noise('lowpass', 550 + Math.random() * 250, 160, 0.07, 0.16)
+    const r = Math.random()
+    if (r < 0.3) {
+      // Winded two-puff pant: "hh-hh".
+      this.noise('bandpass', 1100, 700, 0.07, 0.07)
+      this.noise('bandpass', 900, 600, 0.09, 0.06, 0.12)
+    } else if (r < 0.42) {
+      // Effort grunt: "ugh".
+      this.voice(150 + Math.random() * 40, 75, 480, 0.16, 0.5)
+    } else if (r < 0.46) {
+      // He has opinions about this arrangement.
+      this.voice(115, 95, 420, 0.5, 0.4)
+      this.voice(95, 58, 380, 0.35, 0.35, 0.5)
+    }
+  }
+
+  // The "oof" of taking a rider's full weight on your back.
+  ramseyMount(): void {
+    this.voice(170, 70, 520, 0.22, 0.55, 0.12)
+    this.noise('bandpass', 1000, 600, 0.08, 0.08, 0.12)
+  }
+
   splash(vol = 1): void {
     this.noise('lowpass', 2500, 250, 0.35, 0.3 * vol)
     this.tone('sine', 320, 85, 0.22, 0.2 * vol)

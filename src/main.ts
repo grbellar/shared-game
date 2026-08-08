@@ -439,6 +439,7 @@ window.addEventListener('keydown', (e) => {
     setRide(player.group, ride)
     player.ride = ride
     sfx.equip(ride !== 'none')
+    if (ride === 'ramsey') sfx.ramseyMount()
   }
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat) void voice.toggle().then((on) => sfx.equip(on))
