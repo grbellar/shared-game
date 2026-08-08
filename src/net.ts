@@ -15,6 +15,7 @@ export interface PlayerState {
   pose: Pose
   weapon: string // 'none' | 'gun' | 'sword' | 'shovel'
   ride: string // 'none' | 'wheelchair' | 'ramsey'
+  skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
 }
 

@@ -17,6 +17,23 @@ export interface Settings {
 // Keys makeRow may bind — the boolean toggles only.
 type BoolKey = { [K in keyof Settings]-?: Settings[K] extends boolean ? K : never }[keyof Settings]
 
+// The character picker is profile-backed (skins.ts / profile.ts), not part of
+// Settings — main.ts passes the options and current choice in, and gets the
+// change callback out.
+export interface CharacterPicker {
+  current: string
+  options: { id: string; label: string }[]
+  onChange: (id: string) => void
+}
+
+// Rename field, also profile-backed. onChange returns the accepted name
+// (trimmed/clamped, or the old one if the input was empty) so the field can
+// snap back to what actually stuck.
+export interface NameEditor {
+  current: string
+  onChange: (name: string) => string
+}
+
 const STORAGE_KEY = 'shared-game.settings'
 
 function load(): Settings {
@@ -44,7 +61,7 @@ function persist(settings: Settings): void {
   }
 }
 
-export function initSettings(): Settings {
+export function initSettings(character?: CharacterPicker, nameEditor?: NameEditor): Settings {
   const settings = load()
 
   const style = document.createElement('style')
@@ -124,6 +141,30 @@ export function initSettings(): Settings {
       margin: 2px 0 0;
       accent-color: #4f9e3f;
     }
+    #settings-skin {
+      width: 118px;
+      font: 11px monospace;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      border: 2px solid rgba(255, 255, 255, 0.28);
+      border-radius: 0;
+    }
+    #settings-skin:focus-visible {
+      outline: 2px solid #fff;
+    }
+    #settings-name {
+      width: 110px;
+      font: 11px monospace;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      border: 2px solid rgba(255, 255, 255, 0.28);
+      border-radius: 0;
+      padding: 2px 4px;
+      outline: none;
+    }
+    #settings-name:focus {
+      border-color: rgba(255, 255, 255, 0.6);
+    }
   `
   document.head.appendChild(style)
 
@@ -179,6 +220,59 @@ export function initSettings(): Settings {
 
     row.append(label, toggle)
     return row
+  }
+
+  // Name field: rename yourself any time; commits on Enter or focus loss.
+  const nameRow = document.createElement('div')
+  nameRow.className = 'settings-row'
+  if (nameEditor) {
+    const nameLabel = document.createElement('span')
+    nameLabel.textContent = 'name'
+    const nameInput = document.createElement('input')
+    nameInput.id = 'settings-name'
+    nameInput.type = 'text'
+    nameInput.maxLength = 24
+    nameInput.value = nameEditor.current
+    nameInput.setAttribute('aria-label', 'Player name')
+    // Typing a name must not equip weapons or move the player: stop keys
+    // from reaching the window-level game handlers (same trick as chat).
+    nameInput.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') nameInput.blur()
+    })
+    nameInput.addEventListener('keyup', (e) => e.stopPropagation())
+    nameInput.addEventListener('blur', () => {
+      nameInput.value = nameEditor.onChange(nameInput.value)
+    })
+    nameRow.append(nameLabel, nameInput)
+  } else {
+    nameRow.hidden = true
+  }
+
+  // Character picker: a dropdown of skins from skins.ts.
+  const charRow = document.createElement('div')
+  charRow.className = 'settings-row'
+  if (character) {
+    const charLabel = document.createElement('span')
+    charLabel.textContent = 'character'
+    const select = document.createElement('select')
+    select.id = 'settings-skin'
+    select.setAttribute('aria-label', 'Character')
+    for (const opt of character.options) {
+      const option = document.createElement('option')
+      option.value = opt.id
+      option.textContent = opt.label
+      select.appendChild(option)
+    }
+    select.value = character.current
+    select.addEventListener('change', () => {
+      character.onChange(select.value)
+      // Drop focus so WASD/arrows go back to being game keys.
+      select.blur()
+    })
+    charRow.append(charLabel, select)
+  } else {
+    charRow.hidden = true
   }
 
   // Time-of-day scrubber: live clock readout plus a slider over 0-24h.
@@ -243,6 +337,8 @@ export function initSettings(): Settings {
 
   panel.append(
     title,
+    nameRow,
+    charRow,
     makeRow('settings-camera-follow-label', 'camera always behind me', 'cameraFollow'),
     makeRow('settings-first-person-label', 'first-person aim (with weapon)', 'firstPerson'),
     makeRow('settings-clock-run-label', 'day/night clock runs', 'clockRun'),

@@ -4,12 +4,15 @@
 // reloads. Equipped loadout is remembered too. Local-only for now; the token
 // is the key a future server-side save (DO storage) would look records up by.
 
+import { SKIN_IDS } from './skins'
+
 export interface Profile {
   token: string
   name: string
   color: string
   weapon: string
   ride: string
+  skin: string
   material: number
 }
 
@@ -28,6 +31,7 @@ function mint(): Profile {
     color: COLORS[Math.floor(Math.random() * COLORS.length)],
     weapon: 'none',
     ride: 'none',
+    skin: 'none',
     material: 0,
   }
 }
@@ -43,6 +47,7 @@ export function loadProfile(): Profile {
       color: typeof obj.color === 'string' && /^#[0-9a-f]{6}$/i.test(obj.color) ? obj.color : fresh.color,
       weapon: WEAPONS.includes(obj.weapon as string) ? (obj.weapon as string) : 'none',
       ride: RIDES.includes(obj.ride as string) ? (obj.ride as string) : 'none',
+      skin: SKIN_IDS.includes(obj.skin as string) ? (obj.skin as string) : 'none',
       material:
         typeof obj.material === 'number' && obj.material >= 0 && obj.material <= 3
           ? Math.floor(obj.material)

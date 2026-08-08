@@ -4,10 +4,12 @@ import {
   animateCharacter,
   setWeapon,
   setRide,
+  setName,
   startSlash,
   popHead,
   type Pose,
 } from './character'
+import { applySkin } from './skins'
 import type { PlayerState } from './net'
 import type { Effects } from './effects'
 
@@ -18,6 +20,8 @@ interface Remote {
   pose: Pose
   weapon: string
   ride: string
+  skin: string
+  name: string
 }
 
 // Renders and interpolates the other players in the room.
@@ -47,6 +51,8 @@ export class Remotes {
         pose: 'stand',
         weapon: 'none',
         ride: 'none',
+        skin: 'none',
+        name: p.name,
       }
       this.players.set(p.id, remote)
     }
@@ -73,6 +79,17 @@ export class Remotes {
     if (remote.ride !== ride) {
       remote.ride = ride
       setRide(remote.group, ride)
+    }
+    // Unknown ids (older clients, garbage) just reset to the base look.
+    const skin = p.skin ?? 'none'
+    if (remote.skin !== skin) {
+      remote.skin = skin
+      applySkin(remote.group, skin)
+    }
+    // Renames redraw the floating tag.
+    if (remote.name !== p.name) {
+      remote.name = p.name
+      setName(remote.group, p.name)
     }
   }
 

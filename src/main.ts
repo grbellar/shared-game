@@ -18,8 +18,9 @@ import { initBuildHud } from './buildhud'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
 import { Cats } from './cats'
-import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
+import { setWeapon, setRide, setName, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
 import { loadProfile, saveProfile } from './profile'
+import { SKINS, applySkin } from './skins'
 import { sfx } from './audio'
 import { Voice } from './voice'
 import { music } from './music'
@@ -31,7 +32,6 @@ const VIEW_H = 240
 // Who you are survives reloads now: token, name, color, and loadout all come
 // from the browser-storage profile (minted on your very first visit).
 const profile = loadProfile()
-const name = profile.name
 const color = profile.color
 
 const renderer = new THREE.WebGLRenderer({ antialias: false })
@@ -53,9 +53,38 @@ scene.add(camera)
 createWorld(scene)
 initBlocks(scene)
 
-const player = new Player(scene, color, name)
+const player = new Player(scene, color, profile.name)
 const remotes = new Remotes(scene)
-const settings = initSettings()
+// Your skin: picked in the settings panel, worn immediately, remembered in
+// the profile, and broadcast in state so everyone sees your outfit.
+let skin = profile.skin
+applySkin(player.group, skin)
+// Rename yourself any time (settings panel). The new name saves to the
+// profile, redraws your tag, and reaches everyone else through the regular
+// state broadcast — remotes redraw on the next tick.
+function renameCharacter(raw: string): string {
+  const next = raw.trim().slice(0, 24)
+  if (next && next !== profile.name) {
+    profile.name = next
+    saveProfile(profile)
+    setName(player.group, next)
+  }
+  return profile.name
+}
+const settings = initSettings(
+  {
+    current: skin,
+    options: SKINS,
+    onChange: (id) => {
+      skin = id
+      applySkin(player.group, skin)
+      profile.skin = skin
+      saveProfile(profile)
+      sfx.equip(true)
+    },
+  },
+  { current: profile.name, onChange: renameCharacter },
+)
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
@@ -116,10 +145,11 @@ setInterval(() => {
     z: player.group.position.z,
     ry: player.group.rotation.y,
     color,
-    name,
+    name: profile.name,
     pose: player.pose,
     weapon,
     ride,
+    skin,
     talk: Math.round(voice.level * 100) / 100,
   })
 }, 66)
@@ -389,7 +419,7 @@ chat.onSend = (text) => {
   net.sendChat(text)
   bubbles.show(player.group, text)
   startJabber(player.group, jabberFor(text))
-  chat.addMessage(name, text)
+  chat.addMessage(profile.name, text)
 }
 net.onChat = (id, senderName, text) => {
   sfx.chat()
@@ -407,8 +437,8 @@ setInterval(() => {
   const mute = sfx.muted ? ' · 🔇 (M)' : ''
   const mic = voice.enabled ? ' · 🎤 live (V)' : ''
   status.textContent = net.connected
-    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here${mute}${mic}`
-    : `${name} · connecting...${mute}${mic}`
+    ? `${profile.name} · ${others} other ${others === 1 ? 'player' : 'players'} here${mute}${mic}`
+    : `${profile.name} · connecting...${mute}${mic}`
 }, 500)
 
 const keys = new Set<string>()

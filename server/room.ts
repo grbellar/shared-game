@@ -32,6 +32,7 @@ interface PlayerState {
   pose: 'stand' | 'crouch' | 'swim'
   weapon: string
   ride: string
+  skin: string
   talk: number
 }
 
@@ -105,6 +106,7 @@ export class GameRoom extends DurableObject<Env> {
         pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
         weapon: String(msg.weapon).slice(0, 8),
         ride: String(msg.ride).slice(0, 12),
+        skin: String(msg.skin ?? 'none').slice(0, 12),
         talk: Math.max(0, Math.min(1, Number(msg.talk) || 0)),
       }
       this.states.set(att.id, p)

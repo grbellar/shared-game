@@ -51,6 +51,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   group.add(makeNameTag(name))
   group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
   group.userData.anim = { crouch: 0, swim: 0, mouth: 0 }
+  group.userData.baseColor = color // skins.ts resets to this when undressing
   return group
 }
 
@@ -522,7 +523,19 @@ export function makeNameTag(name: string): THREE.Sprite {
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }),
   )
+  sprite.name = 'nametag'
   sprite.scale.set(3.4, 0.85, 1)
   sprite.position.y = 2.8
   return sprite
+}
+
+// Swap the floating name tag (players can rename themselves at any time).
+export function setName(group: THREE.Group, name: string): void {
+  const old = group.getObjectByName('nametag') as THREE.Sprite | undefined
+  if (old) {
+    old.material.map?.dispose()
+    old.material.dispose()
+    group.remove(old)
+  }
+  group.add(makeNameTag(name))
 }
