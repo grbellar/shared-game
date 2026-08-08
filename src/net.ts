@@ -1,6 +1,7 @@
 // Keep the message types in sync with server/room.ts
 
 import type { Pose } from './character'
+import type { Crater } from './world'
 
 export interface PlayerState {
   id: string
@@ -16,17 +17,18 @@ export interface PlayerState {
 }
 
 type ServerMsg =
-  | { t: 'welcome'; id: string; players: PlayerState[] }
+  | { t: 'welcome'; id: string; players: PlayerState[]; craters?: Crater[] }
   | { t: 'state'; p: PlayerState }
   | { t: 'leave'; id: string }
   | { t: 'chat'; id: string; name: string; text: string }
   | { t: 'fire'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
   | { t: 'slash'; id: string }
   | { t: 'kill'; victim: string }
+  | { t: 'crater'; x: number; z: number; r: number; d: number }
 
 export class Net {
   id: string | null = null
-  onWelcome: (players: PlayerState[]) => void = () => {}
+  onWelcome: (players: PlayerState[], craters: Crater[]) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
   onChat: (id: string, name: string, text: string) => void = () => {}
@@ -34,6 +36,7 @@ export class Net {
     () => {}
   onSlash: (id: string) => void = () => {}
   onKill: (victim: string) => void = () => {}
+  onCrater: (c: Crater) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -49,7 +52,7 @@ export class Net {
       }
       if (msg.t === 'welcome') {
         this.id = msg.id
-        this.onWelcome(msg.players)
+        this.onWelcome(msg.players, msg.craters ?? [])
       } else if (msg.t === 'state') {
         if (msg.p.id !== this.id) this.onState(msg.p)
       } else if (msg.t === 'leave') {
@@ -62,6 +65,9 @@ export class Net {
         if (msg.id !== this.id) this.onSlash(msg.id)
       } else if (msg.t === 'kill') {
         this.onKill(msg.victim)
+      } else if (msg.t === 'crater') {
+        // No self-echo check needed: the server never echoes to the sender.
+        this.onCrater({ x: msg.x, z: msg.z, r: msg.r, d: msg.d })
       }
     }
     ws.onclose = () => {
@@ -99,5 +105,10 @@ export class Net {
   sendKill(victim: string): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'kill', victim }))
+  }
+
+  sendCrater(c: Crater): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'crater', x: c.x, z: c.z, r: c.r, d: c.d }))
   }
 }

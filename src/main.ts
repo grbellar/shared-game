@@ -9,6 +9,7 @@ import { TouchControls } from './touch'
 import { Chat } from './chat'
 import { Bubbles } from './bubbles'
 import { Effects } from './effects'
+import { Destruction } from './destruction'
 import { setWeapon, setRide, startSlash, popHead, SLASH_DURATION } from './character'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
@@ -43,9 +44,12 @@ const settings = initSettings()
 const touch = new TouchControls()
 
 const net = new Net()
-net.onWelcome = (players) => {
+net.onWelcome = (players, craters) => {
   remotes.clear()
   players.forEach((p) => remotes.upsert(p))
+  // Catch up on world damage. Silent: no debris bursts, and reconnect
+  // replays dedupe to a no-op inside addCraters.
+  destruction.applyRemote(craters, true)
 }
 net.onState = (p) => remotes.upsert(p)
 net.onLeave = (id) => remotes.remove(id)
@@ -69,6 +73,9 @@ setInterval(() => {
 }, 66)
 
 const effects = new Effects(scene)
+const destruction = new Destruction(effects, net)
+effects.onOwnExplosion = (center) => destruction.rocketCrater(center)
+net.onCrater = (c) => destruction.applyRemote([c])
 effects.onBlast = (center) => {
   const BLAST_RADIUS = 7
   const d = player.group.position.distanceTo(center)

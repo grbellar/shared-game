@@ -2,6 +2,13 @@ import { DurableObject } from 'cloudflare:workers'
 import type { Env } from './index'
 
 // Keep in sync with src/net.ts
+interface Crater {
+  x: number
+  z: number
+  r: number
+  d: number
+}
+
 interface PlayerState {
   id: string
   x: number
@@ -21,6 +28,9 @@ export class GameRoom extends DurableObject<Env> {
   // Last known state per player. In-memory only: if the DO hibernates this
   // empties out, but clients re-send state ~15x/sec so it refills instantly.
   private states = new Map<string, PlayerState>()
+  // World damage (blast craters, shovel digs), replayed to late joiners in
+  // `welcome`. In-memory like `states`: hibernation heals the island.
+  private craters: Crater[] = []
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
@@ -31,7 +41,9 @@ export class GameRoom extends DurableObject<Env> {
     const id = crypto.randomUUID().slice(0, 8)
     server.serializeAttachment({ id })
     this.ctx.acceptWebSocket(server)
-    server.send(JSON.stringify({ t: 'welcome', id, players: [...this.states.values()] }))
+    server.send(
+      JSON.stringify({ t: 'welcome', id, players: [...this.states.values()], craters: this.craters }),
+    )
     return new Response(null, { status: 101, webSocket: client })
   }
 
@@ -83,6 +95,24 @@ export class GameRoom extends DurableObject<Env> {
       this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
     } else if (msg.t === 'kill') {
       this.broadcast(JSON.stringify({ t: 'kill', victim: String(msg.victim).slice(0, 16) }), ws)
+    } else if (msg.t === 'crater') {
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      const r = Number(msg.r)
+      const d = Number(msg.d)
+      if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(r) || !Number.isFinite(d))
+        return
+      const c: Crater = {
+        x: Math.max(-170, Math.min(170, x)),
+        z: Math.max(-170, Math.min(170, z)),
+        r: Math.max(0.5, Math.min(8, r)),
+        d: Math.max(0.1, Math.min(4, d)),
+      }
+      this.craters.push(c)
+      // Cap the replay list; connected clients keep the oldest craters, only
+      // late joiners lose them. Fine between friends.
+      if (this.craters.length > 500) this.craters.shift()
+      this.broadcast(JSON.stringify({ t: 'crater', ...c }), ws)
     }
   }
 

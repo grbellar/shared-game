@@ -2,9 +2,49 @@ import * as THREE from 'three'
 
 const ISLAND_RADIUS = 90
 
-// Deterministic terrain height — the client is the only authority on
-// geometry, so everyone computes the identical island from this function.
-export function heightAt(x: number, z: number): number {
+// A bowl carved out of the terrain by a rocket blast or a shovel dig.
+// Synced through the room (net.ts 'crater' message) and summed into heightAt.
+export interface Crater {
+  x: number
+  z: number
+  r: number
+  d: number
+}
+
+export interface DestroyedProp {
+  kind: 'tree' | 'rock'
+  x: number
+  y: number
+  z: number
+  s: number
+}
+
+interface Prop {
+  kind: 'tree' | 'rock'
+  obj: THREE.Object3D
+  x: number
+  y: number
+  z: number
+  hitR: number
+  s: number
+  alive: boolean
+}
+
+// Craters can only dig so deep at one spot — enough that holes below the
+// water line (-1.1) become swimmable ponds, not tunnels to the void.
+const MAX_DIG = 5
+
+const craters: Crater[] = []
+const craterKeys = new Set<string>()
+const props: Prop[] = []
+let terrainGeo: THREE.BufferGeometry | null = null
+let worldScene: THREE.Scene | null = null
+
+// The untouched island shape. Placement code (terrain build, tree/rock
+// loops) must use this — never the crater-adjusted heightAt — so the seeded
+// PRNG streams stay identical on every client no matter what has been
+// blown up by the time someone joins.
+function baseHeightAt(x: number, z: number): number {
   let h =
     Math.sin(x * 0.05) * Math.cos(z * 0.05) * 3 +
     Math.sin(x * 0.021 + 1.7) * Math.cos(z * 0.017 - 0.4) * 6 +
@@ -13,6 +53,98 @@ export function heightAt(x: number, z: number): number {
   const d = Math.hypot(x, z)
   h -= Math.pow(d / ISLAND_RADIUS, 3) * 18
   return h
+}
+
+// Deterministic terrain height — the client is the only authority on
+// geometry, so everyone computes the identical island from this function.
+// Craters subtract as an order-independent clamped sum, so clients that
+// received the same craters in different orders still agree exactly.
+export function heightAt(x: number, z: number): number {
+  let dig = 0
+  for (const c of craters) {
+    const dx = x - c.x
+    const dz = z - c.z
+    const sq = dx * dx + dz * dz
+    if (sq >= c.r * c.r) continue
+    dig += c.d * (0.5 + 0.5 * Math.cos((Math.PI * Math.sqrt(sq)) / c.r))
+  }
+  return baseHeightAt(x, z) - Math.min(dig, MAX_DIG)
+}
+
+const DIRT = new THREE.Color(0x6b4526)
+
+// Apply craters we just learned about: carve the terrain mesh, expose dirt,
+// and kill any props caught inside. Returns the props that died so the
+// caller can blow them up visually. Idempotent (reconnect welcome replays
+// are deduped) and batched: one mesh refresh per call, not per crater.
+export function addCraters(list: Crater[]): DestroyedProp[] {
+  const fresh: Crater[] = []
+  for (const c of list) {
+    const key = `${c.x}|${c.z}|${c.r}|${c.d}`
+    if (craterKeys.has(key)) continue
+    craterKeys.add(key)
+    fresh.push(c)
+  }
+  if (fresh.length === 0) return []
+  craters.push(...fresh)
+
+  if (terrainGeo) {
+    const pos = terrainGeo.attributes.position
+    const col = terrainGeo.attributes.color
+    const tint = new THREE.Color()
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i)
+      const z = pos.getZ(i)
+      let bite = 0
+      for (const c of fresh) {
+        const dx = x - c.x
+        const dz = z - c.z
+        const sq = dx * dx + dz * dz
+        if (sq >= c.r * c.r) continue
+        bite += c.d * (0.5 + 0.5 * Math.cos((Math.PI * Math.sqrt(sq)) / c.r))
+      }
+      if (bite <= 0) continue
+      pos.setY(i, heightAt(x, z))
+      tint.setRGB(col.getX(i), col.getY(i), col.getZ(i))
+      tint.lerp(DIRT, Math.min(1, bite * 0.9))
+      tint.offsetHSL(0, 0, ((Math.abs(Math.sin(i * 12.9898) * 43758.5453) % 1) - 0.5) * 0.06)
+      col.setXYZ(i, tint.r, tint.g, tint.b)
+    }
+    pos.needsUpdate = true
+    col.needsUpdate = true
+    terrainGeo.computeVertexNormals()
+  }
+
+  const dead: DestroyedProp[] = []
+  for (const prop of props) {
+    if (!prop.alive) continue
+    for (const c of fresh) {
+      const reach = c.r + prop.hitR * 0.5
+      const dx = prop.x - c.x
+      const dz = prop.z - c.z
+      if (dx * dx + dz * dz >= reach * reach) continue
+      prop.alive = false
+      worldScene?.remove(prop.obj)
+      dead.push({ kind: prop.kind, x: prop.x, y: prop.y, z: prop.z, s: prop.s })
+      break
+    }
+  }
+  return dead
+}
+
+// Is this point inside a living tree or rock? Rockets check this so shooting
+// a prop head-on detonates against it instead of flying through.
+export function propInPath(p: THREE.Vector3): boolean {
+  for (const prop of props) {
+    if (!prop.alive) continue
+    const dx = p.x - prop.x
+    const dz = p.z - prop.z
+    const r = prop.hitR * 0.8
+    if (dx * dx + dz * dz >= r * r) continue
+    const top = prop.y + (prop.kind === 'tree' ? 4.5 * prop.s : prop.hitR * 1.5)
+    if (p.y < top) return true
+  }
+  return false
 }
 
 // Deterministic PRNG so tree/rock placement matches on every client.
@@ -40,7 +172,7 @@ function buildTerrain(): THREE.Mesh {
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i)
     const z = pos.getZ(i)
-    const h = heightAt(x, z)
+    const h = baseHeightAt(x, z)
     pos.setY(i, h)
     if (h < 1) c.copy(sand)
     else if (h < 10.5) c.copy(grass)
@@ -54,6 +186,7 @@ function buildTerrain(): THREE.Mesh {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })
   const mesh = new THREE.Mesh(geo, mat)
   mesh.name = 'terrain'
+  terrainGeo = geo
   return mesh
 }
 
@@ -74,6 +207,7 @@ function buildTree(): THREE.Group {
 }
 
 export function createWorld(scene: THREE.Scene): void {
+  worldScene = scene
   const sky = new THREE.Color(0x9fd4ea)
   scene.background = sky
   scene.fog = new THREE.Fog(sky, 40, 150)
@@ -97,7 +231,7 @@ export function createWorld(scene: THREE.Scene): void {
   for (let i = 0; i < 70; i++) {
     const x = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 8)
     const z = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 8)
-    const h = heightAt(x, z)
+    const h = baseHeightAt(x, z)
     if (h < 1.5 || h > 9) continue
     const tree = buildTree()
     tree.position.set(x, h - 0.1, z)
@@ -105,17 +239,20 @@ export function createWorld(scene: THREE.Scene): void {
     tree.scale.setScalar(s)
     tree.rotation.y = rand() * Math.PI * 2
     scene.add(tree)
+    props.push({ kind: 'tree', obj: tree, x, y: h - 0.1, z, hitR: 1.6 * s, s, alive: true })
   }
 
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x7d7d85, flatShading: true })
   for (let i = 0; i < 20; i++) {
     const x = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 5)
     const z = (rand() - 0.5) * 2 * (ISLAND_RADIUS - 5)
-    const h = heightAt(x, z)
+    const h = baseHeightAt(x, z)
     if (h < 0.5) continue
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 + rand() * 1.2, 0), rockMat)
+    const size = 0.5 + rand() * 1.2
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(size, 0), rockMat)
     rock.position.set(x, h, z)
     rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI)
     scene.add(rock)
+    props.push({ kind: 'rock', obj: rock, x, y: h, z, hitR: size, s: size, alive: true })
   }
 }

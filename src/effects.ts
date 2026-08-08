@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { heightAt } from './world'
+import { heightAt, propInPath } from './world'
 
 // Transient physical stuff: rockets, explosions, smoke, popped heads, debris.
 // Every client simulates the same fire events, so everyone sees the same show;
@@ -38,6 +38,10 @@ interface Explosion {
 
 export class Effects {
   onBlast: (center: THREE.Vector3) => void = () => {}
+  // Fires only for the local player's own rockets. Craters hang off this so
+  // exactly one client (the shooter) mints the world damage — per-client sim
+  // divergence must never fork the terrain.
+  onOwnExplosion: (center: THREE.Vector3) => void = () => {}
   private rockets: Rocket[] = []
   private puffs: Puff[] = []
   private explosions: Explosion[] = []
@@ -99,8 +103,8 @@ export class Effects {
       const hitPlayer = targets.some(
         (t) => t.id !== r.ownerId && this.tmp.set(t.pos.x, t.pos.y + 1.2, t.pos.z).distanceTo(p) < 1.5,
       )
-      if (hitGround || hitPlayer || r.life <= 0) {
-        this.explode(p.clone())
+      if (hitGround || hitPlayer || propInPath(p) || r.life <= 0) {
+        this.explode(p.clone(), r.ownerId)
         this.scene.remove(r.mesh)
         this.rockets.splice(i, 1)
       }
@@ -146,7 +150,12 @@ export class Effects {
     }
   }
 
-  private explode(center: THREE.Vector3): void {
+  // Chunks of whatever just got destroyed, flying everywhere.
+  spawnDebris(center: THREE.Vector3, color: number, count: number, power: number): void {
+    this.burst(center, color, count, power)
+  }
+
+  private explode(center: THREE.Vector3, ownerId: string): void {
     const mesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(1, 0),
       new THREE.MeshLambertMaterial({
@@ -161,6 +170,7 @@ export class Effects {
     this.explosions.push({ mesh, t: 0 })
     this.burst(center, 0x333338, 10, 9)
     this.onBlast(center)
+    if (ownerId === 'me') this.onOwnExplosion(center)
   }
 
   // A handful of flying cubes: debris, blood, whatever the occasion calls for.
