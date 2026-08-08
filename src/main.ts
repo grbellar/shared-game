@@ -4,6 +4,7 @@ import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
 import { GameCamera } from './camera'
+import { initSettings } from './settings'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -33,6 +34,7 @@ createWorld(scene)
 
 const player = new Player(scene, color, name)
 const remotes = new Remotes(scene)
+initSettings()
 
 const net = new Net()
 net.onWelcome = (players) => {
