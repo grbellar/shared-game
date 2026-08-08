@@ -205,12 +205,20 @@ export function animateCharacter(
 
   // Weapon overrides for the right arm.
   const weapon = group.userData.weapon as string | undefined
-  if (weapon === 'gun' || weapon === 'bow' || weapon === 'm2') {
+  if (weapon === 'gun' || weapon === 'sniper' || weapon === 'm2' || weapon === 'bow') {
     // Held steady out front, following the shoulder down through a squat.
     const held = group.getObjectByName('weapon')
-    if (held) held.position.y = (weapon === 'gun' ? 1.8 : weapon === 'm2' ? 1.75 : 1.5) - 0.3 * crouch
+    if (held) {
+      const mount = (held.userData.mountY as number) ?? (weapon === 'gun' ? 1.8 : 1.5)
+      held.position.y = mount - 0.3 * crouch
+    }
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
+    // Sniper: the off hand comes up to cradle the fore-end.
+    if (weapon === 'sniper') {
+      rig.armL.rotation.x = -1.15
+      rig.armL.rotation.z = -0.35
+    }
   } else if (
     weapon === 'sword' ||
     weapon === 'shovel' ||
@@ -357,9 +365,10 @@ export function refreshFace(group: THREE.Group): void {
   if (store?.url) setFace(group, store.url)
 }
 
-// Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand),
-// 'shovel', 'builder' or 'firework' (also right hand), or 'none'. Synced over
-// the network via the `weapon` field in PlayerState.
+// Equip 'gun' (shoulder bazooka), 'sniper' (scoped rifle, also at the
+// shoulder), 'sword' (katana in the right hand), 'shovel', 'builder' or
+// 'firework' (also right hand), or 'none'. Synced over the network via the
+// `weapon` field in PlayerState.
 export function setWeapon(group: THREE.Group, weapon: string): void {
   const existing = group.getObjectByName('weapon')
   if (existing) existing.parent!.remove(existing)
@@ -369,6 +378,8 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
     group.add(buildBazooka())
   } else if (weapon === 'm2') {
     group.add(buildM2())
+  } else if (weapon === 'sniper') {
+    group.add(buildSniper())
   } else if (weapon === 'sword') {
     armR.add(buildKatana())
   } else if (weapon === 'shovel') {
@@ -578,6 +589,7 @@ export function buildM2(): THREE.Group {
 
   gun.add(receiver, barrel, muzzle, grips, belt, sight)
   gun.position.set(0.4, 1.75, 0.15)
+  gun.userData.mountY = 1.75
   return gun
 }
 
@@ -604,8 +616,86 @@ export function buildBazooka(): THREE.Group {
 
     gun.add(tube, muzzle, exhaust, band, sight, grip)
     gun.position.set(0.38, 1.8, 0.1)
+    gun.userData.mountY = 1.8 // animateCharacter drops this through a squat
     return gun
   }
+}
+
+// Bolt-action rifle with a big chunky scope, carried at the right shoulder
+// like the bazooka and pointing forward (+Z). Long and thin so the
+// silhouette reads as "sniper" even at 320x240.
+// Exported for firstperson.ts, which shows a second copy as the view model.
+export function buildSniper(): THREE.Group {
+  const rifle = new THREE.Group()
+  rifle.name = 'weapon'
+  const metal = new THREE.MeshLambertMaterial({ color: 0x3a3f47, flatShading: true })
+  const black = new THREE.MeshLambertMaterial({ color: 0x1b1d21, flatShading: true })
+  const wood = new THREE.MeshLambertMaterial({ color: 0x6b4a2a, flatShading: true })
+  const glass = new THREE.MeshLambertMaterial({
+    color: 0x2b4a55,
+    emissive: 0x2f7f96,
+    flatShading: true,
+  })
+
+  const along = (geo: THREE.CylinderGeometry) => geo.rotateX(Math.PI / 2) // +Y -> +Z
+
+  const barrel = new THREE.Mesh(along(new THREE.CylinderGeometry(0.055, 0.05, 1.5, 6)), metal)
+  barrel.position.z = 0.62
+  const brake = new THREE.Mesh(along(new THREE.CylinderGeometry(0.085, 0.075, 0.18, 6)), black)
+  brake.position.z = 1.42
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.78), metal)
+  receiver.position.z = -0.2
+  const foreEnd = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.16, 0.62), wood)
+  foreEnd.position.z = 0.35
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.24, 0.62), wood)
+  stock.position.set(0, -0.03, -0.86)
+  const comb = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.12, 0.34), wood)
+  comb.position.set(0, 0.15, -0.66)
+  const butt = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.32, 0.08), black)
+  butt.position.set(0, -0.05, -1.19)
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.24, 0.18), black)
+  mag.position.set(0, -0.19, -0.16)
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.05, 0.22), black)
+  guard.position.set(0, -0.16, -0.42)
+  // Bolt handle out the right side — the bit the cycle animation flicks.
+  const bolt = new THREE.Group()
+  bolt.name = 'bolt'
+  const boltArm = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.05, 0.05), metal)
+  boltArm.position.x = 0.1
+  const boltKnob = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), black)
+  boltKnob.position.x = 0.21
+  bolt.add(boltArm, boltKnob)
+  bolt.position.set(0.06, 0.03, -0.36)
+
+  // Scope: a fat tube on two ring mounts, with lenses at both ends.
+  const scope = new THREE.Mesh(along(new THREE.CylinderGeometry(0.085, 0.085, 0.66, 8)), black)
+  scope.position.set(0, 0.23, -0.06)
+  const bell = new THREE.Mesh(along(new THREE.CylinderGeometry(0.11, 0.09, 0.16, 8)), black)
+  bell.position.set(0, 0.23, 0.33)
+  const lensFront = new THREE.Mesh(along(new THREE.CylinderGeometry(0.095, 0.095, 0.03, 8)), glass)
+  lensFront.position.set(0, 0.23, 0.41)
+  const lensRear = new THREE.Mesh(along(new THREE.CylinderGeometry(0.075, 0.075, 0.03, 8)), glass)
+  lensRear.position.set(0, 0.23, -0.39)
+  const mountA = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.07), metal)
+  mountA.position.set(0, 0.14, 0.14)
+  const mountB = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.07), metal)
+  mountB.position.set(0, 0.14, -0.26)
+
+  // Folded bipod under the fore-end.
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.36, 0.035), metal)
+    leg.position.set(side * 0.06, -0.24, 0.5)
+    leg.rotation.set(-0.35, 0, side * 0.3)
+    rifle.add(leg)
+  }
+
+  rifle.add(
+    barrel, brake, receiver, foreEnd, stock, comb, butt, mag, guard, bolt,
+    scope, bell, lensFront, lensRear, mountA, mountB,
+  )
+  rifle.position.set(0.36, 1.72, 0.15)
+  rifle.userData.mountY = 1.72
+  return rifle
 }
 
 // Katana held in the right hand, blade extending past the hand (local -Y),

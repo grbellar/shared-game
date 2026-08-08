@@ -223,6 +223,10 @@ interface Mob {
   netTarget: { x: number; z: number; ry: number }
 }
 
+// The prefix targets() stamps on a mob's id, with its index after it. Callers
+// that damage by id (the sniper's hitscan) match on this.
+export const MOB_TARGET_PREFIX = 'mob:'
+
 export class Mobs {
   onDeath: (name: string) => void = () => {}
   // A mob "spoke" — main.ts pins a chat bubble on it.
@@ -302,7 +306,7 @@ export class Mobs {
     for (let i = 0; i < this.mobs.length; i++) {
       const m = this.mobs[i]
       if (m.st === 'dead') continue
-      yield { id: `mob:${i}`, pos: m.group.position }
+      yield { id: `${MOB_TARGET_PREFIX}${i}`, pos: m.group.position }
     }
   }
 
@@ -328,6 +332,15 @@ export class Mobs {
       return true
     }
     return false
+  }
+
+  // A hitscan round from the local player connected with the mob that
+  // targets() called `id`. Same ownership rule as swing(): the shooter mints
+  // the damage and tells the room.
+  shot(id: string, dmg: number): void {
+    const m = this.mobs[Number(id.slice(MOB_TARGET_PREFIX.length))]
+    if (!m || m.st === 'dead') return
+    this.hit(m, dmg)
   }
 
   private hit(m: Mob, dmg: number): void {

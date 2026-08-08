@@ -304,6 +304,42 @@ class Sfx {
     this.noise('bandpass', 800, 4200, 0.13, 0.22 * vol)
   }
 
+  // Sniper: a hard supersonic crack, a short body thump, and a tail that
+  // slaps back off the island a beat later. Carries much further than the
+  // bazooka (main.ts widens its distance falloff to match).
+  sniperShot(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('highpass', 7000, 2200, 0.05, 0.45 * v, 0, 22050)
+    this.tone('square', 260, 42, 0.24, 0.28 * v)
+    this.noise('lowpass', 2200, 130, 0.45, 0.3 * v, 0.01, 8000)
+    this.noise('lowpass', 900, 220, 0.4, 0.1 * v, 0.3, 8000)
+  }
+
+  // Chunky bolt-action: pull back, shove forward. Delayed so it lands
+  // after the shot's crack instead of under it.
+  boltCycle(vol = 1): void {
+    this.noise('bandpass', 2800, 1300, 0.05, 0.16 * vol, 0.22)
+    this.tone('square', 190, 120, 0.05, 0.08 * vol, 0.23)
+    this.noise('bandpass', 2200, 1100, 0.05, 0.14 * vol, 0.46)
+    this.tone('square', 150, 95, 0.05, 0.07 * vol, 0.47)
+  }
+
+  // Scope going up to the eye / coming back down.
+  scope(on: boolean): void {
+    this.noise('bandpass', 3200, 1600, 0.04, 0.08)
+    if (on) this.tone('square', 820, 1450, 0.06, 0.09)
+    else this.tone('square', 1450, 700, 0.06, 0.08)
+  }
+
+  // Round smacking dirt or stone instead of a person.
+  ricochet(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('bandpass', 2600, 800, 0.08, 0.2 * v)
+    this.tone('sawtooth', 1900, 380, 0.18, 0.09 * v)
+  }
+
   // Shovel scooping dirt.
   dig(vol = 1): void {
     this.noise('lowpass', 600, 180, 0.16, 0.25 * vol)
@@ -573,6 +609,15 @@ class Sfx {
     this.tone('sawtooth', 590, 920, 0.3, 0.15 * v)
     this.tone('sawtooth', 660, 310, 0.35, 0.13 * v, 0.28)
     this.tone('square', 880, 1180, 0.12, 0.08 * v, 0.1)
+  }
+
+  // Intentionally overdriven, abrupt noise for the full-screen scare. It
+  // still passes through the master output, so the existing mute key wins.
+  jumpScare(): void {
+    this.noise('bandpass', 5200, 380, 0.72, 1.8, 0, 8000)
+    this.tone('sawtooth', 1450, 120, 0.68, 1.15)
+    this.tone('square', 82, 34, 0.9, 1.5)
+    this.noise('lowpass', 420, 75, 0.9, 1.4)
   }
 
   // Big dumb death groan, then bubbles.

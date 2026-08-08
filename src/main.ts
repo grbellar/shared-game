@@ -24,15 +24,16 @@ import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
 import {
-  Fifty, traceShot, muzzleOf,
+  traceShot, muzzleOf,
   FIFTY_RPM, FIFTY_PLAYER_DAMAGE, FIFTY_BLOCK_DAMAGE, FIFTY_CRATER,
 } from './fifty'
 import { FirstPersonAim } from './firstperson'
+import { Scope, ScopeInput, hitscan } from './sniper'
 import { Minimap } from './minimap'
 import { Health, MAX_HP } from './health'
-import { Shark } from './shark'
-import { Mobs } from './mobs'
-import { Skeletons } from './skeletons'
+import { Shark, SHARK_TARGET_ID } from './shark'
+import { Mobs, MOB_TARGET_PREFIX } from './mobs'
+import { Skeletons, SKEL_TARGET_PREFIX } from './skeletons'
 import { Cats } from './cats'
 import { Meckies } from './meckies'
 import { Stripper } from './stripper'
@@ -59,10 +60,12 @@ import { SKINS, applySkin } from './skins'
 import { sfx } from './audio'
 import { Voice } from './voice'
 import { music } from './music'
+import { JumpScares } from './jumpscares'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
 const VIEW_H = 240
+const FOV = 70
 
 // How far the head glances toward the third-person camera's heading.
 const GLANCE = 0.9
@@ -85,7 +88,7 @@ window.addEventListener('resize', fitCanvas)
 fitCanvas()
 
 const scene = new THREE.Scene()
-const camera = new THREE.PerspectiveCamera(70, VIEW_W / VIEW_H, 0.1, 500)
+const camera = new THREE.PerspectiveCamera(FOV, VIEW_W / VIEW_H, 0.1, 500)
 // In the scene graph so camera children (the first-person view model) render.
 scene.add(camera)
 createWorld(scene)
@@ -153,6 +156,7 @@ const settings = initSettings(
     }
   },
 )
+new JumpScares(() => settings.jumpScares).start()
 faceBar.setEnabled(settings.webcamBar)
 // Camera was on last session: restart it. Denied (or camera gone) flips the
 // switch back off, same as toggling it by hand.
@@ -219,7 +223,8 @@ net.onFace = (id, dataUrl) => {
 }
 net.connect()
 
-type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework' | 'm2'
+type Weapon =
+  | 'none' | 'gun' | 'sniper' | 'm2' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
 type Ride = 'none' | 'wheelchair' | 'ramsey'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
@@ -305,6 +310,8 @@ setBuildUi(weapon === 'builder')
 function equipWeapon(next: Weapon): void {
   weapon = next
   bowDrawStart = -1
+  // Putting the rifle away puts the scope away with it, latched or not.
+  if (weapon !== 'sniper') scopeStow()
   setWeapon(player.group, weapon)
   sfx.equip(weapon !== 'none')
   setBuildUi(weapon === 'builder')
@@ -328,12 +335,13 @@ const handWheel = new ItemWheel(
   [
     { id: 'none', icon: '✋', label: 'empty' },
     { id: 'gun', icon: '🚀', label: 'G bazooka' },
+    { id: 'sniper', icon: '🎯', label: 'N sniper' },
     { id: 'sword', icon: '🗡️', label: 'H katana' },
     { id: 'shovel', icon: '⛏️', label: 'F shovel' },
     { id: 'bow', icon: '🏹', label: 'B bow' },
     { id: 'builder', icon: '🧱', label: 'T builder' },
     { id: 'firework', icon: '🎆', label: 'K firework' },
-    { id: 'm2', icon: '🔫', label: 'N fifty cal' },
+    { id: 'm2', icon: '🔫', label: 'O fifty cal' },
   ],
   () => weapon,
   (id) => equipWeapon(id as Weapon),
@@ -368,10 +376,10 @@ effects.onOwnExplosion = (center) => {
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
 
-const fifty = new Fifty(scene)
 net.onFifty = (_id, from, to) => {
   const a = new THREE.Vector3(...from)
-  fifty.spawnTracer(a, new THREE.Vector3(...to))
+  effects.spawnTracer(a, new THREE.Vector3(...to))
+  effects.spawnMuzzleFlash(a)
   sfx.fiftyShot(distVol(a, 140))
 }
 const fireworks = new Fireworks(scene)
@@ -495,6 +503,16 @@ meckies.onStrike = (id) => net.sendHit(id, MAX_HP)
 net.onMeckie = (id, i, x, z, by) => meckies.applyRemote(i, x, z, by === 'me' ? id : by)
 cats.onPet = (index) => net.sendPet(index)
 net.onPet = (index) => cats.pet(index)
+net.onSnipe = (_id, from, to) => {
+  const muzzle = new THREE.Vector3(...from)
+  const impact = new THREE.Vector3(...to)
+  // A rifle report carries most of the way across the island.
+  sfx.sniperShot(distVol(muzzle, 200))
+  sfx.boltCycle(distVol(muzzle, 40))
+  effects.spawnMuzzleFlash(muzzle)
+  effects.spawnTracer(muzzle, impact)
+  effects.spawnDebris(impact, 0x6b4526, 3, 3)
+}
 net.onSlash = (id) => {
   const group = remotes.getGroup(id)
   sfx.slash(group ? distVol(group.position) : 0.7)
@@ -516,6 +534,8 @@ function dieLocally(): void {
   if (headPos) effects.spawnHeadPop(headPos)
   sfx.pop()
   sfx.death()
+  // Otherwise a latched scope springs back up the moment you respawn.
+  scopeStow()
   player.die()
 }
 net.onKill = (victim) => {
@@ -579,6 +599,7 @@ let lastAttack = 0
 // Trigger held down. Only the M2 uses it; everything else is click-per-shot.
 let firing = false
 const SWORD_DAMAGE = 55 // two clean swings takes a head off
+const SNIPER_DAMAGE = 80 // brutal, but it's two hits and a slow bolt either way
 function attack(): void {
   if (player.dead) return
   const now = performance.now()
@@ -597,6 +618,54 @@ function attack(): void {
       .add(new THREE.Vector3(dir.x * 1.1, 1.8, dir.z * 1.1))
     effects.spawnRocket('me', origin, dir)
     net.sendFire(origin, dir)
+  } else if (weapon === 'sniper' && now - lastAttack > 1400) {
+    lastAttack = now
+    sfx.sniperShot()
+    sfx.boltCycle()
+    fp.kick()
+    fp.cycleBolt()
+    // Ray from the eye in first person, so the crosshair never lies about
+    // what it is pointing at; from the shoulder, dead level, in third.
+    const ry = player.group.rotation.y
+    const dir = fp.isActive
+      ? fp.aimDir(new THREE.Vector3())
+      : new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry)).normalize()
+    const origin = fp.isActive
+      ? fp.eyePosition(new THREE.Vector3())
+      : player.group.position.clone().add(new THREE.Vector3(0, 1.75, 0))
+    // Players, the shark and the mobs all ride in one target list, so the
+    // ray's own ordering decides who's in front — no second "did it also
+    // hit a bear" pass that could double-count one round.
+    const hit = hitscan(origin, dir, [
+      ...remotes.targets(),
+      ...shark.targets(),
+      ...mobs.targets(),
+      ...skeletons.targets(),
+    ])
+    // Start the tracer past the muzzle so it isn't drawn through your face.
+    const muzzle = origin.clone().addScaledVector(dir, 1.4)
+    effects.spawnMuzzleFlash(muzzle)
+    effects.spawnTracer(muzzle, hit.point)
+    net.sendSnipe(muzzle, hit.point)
+    fp.punch(0.1)
+    if (hit.id === SHARK_TARGET_ID) {
+      shark.shot(SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.id?.startsWith(MOB_TARGET_PREFIX)) {
+      mobs.shot(hit.id, SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.id?.startsWith(SKEL_TARGET_PREFIX)) {
+      skeletons.shot(hit.id, SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.id) {
+      // Same deal as the katana: send the damage, let the victim decide
+      // whether that was fatal and announce it back as `kill`.
+      net.sendHit(hit.id, SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.kind !== 'sky') {
+      sfx.ricochet(distVol(hit.point, 70))
+      effects.spawnDebris(hit.point, hit.kind === 'prop' ? 0x4a7a35 : 0x6b4526, 5, 4)
+    }
   } else if (weapon === 'sword' && now - lastAttack > 500) {
     lastAttack = now
     sfx.slash()
@@ -685,7 +754,8 @@ function attack(): void {
     // so nobody's slightly-different idea of where we were aiming can mint a
     // second, contradictory hit.
     const hit = traceShot(from, dir, [...remotes.targets()], 'me')
-    fifty.spawnTracer(from, hit.point)
+    effects.spawnTracer(from, hit.point)
+    effects.spawnMuzzleFlash(from)
     net.sendFifty(from, hit.point)
     effects.spawnDebris(hit.point, 0xffd27f, 3, 4)
     if (hit.player) {
@@ -752,6 +822,12 @@ function breakBlock(): void {
   }
 }
 
+// Raising the scope: right mouse (tap or hold) and Z both go through here.
+// See ScopeInput for why a tap has to latch it. Works straight from third
+// person — the game drops into first person for as long as it's up.
+const scopeInput = new ScopeInput()
+const scopeStow = (): void => scopeInput.stow()
+
 // Light every firework we've planted. They also self-launch when the fuse
 // burns down, so touch players (no keyboard) still get the show.
 function launchFireworks(): void {
@@ -772,10 +848,12 @@ window.addEventListener('mousedown', (e) => {
     void lock?.catch(() => {})
     return
   }
-  // Right-click is the builder's eraser. Every other tool ignores it — it
-  // used to fire whatever you were holding, which nobody meant to do.
+  // Right-click is the builder's eraser and the sniper's scope. Every other
+  // tool ignores it — it used to fire whatever you were holding, which
+  // nobody meant to do.
   if (e.button !== 0) {
     if (e.button === 2 && weapon === 'builder') breakBlock()
+    if (e.button === 2 && weapon === 'sniper') scopeInput.press(performance.now())
     return
   }
   if (weapon === 'bow') {
@@ -787,11 +865,14 @@ window.addEventListener('mousedown', (e) => {
   if (weapon === 'm2') firing = true
   attack()
 })
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 2) scopeInput.release(performance.now())
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
   firing = false
 })
+// Lost focus mid-hold (alt-tab, dev tools) — don't get stuck scoped.
+window.addEventListener('blur', scopeStow)
 // Third-person mouse look: locked mouse movement orbits the camera — unless
 // first person owns it (it turns the player instead) or a wheel is sweeping.
 window.addEventListener('mousemove', (e) => {
@@ -919,6 +1000,8 @@ window.addEventListener('keydown', (e) => {
     chat.open()
   }
   if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
+  if (e.code === 'KeyN') equipWeapon(weapon === 'sniper' ? 'none' : 'sniper')
+  if (e.code === 'KeyZ' && !e.repeat && weapon === 'sniper') scopeInput.toggle()
   if (e.code === 'KeyH') equipWeapon(weapon === 'sword' ? 'none' : 'sword')
   if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
   if (e.code === 'KeyB') equipWeapon(weapon === 'bow' ? 'none' : 'bow')
@@ -929,7 +1012,7 @@ window.addEventListener('keydown', (e) => {
     saveLoadout()
   }
   if (e.code === 'KeyK') equipWeapon(weapon === 'firework' ? 'none' : 'firework')
-  if (e.code === 'KeyN') equipWeapon(weapon === 'm2' ? 'none' : 'm2')
+  if (e.code === 'KeyO') equipWeapon(weapon === 'm2' ? 'none' : 'm2')
   if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
   if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
@@ -947,6 +1030,7 @@ window.addEventListener('keyup', (e) => keys.delete(e.code))
 
 const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
+const scope = new Scope(camera, FOV)
 const minimap = new Minimap(touch.active, color)
 const daynight = new DayNight(scene)
 
@@ -1022,7 +1106,6 @@ function crossTo(gate: Gate): void {
   meckies,
   stripper,
   fireworks,
-  fifty,
   webcam,
   emotes,
   portals,
@@ -1035,6 +1118,7 @@ function crossTo(gate: Gate): void {
   scene,
   camera,
   attack,
+  scope,
   // Pure function; handy for working out what a shot actually met.
   traceShot,
   draw: () => renderer.render(scene, camera),
@@ -1051,11 +1135,22 @@ renderer.setAnimationLoop(() => {
   music.setScore(shadow ? 'shadow' : 'island')
   // Any overlay borrows the mouse — the wheels and the travel map alike.
   fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen
+  // The scope only comes up when you're actually holding the rifle, on your
+  // feet, and nothing else owns the mouse.
+  scope.setActive(
+    scopeInput.isUp && weapon === 'sniper' && !touch.active && !rocket.active && !player.dead && !fp.paused,
+  )
+  scope.update(dt)
   // No aiming down a scope while the rocket flies you; the chase cam sells it.
+  // Scoping in forces first person for as long as the scope is up, even if
+  // the player normally plays in third.
   fp.setActive(
-    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active,
+    (settings.firstPerson || scope.active) && weapon !== 'none' && !touch.active && !rocket.active,
     weapon,
   )
+  fp.setScoped(scope.active)
+  fp.setSway(scope.swayX, scope.swayY)
+  fp.aimScale = scope.zoom
   fp.update(dt)
 
   // Head tracks where we're looking: the mouse pitch in first person (the
@@ -1157,7 +1252,6 @@ renderer.setAnimationLoop(() => {
     ...skeletons.stickTargets(),
   ])
   if (firing && weapon === 'm2' && !player.dead) attack()
-  fifty.update(dt)
   fireworks.update(dt)
   remotes.update(dt)
   // After the player and remotes have moved: the shark chases current

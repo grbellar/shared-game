@@ -54,47 +54,6 @@ export function traceShot(
   return { point: p.clone() }
 }
 
-interface Tracer {
-  mesh: THREE.Mesh
-  t: number
-}
-
-const TRACER_TIME = 0.09
-
-// The visible round: a bright streak from muzzle to impact, plus the impact
-// spray. Purely cosmetic, so every client draws its own from the relayed shot.
-export class Fifty {
-  private tracers: Tracer[] = []
-
-  constructor(private scene: THREE.Scene) {}
-
-  // `to` is where the round stopped, which the shooter resolved and sent.
-  spawnTracer(from: THREE.Vector3, to: THREE.Vector3): void {
-    const len = from.distanceTo(to)
-    if (len < 0.01) return
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.07, 0.07, len),
-      new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true }),
-    )
-    mesh.position.copy(from).lerp(to, 0.5)
-    mesh.lookAt(to)
-    this.scene.add(mesh)
-    this.tracers.push({ mesh, t: 0 })
-  }
-
-  update(dt: number): void {
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const tr = this.tracers[i]
-      tr.t += dt / TRACER_TIME
-      if (tr.t >= 1) {
-        this.scene.remove(tr.mesh)
-        this.tracers.splice(i, 1)
-        continue
-      }
-      ;(tr.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - tr.t
-    }
-  }
-}
 
 // Where the muzzle sits, so the tracer leaves the barrel rather than the navel.
 export function muzzleOf(pos: THREE.Vector3, dir: THREE.Vector3): THREE.Vector3 {

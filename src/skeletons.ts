@@ -147,6 +147,10 @@ interface Skel {
   struck: boolean
 }
 
+// The prefix targets() stamps on a skeleton's id, with its index after it.
+// Callers that damage by id (the sniper's hitscan) match on this.
+export const SKEL_TARGET_PREFIX = 'skel:'
+
 export class Skeletons {
   private list: Skel[] = []
   private sinceNet = 99
@@ -248,6 +252,15 @@ export class Skeletons {
       if (d > radius) continue
       this.hit(s, 90 * (1 - d / radius))
     }
+  }
+
+  // A hitscan round from the local player connected with the skeleton that
+  // targets() called `id`. Same ownership rule as swing(): the shooter mints
+  // the damage and tells the room.
+  shot(id: string, dmg: number): void {
+    const s = this.list[Number(id.slice(SKEL_TARGET_PREFIX.length))]
+    if (!s || s.st === 'dead') return
+    this.hit(s, dmg)
   }
 
   private hit(s: Skel, dmg: number): void {
@@ -503,7 +516,7 @@ export class Skeletons {
     for (let i = 0; i < this.list.length; i++) {
       const s = this.list[i]
       if (s.st === 'dead') continue
-      yield { id: `skel:${i}`, pos: s.group.position }
+      yield { id: `${SKEL_TARGET_PREFIX}${i}`, pos: s.group.position }
     }
   }
 
