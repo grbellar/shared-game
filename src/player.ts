@@ -10,6 +10,14 @@ const JUMP_VELOCITY = 11
 const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
 
+// Turned down by the `moonjump` chat cheat (see cheats.ts). Local only —
+// everyone in the room types the code, so everyone floats together.
+let gravityScale = 1
+
+export function setGravityScale(scale: number): void {
+  gravityScale = scale
+}
+
 export interface PlayerInput {
   f: number
   s: number
@@ -121,7 +129,7 @@ export class Player {
     this.velZ *= friction
 
     // Gravity, then ground or water-surface collision.
-    this.velY -= GRAVITY * dt
+    this.velY -= GRAVITY * gravityScale * dt
     this.group.position.y += this.velY * dt
     const ground = heightAt(this.group.position.x, this.group.position.z)
     const overDeepWater = ground < WATER_LEVEL - 0.01
