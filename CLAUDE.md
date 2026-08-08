@@ -66,6 +66,12 @@ build) is the only gate.
     saves), plus name, color, and equipped loadout. Settings persist
     separately in `settings.ts`.
   - `remotes.ts` — rendering/interpolation of other players.
+  - `meckies.ts` — the Meckies: residents with a name, a signature colour and
+    a face, who live on the island and can be picked up and carried somewhere
+    else. `RESIDENTS` at the top is the roster, mirroring the `droids` table
+    in droid-body (`name`, `color`); adding one is a single line, since the
+    protocol is driven off that array's indices. They're family — the code
+    says they/them.
   - `rocket.ts` — rocket travel: the arc that throws you to another island or
     onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
     overlay that aims it — the islands drawn straight out of `baseHeightAt`,
@@ -191,6 +197,19 @@ split as blast knockback.
   through it, so what you see outlined is exactly what the click acts on.
 - `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
   world-generated blocks. Replayed onto a freshly regenerated castle.
+- client→server `mg`: one round from the M2 fifty cal — muzzle and where it
+  stopped. Hitscan, not a projectile: only the SHOOTER marches the line
+  (`fifty.ts`) and mints what it broke, through the ordinary `hit` / `bhit` /
+  `crater` messages. This one exists purely so everyone draws the tracer
+  landing in the same place; per-client aim drift must never mint a second,
+  contradictory hit. Nothing stored — a tracer is gone in a tenth of a second.
+- client→server `meck`: a Meckie was picked up or set down, `{i, x, z, by}`
+  (`by` = carrier id, `''` = on the ground; send `'me'` and the room rewrites
+  it to your id). Where a *carried* Meckie is takes no traffic at all — every
+  client derives it from the carrier's own streamed position — so this only
+  fires on a pick-up or a put-down. The room keeps the last one per resident
+  and replays them in `welcome`, and clears `by` when a carrier disconnects,
+  which clients mirror on `leave` so nobody diverges. See `meckies.ts`.
 - client→server `land`: a rocket trip touching down, `{x, y, z}`; relayed with
   the traveller's id. The *flight* sends nothing at all — your position already
   streams ~15x/sec and the pose rides in `state.emote` (see above) — but the

@@ -35,7 +35,7 @@
         font: 12px monospace;
         pointer-events: none;
       }
-      #pet-hint {
+      #pet-hint, #meckie-hint {
         position: fixed;
         /* Above the build HUD and the chat input, which both sit at 34-36px. */
         bottom: 66px;
@@ -48,6 +48,11 @@
         font: 12px monospace;
         padding: 5px 10px;
         -webkit-tap-highlight-color: transparent;
+      }
+      /* Stacked above the cat prompt so both can be up at once. */
+      #meckie-hint {
+        bottom: 96px;
+        color: #cfe9ff;
       }
       #status {
         position: fixed;
@@ -291,7 +296,7 @@
     <div id="status"></div>
     <div id="flash"></div>
     <div id="realm-banner"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; mouse aim (click grabs, Esc frees) &middot; E items &middot; Q ride &middot; X emotes &middot; Tab map (click a friend to rocket to them) &middot; J next place &middot; I scores &middot; Enter chat &middot; V voice &middot; P pet cat &middot; click attack &middot; N sniper (right-click or Z to scope)</div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; mouse aim (click grabs, Esc frees) &middot; E items &middot; Q ride &middot; X emotes &middot; Tab map (click a friend to rocket to them) &middot; J next place &middot; I scores &middot; Enter chat &middot; V voice &middot; P pet cat &middot; click attack &middot; N sniper (right-click or Z to scope) &middot; O fifty cal (hold to fire) &middot; U carry a meckie</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -261,6 +261,26 @@ class Sfx {
     this.noise('highpass', 2000, 4000, 0.04, 0.3 * v)
   }
 
+  // A Meckie shouting down whoever just hurt their person. Synthetic and
+  // rising — a small voice making itself as big as it can.
+  warCry(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 220, 700, 0.26, 0.16 * v)
+    this.tone('square', 440, 1100, 0.22, 0.1 * v, 0.04)
+    this.noise('bandpass', 1200, 2600, 0.18, 0.14 * v, 0.02)
+  }
+
+  // One round from the M2: a hard crack over a deep thump, with a tail of
+  // the report rolling away. Much heavier and drier than the bazooka.
+  fiftyShot(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('highpass', 3000, 900, 0.05, 0.5 * v)
+    this.tone('square', 180, 48, 0.14, 0.32 * v)
+    this.noise('lowpass', 900, 120, 0.34, 0.32 * v, 0.02, 8000)
+  }
+
   // Rocket travel leaving the ground: an ignition crack, then a long roar
   // climbing away from you as the motor burns out (see rocket.ts).
   rocketLaunch(): void {

@@ -23,14 +23,19 @@ import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
+import {
+  traceShot, muzzleOf,
+  FIFTY_RPM, FIFTY_PLAYER_DAMAGE, FIFTY_BLOCK_DAMAGE, FIFTY_CRATER,
+} from './fifty'
 import { FirstPersonAim } from './firstperson'
 import { Scope, ScopeInput, hitscan } from './sniper'
 import { Minimap } from './minimap'
-import { Health } from './health'
+import { Health, MAX_HP } from './health'
 import { Shark, SHARK_TARGET_ID } from './shark'
 import { Mobs, MOB_TARGET_PREFIX } from './mobs'
 import { Skeletons, SKEL_TARGET_PREFIX } from './skeletons'
 import { Cats } from './cats'
+import { Meckies } from './meckies'
 import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
@@ -170,6 +175,8 @@ const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
 const cats = new Cats(scene, touch.active)
+// The Meckies: residents you can pick up and carry somewhere else.
+const meckies = new Meckies(scene, touch.active)
 const hud = new Hud()
 const killboard = new Killboard()
 const treasure = new Treasure()
@@ -181,7 +188,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, worldDamage, faces, scores, found) => {
+net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, found) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -204,6 +211,8 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces, scores, found) =>
   // The castle regenerates pristine inside this call, then takes the room's
   // accumulated damage back on top.
   building.replay(blocks, worldDamage)
+  // Wherever the Meckies were left, including in somebody's arms.
+  for (const [i, x, z, by] of meck) meckies.applyRemote(i, x, z, by)
   // Treasure somebody already dug up, and the damage already done.
   found.forEach((i) => treasure.markClaimed(i))
   killboard.setScores(scores)
@@ -214,6 +223,7 @@ net.onState = (p) => {
   if (isNew) voice.peerJoined(p.id)
 }
 net.onLeave = (id) => {
+  meckies.dropCarriedBy(id)
   remotes.remove(id)
   faceBar.remove(id)
   voice.peerLeft(id)
@@ -225,7 +235,8 @@ net.onFace = (id, dataUrl) => {
 }
 net.connect()
 
-type Weapon = 'none' | 'gun' | 'sniper' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
+type Weapon =
+  | 'none' | 'gun' | 'sniper' | 'm2' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
 type Ride = 'none' | 'wheelchair' | 'ramsey'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
@@ -347,6 +358,7 @@ const handWheel = new ItemWheel(
     { id: 'bow', icon: '🏹', label: 'B bow' },
     { id: 'builder', icon: '🧱', label: 'T builder' },
     { id: 'firework', icon: '🎆', label: 'K firework' },
+    { id: 'm2', icon: '🔫', label: 'O fifty cal' },
   ],
   () => weapon,
   (id) => equipWeapon(id as Weapon),
@@ -467,6 +479,12 @@ net.onEgg = (e) => {
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
 
+net.onFifty = (_id, from, to) => {
+  const a = new THREE.Vector3(...from)
+  effects.spawnTracer(a, new THREE.Vector3(...to))
+  effects.spawnMuzzleFlash(a)
+  sfx.fiftyShot(distVol(a, 140))
+}
 const fireworks = new Fireworks(scene)
 // Fireworks are loud and high up, so they carry much further than gunfire.
 fireworks.onLaunch = (pos) => sfx.whistle(distVol(pos, 110))
@@ -576,6 +594,16 @@ function rocketToNextIsland(): void {
   map.onPickDest(next)
 }
 
+meckies.onMove = (i, x, z, by) => net.sendMeckie(i, x, z, by)
+meckies.personName = () => profile.name
+meckies.onWarCry = (group, text) => bubbles.show(group, text)
+// Struck through the ordinary `hit` path, so the rules still hold: attackers
+// only ever send damage, and the victim is the one who decides it was fatal
+// and announces their own death.
+meckies.onStrike = (id) => net.sendHit(id, MAX_HP)
+// 'me' on the wire means the sender, so resolve it to their id before it
+// reaches the Meckies — to us they're just another carrier.
+net.onMeckie = (id, i, x, z, by) => meckies.applyRemote(i, x, z, by === 'me' ? id : by)
 cats.onPet = (index) => net.sendPet(index)
 net.onPet = (index) => cats.pet(index)
 net.onSnipe = (_id, from, to) => {
@@ -604,6 +632,8 @@ net.onHit = (attacker, dmg) => {
   lastAttacker = attacker
   lastAttackerAt = performance.now()
   health.damage(dmg)
+  // Your Meckies saw that. Anyone with you cries out and goes for them.
+  meckies.avenge(attacker)
 }
 // Losing the last of your health is your own announcement to make: the head
 // pops here, and everyone else hears about it through `kill`.
@@ -682,6 +712,8 @@ function meleeBlockTarget(): BlockSpec | undefined {
 }
 
 let lastAttack = 0
+// Trigger held down. Only the M2 uses it; everything else is click-per-shot.
+let firing = false
 const SWORD_DAMAGE = 55 // two clean swings takes a head off
 const SNIPER_DAMAGE = 80 // brutal, but it's two hits and a slow bolt either way
 function attack(): void {
@@ -840,6 +872,37 @@ function attack(): void {
     // column just ahead; either way the column stacks upward.
     const aimed = fp.isActive ? fp.aimedDigPoint() : null
     building.place(player.group.position, player.group.rotation.y, material, aimed)
+  } else if (weapon === 'm2' && now - lastAttack > FIFTY_RPM) {
+    lastAttack = now
+    sfx.fiftyShot()
+    fp.kick()
+    const ry = player.group.rotation.y
+    const dir = fp.isActive
+      ? fp.aimDir(new THREE.Vector3())
+      : new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry)).normalize()
+    const from = muzzleOf(player.group.position, dir)
+    // Only the shooter traces. Everyone else just draws the tracer we send,
+    // so nobody's slightly-different idea of where we were aiming can mint a
+    // second, contradictory hit.
+    const hit = traceShot(from, dir, [...remotes.targets()], 'me')
+    effects.spawnTracer(from, hit.point)
+    effects.spawnMuzzleFlash(from)
+    net.sendFifty(from, hit.point)
+    effects.spawnDebris(hit.point, 0xffd27f, 3, 4)
+    if (hit.player) {
+      net.sendHit(hit.player, FIFTY_PLAYER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.block) {
+      // Anything, one round: full hp in a single bhit.
+      building.hit(hit.block.gx, hit.block.gy, hit.block.gz, FIFTY_BLOCK_DAMAGE)
+    } else {
+      // Into the dirt. Sustained fire is what flattens ground, so each round
+      // only takes a small bite — but it does take one, and it's synced.
+      if (hit.point.y <= Math.max(heightAt(hit.point.x, hit.point.z), 0) + 0.3) {
+        destruction.bite(hit.point.x, hit.point.z, FIFTY_CRATER)
+      }
+      shark.blast(hit.point)
+    }
   } else if (weapon === 'firework' && now - lastAttack > 450) {
     lastAttack = now
     sfx.plant()
@@ -929,12 +992,15 @@ window.addEventListener('mousedown', (e) => {
     sfx.bowDraw()
     return
   }
+  // The M2 is belt-fed: hold the button and it keeps going.
+  if (weapon === 'm2') firing = true
   attack()
 })
 window.addEventListener('mouseup', (e) => {
   if (e.button === 2) scopeInput.release(performance.now())
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
+  firing = false
 })
 // Lost focus mid-hold (alt-tab, dev tools) — don't get stuck scoped.
 window.addEventListener('blur', scopeStow)
@@ -1089,10 +1155,12 @@ window.addEventListener('keydown', (e) => {
     saveLoadout()
   }
   if (e.code === 'KeyK') equipWeapon(weapon === 'firework' ? 'none' : 'firework')
+  if (e.code === 'KeyO') equipWeapon(weapon === 'm2' ? 'none' : 'm2')
   if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
   if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
   if (e.code === 'KeyJ') rocketToNextIsland()
+  if (e.code === 'KeyU') meckies.toggleNearest()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat)
@@ -1193,6 +1261,7 @@ function crossTo(gate: Gate): void {
   building,
   blockGhost,
   cats,
+  meckies,
   stripper,
   critters,
   treasure,
@@ -1209,7 +1278,10 @@ function crossTo(gate: Gate): void {
   map,
   scene,
   camera,
+  attack,
   scope,
+  // Pure function; handy for working out what a shot actually met.
+  traceShot,
   draw: () => renderer.render(scene, camera),
 }
 
@@ -1340,6 +1412,7 @@ renderer.setAnimationLoop(() => {
     { id: 'me', group: player.group },
     ...skeletons.stickTargets(),
   ])
+  if (firing && weapon === 'm2' && !player.dead) attack()
   fireworks.update(dt)
   remotes.update(dt)
   // After the player and remotes have moved: the shark chases current
@@ -1349,6 +1422,7 @@ renderer.setAnimationLoop(() => {
   skeletons.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
+  meckies.update(dt, player.group.position, camera.position, (id) => remotes.getGroup(id)?.position)
   stripper.update(dt, [player.group.position, ...remotes.targets().map(({ pos }) => pos)])
   gameCamera.update(dt, player, settings, fp)
   // After the player has settled: the ghost is aimed from where you actually

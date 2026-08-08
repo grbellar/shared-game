@@ -223,7 +223,7 @@ export function animateCharacter(
 
   // Weapon overrides for the right arm.
   const weapon = group.userData.weapon as string | undefined
-  if (weapon === 'gun' || weapon === 'sniper' || weapon === 'bow') {
+  if (weapon === 'gun' || weapon === 'sniper' || weapon === 'm2' || weapon === 'bow') {
     // Held steady out front, following the shoulder down through a squat.
     const held = group.getObjectByName('weapon')
     if (held) {
@@ -394,6 +394,8 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
   const armR = (group.userData.rig as { armR: THREE.Mesh }).armR
   if (weapon === 'gun') {
     group.add(buildBazooka())
+  } else if (weapon === 'm2') {
+    group.add(buildM2())
   } else if (weapon === 'sniper') {
     group.add(buildSniper())
   } else if (weapon === 'sword') {
@@ -658,6 +660,44 @@ function buildWheelchair(): THREE.Group {
 // Big tube resting on the right shoulder, pointing forward (+Z). The raised
 // right arm (see animateCharacter) holds it up.
 // Exported for firstperson.ts, which shows a second copy as the view model.
+// The M2: a slab of a heavy machine gun. Long barrel with a jacket, a fat
+// receiver, spade grips, and a belt of rounds hanging out of the feed tray.
+export function buildM2(): THREE.Group {
+  const gun = new THREE.Group()
+  gun.name = 'weapon'
+  const gunmetal = new THREE.MeshLambertMaterial({ color: 0x33383f, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1b1e22, flatShading: true })
+  const brass = new THREE.MeshLambertMaterial({ color: 0xb08d3a, flatShading: true })
+
+  const along = (geo: THREE.CylinderGeometry) => geo.rotateX(Math.PI / 2) // +Y -> +Z
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 1.3), gunmetal)
+  const barrel = new THREE.Mesh(along(new THREE.CylinderGeometry(0.09, 0.09, 1.7, 8)), dark)
+  barrel.position.z = 1.4
+  // Perforated cooling jacket, faked with two rings — cheaper than holes and
+  // it reads fine at 320x240.
+  for (const z of [0.95, 1.6]) {
+    const ring = new THREE.Mesh(along(new THREE.CylinderGeometry(0.14, 0.14, 0.18, 8)), gunmetal)
+    ring.position.z = z
+    gun.add(ring)
+  }
+  const muzzle = new THREE.Mesh(along(new THREE.CylinderGeometry(0.15, 0.11, 0.22, 8)), dark)
+  muzzle.position.z = 2.28
+  // Spade grips at the back.
+  const grips = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.26, 0.1), dark)
+  grips.position.z = -0.72
+  // The belt, drooping out of the left of the feed tray.
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.4, 0.5), brass)
+  belt.position.set(-0.2, -0.22, 0.1)
+  belt.rotation.z = 0.3
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.06), dark)
+  sight.position.set(0, 0.26, 0.5)
+
+  gun.add(receiver, barrel, muzzle, grips, belt, sight)
+  gun.position.set(0.4, 1.75, 0.15)
+  gun.userData.mountY = 1.75
+  return gun
+}
+
 export function buildBazooka(): THREE.Group {
   {
     const gun = new THREE.Group()

@@ -86,6 +86,11 @@ export class GameRoom extends DurableObject<Env> {
   // only have to remember how broken it is. Summed, so replay order can't
   // matter; insertion order doubles as the eviction order at the cap.
   private worldDmg = new Map<string, number>()
+  // Where each Meckie was last left: index -> {x, z, by}. `by` is the id of
+  // whoever is carrying them, '' if they're on the ground. A carried Meckie
+  // needs no position updates — every client derives it from the carrier's
+  // own state — so this only changes on a pick-up or a put-down.
+  private meck = new Map<number, { x: number; z: number; by: string }>()
   // The shared day/night clock: time-of-day in hours anchored to this DO's
   // wall clock. Scrubs/pauses re-anchor it; late joiners get the advanced
   // value in `welcome`. In-memory: hibernation resets to mid-morning.
@@ -126,6 +131,7 @@ export class GameRoom extends DurableObject<Env> {
         wdmg: [...this.worldDmg].map(([cell, dmg]) => [...cell.split(',').map(Number), dmg]),
         clock: { hours: this.clockHours(), running: this.clock.running },
         faces: [...this.faces].map(([fid, d]) => ({ id: fid, d })),
+        meck: [...this.meck].map(([i, m]) => [i, m.x, m.z, m.by]),
         scores: [...this.scores.values()],
         found: this.found,
       }),
@@ -438,6 +444,41 @@ export class GameRoom extends DurableObject<Env> {
         JSON.stringify({ t: 'skelhit', i, dmg: Math.max(0, Math.min(200, dmg)) }),
         ws,
       )
+    } else if (msg.t === 'mg') {
+      // One .50 round, straight through. Nothing stored: a tracer is gone in
+      // a tenth of a second, and everything it actually broke arrives as the
+      // ordinary hit / bhit / crater the shooter mints.
+      this.broadcast(
+        JSON.stringify({
+          t: 'mg',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          tx: Number(msg.tx) || 0,
+          ty: Number(msg.ty) || 0,
+          tz: Number(msg.tz) || 0,
+        }),
+        ws,
+      )
+    } else if (msg.t === 'meck') {
+      // Somebody picked a Meckie up or set them down. Last writer wins: two
+      // people grabbing at once is rare and self-correcting, since the loser
+      // sees the winner's relay and lets go.
+      const i = Math.floor(Number(msg.i))
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      if (!Number.isFinite(i) || i < 0 || i > 63) return
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return
+      // 'me' means the sender; store the real id so a joiner can resolve it.
+      const raw = String(msg.by ?? '').slice(0, 16)
+      const by = raw === 'me' ? att.id : raw
+      this.meck.set(i, {
+        x: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x)),
+        z: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z)),
+        by,
+      })
+      this.broadcast(JSON.stringify({ t: 'meck', id: att.id, i, x, z, by }), ws)
     } else if (msg.t === 'land') {
       // Rocket travel touching down. Relayed like `fire`: every client plays
       // the impact, and each one shoves only itself. Nothing stored — the
@@ -503,6 +544,9 @@ export class GameRoom extends DurableObject<Env> {
     if (!att) return
     this.states.delete(att.id)
     this.faces.delete(att.id)
+    // Anyone in their arms sits back down where they were picked up. Clients
+    // do exactly the same on `leave`, so nobody diverges.
+    for (const m of this.meck.values()) if (m.by === att.id) m.by = ''
     this.broadcast(JSON.stringify({ t: 'leave', id: att.id }), ws)
   }
 
