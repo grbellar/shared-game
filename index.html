@@ -154,11 +154,47 @@
         0%, 70% { opacity: 1; }
         100% { opacity: 0; visibility: hidden; }
       }
+      /* Portal transit: a violet blink that covers the teleport, and the
+         name of wherever you just landed. Neither declares its animation
+         here — main.ts assigns it, so they stay quiet on page load and can
+         be retriggered on every crossing. */
+      #flash {
+        position: fixed;
+        inset: 0;
+        background: #d9a3ff;
+        opacity: 0;
+        pointer-events: none;
+      }
+      @keyframes portal-flash {
+        0% { opacity: 0.95; background: #fff; }
+        30% { opacity: 0.7; background: #d9a3ff; }
+        100% { opacity: 0; }
+      }
+      #realm-banner {
+        position: fixed;
+        top: 30%;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: #e6c2ff;
+        font: bold 28px monospace;
+        text-shadow: 3px 3px 0 #1b0630;
+        letter-spacing: 3px;
+        opacity: 0;
+        pointer-events: none;
+      }
+      @keyframes realm-banner {
+        0% { opacity: 0; letter-spacing: 14px; }
+        18%, 65% { opacity: 1; letter-spacing: 3px; }
+        100% { opacity: 0; letter-spacing: 3px; }
+      }
     </style>
   </head>
   <body>
-    <div id="welcome">WELCOME TO<br />WHEELCHAIR WARRIORS<small>press R to ride</small></div>
+    <div id="welcome">WELCOME TO<br />WHEELCHAIR WARRIORS<small>walk into the purple beam</small></div>
     <div id="status"></div>
+    <div id="flash"></div>
+    <div id="realm-banner"></div>
     <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; V voice &middot; G bazooka &middot; H katana &middot; F shovel &middot; B bow (hold click) &middot; T build (1-4 material) &middot; R wheelchair &middot; Y ramsey &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
   </body>

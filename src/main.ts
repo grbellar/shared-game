@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createWorld } from './world'
+import { createWorld, heightAt } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
@@ -13,6 +13,10 @@ import { Arrows } from './arrows'
 import { Destruction } from './destruction'
 import { DayNight } from './daynight'
 import { Building } from './building'
+import { createRealm, inRealm } from './realm'
+import { buildCastle } from './castle'
+import { Portals, type Gate } from './portal'
+import * as blocks from './blocks'
 import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
 import { FirstPersonAim } from './firstperson'
@@ -49,7 +53,11 @@ const camera = new THREE.PerspectiveCamera(70, VIEW_W / VIEW_H, 0.1, 500)
 // In the scene graph so camera children (the first-person view model) render.
 scene.add(camera)
 createWorld(scene)
-initBlocks(scene)
+createRealm(scene)
+// The castle is a world block seeder, not a snapshot: initBlocks builds it
+// now and rebuilds it on every welcome, before the room's damage replays.
+initBlocks(scene, buildCastle)
+const portals = new Portals(scene)
 
 const player = new Player(scene, color, name)
 const remotes = new Remotes(scene)
@@ -65,7 +73,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks) => {
+net.onWelcome = (players, craters, blocks, worldDamage) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -76,7 +84,9 @@ net.onWelcome = (players, craters, blocks) => {
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
   // Blocks get a full reset instead: some may have died while we were away.
-  building.replay(blocks)
+  // The castle regenerates pristine inside this call, then takes the room's
+  // accumulated damage back on top.
+  building.replay(blocks, worldDamage)
 }
 net.onState = (p) => {
   const isNew = !remotes.getGroup(p.id)
@@ -381,8 +391,9 @@ setInterval(() => {
   const others = remotes.count
   const mute = sfx.muted ? ' · 🔇 (M)' : ''
   const mic = voice.enabled ? ' · 🎤 live (V)' : ''
+  const where = shadow ? ' · 🌑 shadow realm' : ''
   status.textContent = net.connected
-    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here${mute}${mic}`
+    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here${where}${mute}${mic}`
     : `${name} · connecting...${mute}${mic}`
 }, 500)
 
@@ -464,9 +475,42 @@ settings.onClockChange = (fromToggle) => {
   net.sendClock(settings.timeOfDay, settings.clockRun)
 }
 
+// Crossing over. Which world you're in is derived from your own position —
+// no realm field in the protocol, no second scene — so walking through a
+// gate, respawning out of the lava, and reconnecting all agree by
+// construction. `shadow` drives the sky, the fog, the burn, and the banner.
+const flash = document.getElementById('flash')!
+const banner = document.getElementById('realm-banner')!
+let shadow = inRealm(player.group.position.x, player.group.position.z)
+let burnT = 0
+
+// (Re)start a CSS animation: tear it off, force a reflow, put it back.
+function replayAnim(el: HTMLElement, anim: string): void {
+  el.style.animation = 'none'
+  void el.offsetWidth
+  el.style.animation = anim
+}
+
+function announce(title: string): void {
+  banner.textContent = title
+  replayAnim(flash, 'portal-flash 0.7s ease-out')
+  replayAnim(banner, 'realm-banner 3.2s ease forwards')
+}
+
+function crossTo(gate: Gate): void {
+  const ex = gate.x
+  const ez = gate.z + gate.exitZ
+  player.teleport(ex, heightAt(ex, ez), ez, gate.exitRy)
+  gameCamera.snapTo(player)
+  sfx.warp()
+  announce(gate.name)
+  // Let the keep introduce itself once the fog gives it up.
+  if (inRealm(ex, ez)) setTimeout(() => sfx.toll(), 950)
+}
+
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music, building }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music, building, portals, gameCamera, blocks }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -489,6 +533,34 @@ renderer.setAnimationLoop(() => {
     },
     gameCamera.yaw,
   )
+  const gate = portals.update(dt, player.group.position)
+  if (gate) crossTo(gate)
+  const nowShadow = inRealm(player.group.position.x, player.group.position.z)
+  if (nowShadow !== shadow) {
+    shadow = nowShadow
+    // Changed worlds without using a gate — respawned out of the lava, most
+    // likely. Same fanfare, and hold the gates off so you don't fall
+    // straight back through the one you land next to.
+    if (!gate) {
+      announce(nowShadow ? 'THE SHADOW REALM' : 'THE ISLAND')
+      sfx.warp()
+      portals.hold()
+      gameCamera.snapTo(player)
+    }
+  }
+  // The realm's sea is molten. player.ts floats you in it exactly like water,
+  // which is the joke: the only difference is that it kills you.
+  if (shadow && player.pose === 'swim' && !player.dead) {
+    health.damage(52 * dt)
+    burnT -= dt
+    if (burnT <= 0) {
+      burnT = 0.35
+      sfx.sizzle()
+    }
+  } else {
+    burnT = 0
+  }
+
   health.update(dt)
   voice.update(dt)
   player.group.userData.talk = voice.level // our own mouth flaps too
@@ -503,7 +575,7 @@ renderer.setAnimationLoop(() => {
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
   remotes.update(dt)
   gameCamera.update(dt, keys, player, settings, fp)
-  daynight.update(settings, camera.position)
+  daynight.update(settings, camera.position, shadow ? 1 : 0)
 
   renderer.render(scene, camera)
 })

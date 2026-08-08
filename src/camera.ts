@@ -30,6 +30,14 @@ export class GameCamera {
     this.camYaw += delta
   }
 
+  // Cut, don't glide. After a teleport the smoothing lerp would spend a
+  // second flying the camera across 1800 units of ocean.
+  snapTo(player: Player): void {
+    this.camYaw = player.group.rotation.y + Math.PI
+    this.offset.set(Math.sin(this.camYaw) * DISTANCE, HEIGHT, Math.cos(this.camYaw) * DISTANCE)
+    this.camera.position.copy(player.group.position).add(this.offset)
+  }
+
   update(dt: number, keys: Set<string>, player: Player, settings: Settings, fp: FirstPersonAim): void {
     if (fp.isActive) {
       // Rigid eye camera: at the head, looking along the crosshair. Follows

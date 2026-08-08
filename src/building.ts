@@ -11,6 +11,7 @@ import {
   placeBlock,
   resetBlocks,
   type BlockSpec,
+  type WorldDamage,
 } from './blocks'
 import type { Effects } from './effects'
 import type { Net } from './net'
@@ -43,7 +44,7 @@ export class Building {
     const gx = Math.round(tx / BLOCK)
     const gz = Math.round(tz / BLOCK)
     if (Math.abs(gx) > GRID_XZ_MAX || Math.abs(gz) > GRID_XZ_MAX) return false
-    const gy = findPlacementGy(gx, gz)
+    const gy = findPlacementGy(gx, gz, Math.floor(pos.y / BLOCK))
     if (gy > GY_MAX || gy * BLOCK > pos.y + OVERHEAD_CAP) return false
     if (!placeBlock({ gx, gy, gz, m, hp: MATERIALS[m].hp })) return false
     sfx.land(0.5)
@@ -89,8 +90,10 @@ export class Building {
   }
 
   // Welcome snapshot: full reset, silent — no debris storm for late joiners.
-  replay(specs: BlockSpec[]): void {
-    resetBlocks(specs)
+  // The castle isn't in the snapshot (every client generates it); what the
+  // room replays is the damage done to it, which re-breaks it identically.
+  replay(specs: BlockSpec[], worldDamage: WorldDamage[]): void {
+    resetBlocks(specs, worldDamage)
   }
 
   private applyDamage(gx: number, gy: number, gz: number, dmg: number, vol: number): boolean {

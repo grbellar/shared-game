@@ -250,6 +250,32 @@ class Sfx {
     this.tone('square', 262, 196, 0.5, 0.12, 0.52)
   }
 
+  // --- the shadow realm ---
+
+  // Falling through the gate: a rising shimmer, a swallow, and a thump out
+  // the other side.
+  warp(): void {
+    this.tone('sine', 180, 1400, 0.35, 0.22)
+    this.tone('sawtooth', 90, 700, 0.35, 0.07)
+    this.noise('bandpass', 400, 5000, 0.4, 0.16)
+    this.tone('sine', 900, 60, 0.5, 0.26, 0.3)
+    this.noise('lowpass', 2400, 90, 0.55, 0.3, 0.32, 8000)
+  }
+
+  // Struck-bell toll that lands when the keep comes out of the fog.
+  toll(): void {
+    for (const [mult, delay] of [[1, 0], [1.5, 0.02], [2.02, 0.05]] as const) {
+      this.tone('triangle', 88 * mult, 84 * mult, 3.2, 0.11 / mult, delay)
+    }
+    this.noise('lowpass', 900, 120, 0.5, 0.1)
+  }
+
+  // Standing in lava. Called on a loop while you burn, so keep it short.
+  sizzle(): void {
+    this.noise('highpass', 1400, 3600, 0.24, 0.13)
+    this.noise('lowpass', 320, 90, 0.3, 0.14)
+  }
+
   // --- ui ---
 
   chat(): void {

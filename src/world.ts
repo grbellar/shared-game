@@ -37,14 +37,29 @@ const MAX_DIG = 5
 const craters: Crater[] = []
 const craterKeys = new Set<string>()
 const props: Prop[] = []
-let terrainGeo: THREE.BufferGeometry | null = null
+const terrainGeos: THREE.BufferGeometry[] = []
 let worldScene: THREE.Scene | null = null
+// Somewhere else on the map another landmass owns the heightfield (the
+// shadow realm, way out past the fog). It returns null everywhere it isn't.
+let region: ((x: number, z: number) => number | null) | null = null
+
+// A landmass beyond the island: its own analytic height, and a mesh that
+// craters carve the same way they carve the island.
+export function addRegion(
+  heightFn: (x: number, z: number) => number | null,
+  geo: THREE.BufferGeometry,
+): void {
+  region = heightFn
+  terrainGeos.push(geo)
+}
 
 // The untouched island shape. Placement code (terrain build, tree/rock
 // loops) must use this — never the crater-adjusted heightAt — so the seeded
 // PRNG streams stay identical on every client no matter what has been
 // blown up by the time someone joins.
-function baseHeightAt(x: number, z: number): number {
+export function baseHeightAt(x: number, z: number): number {
+  const other = region?.(x, z)
+  if (other !== null && other !== undefined) return other
   let h =
     Math.sin(x * 0.05) * Math.cos(z * 0.05) * 3 +
     Math.sin(x * 0.021 + 1.7) * Math.cos(z * 0.017 - 0.4) * 6 +
@@ -72,6 +87,7 @@ export function heightAt(x: number, z: number): number {
 }
 
 const DIRT = new THREE.Color(0x6b4526)
+const ZERO = new THREE.Vector2(0, 0)
 
 // Apply craters we just learned about: carve the terrain mesh, expose dirt,
 // and kill any props caught inside. Returns the props that died so the
@@ -88,13 +104,16 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
   if (fresh.length === 0) return []
   craters.push(...fresh)
 
-  if (terrainGeo) {
-    const pos = terrainGeo.attributes.position
-    const col = terrainGeo.attributes.color
+  for (const geo of terrainGeos) {
+    const pos = geo.attributes.position
+    const col = geo.attributes.color
+    const origin = (geo.userData.origin as THREE.Vector2 | undefined) ?? ZERO
     const tint = new THREE.Color()
+    let touched = false
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i)
-      const z = pos.getZ(i)
+      // Region meshes sit at an offset; their vertices are mesh-local.
+      const x = pos.getX(i) + origin.x
+      const z = pos.getZ(i) + origin.y
       let bite = 0
       for (const c of fresh) {
         const dx = x - c.x
@@ -104,15 +123,17 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
         bite += c.d * (0.5 + 0.5 * Math.cos((Math.PI * Math.sqrt(sq)) / c.r))
       }
       if (bite <= 0) continue
+      touched = true
       pos.setY(i, heightAt(x, z))
       tint.setRGB(col.getX(i), col.getY(i), col.getZ(i))
       tint.lerp(DIRT, Math.min(1, bite * 0.9))
       tint.offsetHSL(0, 0, ((Math.abs(Math.sin(i * 12.9898) * 43758.5453) % 1) - 0.5) * 0.06)
       col.setXYZ(i, tint.r, tint.g, tint.b)
     }
+    if (!touched) continue
     pos.needsUpdate = true
     col.needsUpdate = true
-    terrainGeo.computeVertexNormals()
+    geo.computeVertexNormals()
   }
 
   const dead: DestroyedProp[] = []
@@ -186,7 +207,7 @@ function buildTerrain(): THREE.Mesh {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })
   const mesh = new THREE.Mesh(geo, mat)
   mesh.name = 'terrain'
-  terrainGeo = geo
+  terrainGeos.push(geo)
   return mesh
 }
 

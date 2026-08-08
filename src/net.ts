@@ -2,7 +2,7 @@
 
 import type { Pose } from './character'
 import type { Crater } from './world'
-import type { BlockSpec } from './blocks'
+import type { BlockSpec, WorldDamage } from './blocks'
 
 export interface PlayerState {
   id: string
@@ -25,6 +25,9 @@ type ServerMsg =
       players: PlayerState[]
       craters?: Crater[]
       blocks?: BlockSpec[]
+      // Damage done to world-generated blocks (the castle), which the room
+      // remembers even though it never stored the blocks themselves.
+      wdmg?: WorldDamage[]
       clock?: { hours: number; running: boolean }
     }
   | { t: 'clock'; hours: number; running: boolean }
@@ -43,7 +46,12 @@ type ServerMsg =
 
 export class Net {
   id: string | null = null
-  onWelcome: (players: PlayerState[], craters: Crater[], blocks: BlockSpec[]) => void = () => {}
+  onWelcome: (
+    players: PlayerState[],
+    craters: Crater[],
+    blocks: BlockSpec[],
+    worldDamage: WorldDamage[],
+  ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
   onChat: (id: string, name: string, text: string) => void = () => {}
@@ -79,7 +87,7 @@ export class Net {
       }
       if (msg.t === 'welcome') {
         this.id = msg.id
-        this.onWelcome(msg.players, msg.craters ?? [], msg.blocks ?? [])
+        this.onWelcome(msg.players, msg.craters ?? [], msg.blocks ?? [], msg.wdmg ?? [])
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
         // No self-echo check needed: the server never echoes to the sender.
