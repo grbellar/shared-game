@@ -295,6 +295,26 @@ class Sfx {
     this.noise('highpass', 2000, 4000, 0.04, 0.3 * v)
   }
 
+  // A Meckie shouting down whoever just hurt their person. Synthetic and
+  // rising — a small voice making itself as big as it can.
+  warCry(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 220, 700, 0.26, 0.16 * v)
+    this.tone('square', 440, 1100, 0.22, 0.1 * v, 0.04)
+    this.noise('bandpass', 1200, 2600, 0.18, 0.14 * v, 0.02)
+  }
+
+  // One round from the M2: a hard crack over a deep thump, with a tail of
+  // the report rolling away. Much heavier and drier than the bazooka.
+  fiftyShot(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('highpass', 3000, 900, 0.05, 0.5 * v)
+    this.tone('square', 180, 48, 0.14, 0.32 * v)
+    this.noise('lowpass', 900, 120, 0.34, 0.32 * v, 0.02, 8000)
+  }
+
   // Rocket travel leaving the ground: an ignition crack, then a long roar
   // climbing away from you as the motor burns out (see rocket.ts).
   rocketLaunch(): void {
@@ -316,6 +336,42 @@ class Sfx {
 
   slash(vol = 1): void {
     this.noise('bandpass', 800, 4200, 0.13, 0.22 * vol)
+  }
+
+  // Sniper: a hard supersonic crack, a short body thump, and a tail that
+  // slaps back off the island a beat later. Carries much further than the
+  // bazooka (main.ts widens its distance falloff to match).
+  sniperShot(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('highpass', 7000, 2200, 0.05, 0.45 * v, 0, 22050)
+    this.tone('square', 260, 42, 0.24, 0.28 * v)
+    this.noise('lowpass', 2200, 130, 0.45, 0.3 * v, 0.01, 8000)
+    this.noise('lowpass', 900, 220, 0.4, 0.1 * v, 0.3, 8000)
+  }
+
+  // Chunky bolt-action: pull back, shove forward. Delayed so it lands
+  // after the shot's crack instead of under it.
+  boltCycle(vol = 1): void {
+    this.noise('bandpass', 2800, 1300, 0.05, 0.16 * vol, 0.22)
+    this.tone('square', 190, 120, 0.05, 0.08 * vol, 0.23)
+    this.noise('bandpass', 2200, 1100, 0.05, 0.14 * vol, 0.46)
+    this.tone('square', 150, 95, 0.05, 0.07 * vol, 0.47)
+  }
+
+  // Scope going up to the eye / coming back down.
+  scope(on: boolean): void {
+    this.noise('bandpass', 3200, 1600, 0.04, 0.08)
+    if (on) this.tone('square', 820, 1450, 0.06, 0.09)
+    else this.tone('square', 1450, 700, 0.06, 0.08)
+  }
+
+  // Round smacking dirt or stone instead of a person.
+  ricochet(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('bandpass', 2600, 800, 0.08, 0.2 * v)
+    this.tone('sawtooth', 1900, 380, 0.18, 0.09 * v)
   }
 
   // Shovel scooping dirt.
@@ -589,12 +645,65 @@ class Sfx {
     this.tone('square', 880, 1180, 0.12, 0.08 * v, 0.1)
   }
 
+  // Intentionally overdriven, abrupt noise for the full-screen scare. It
+  // still passes through the master output, so the existing mute key wins.
+  jumpScare(): void {
+    this.noise('bandpass', 5200, 380, 0.72, 1.8, 0, 8000)
+    this.tone('sawtooth', 1450, 120, 0.68, 1.15)
+    this.tone('square', 82, 34, 0.9, 1.5)
+    this.noise('lowpass', 420, 75, 0.9, 1.4)
+  }
+
   // Big dumb death groan, then bubbles.
   sharkDie(vol = 1): void {
     this.tone('sawtooth', 200, 38, 0.8, 0.24 * vol)
     this.noise('lowpass', 900, 110, 0.7, 0.3 * vol)
     this.tone('sine', 700, 1300, 0.09, 0.08 * vol, 0.5)
     this.tone('sine', 620, 1150, 0.09, 0.07 * vol, 0.68)
+  }
+
+  // --- easter eggs ---
+
+  // Treasure detector blip. Climbs in pitch and volume as you close in.
+  ping(closeness: number): void {
+    const f = 700 + 900 * closeness
+    this.tone('square', f, f, 0.05, 0.05 + 0.06 * closeness)
+  }
+
+  // You dug something up.
+  fanfare(vol = 1): void {
+    if (vol <= 0.02) return
+    const notes = [523, 659, 784, 1047]
+    notes.forEach((n, i) => this.tone('square', n, n, 0.16, 0.14 * vol, i * 0.1))
+    this.tone('square', 1047, 1568, 0.45, 0.12 * vol, 0.44)
+  }
+
+  quack(vol = 1): void {
+    if (vol <= 0.02) return
+    this.tone('sawtooth', 420, 255, 0.16, 0.22 * vol)
+    this.tone('sawtooth', 300, 195, 0.1, 0.12 * vol, 0.14)
+  }
+
+  // Nessie, disturbed. Deeper and far longer than the bear's roar.
+  bellow(vol = 1): void {
+    if (vol <= 0.02) return
+    this.tone('sawtooth', 95, 42, 1.1, 0.3 * vol)
+    this.noise('lowpass', 500, 120, 1, 0.16 * vol)
+  }
+
+  // The sun taking it personally.
+  sunhit(): void {
+    this.noise('highpass', 1200, 6000, 0.5, 0.28)
+    this.tone('sawtooth', 1400, 120, 1.4, 0.28)
+  }
+
+  cheat(on: boolean): void {
+    if (on) {
+      this.tone('square', 330, 880, 0.18, 0.16)
+      this.tone('square', 440, 1320, 0.2, 0.11, 0.1)
+    } else {
+      this.tone('square', 880, 220, 0.25, 0.13)
+    }
   }
 
   // --- ui ---

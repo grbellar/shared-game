@@ -70,13 +70,23 @@ export class XWingFlight {
   private roll = 0
   private takeoffT = -1
   private takeoffY = 0
-  private baseFogFar = 150
   private engineT = 0
-
-  constructor(private scene: THREE.Scene) {}
+  // Mirrors the ship's height for `fogLift`, which is read after the flight
+  // has already written the position.
+  private altitude = 0
 
   get airborne(): boolean {
     return this.flying
+  }
+
+  // How far to push the fog wall back this frame, handed to daynight.update
+  // rather than written onto scene.fog — daynight rewrites fog.far
+  // unconditionally at the end of every frame, so anything set here directly
+  // would never survive to be drawn. Same deal as rocket.ts, and the reason
+  // the two can't fight over it.
+  get fogLift(): number {
+    if (!this.flying) return 0
+    return Math.max(0, this.altitude - 20) * FOG_GAIN
   }
 
   // 0..1, for the exhaust glow and the engine note.
@@ -94,11 +104,7 @@ export class XWingFlight {
     this.roll = 0
     this.takeoffT = 0
     this.takeoffY = group.position.y
-    const fog = this.scene.fog as THREE.Fog | null
-    // Captured before we start driving it and put back on the way down —
-    // the same borrow rocket.ts makes, which is why main.ts never lets the
-    // two own the fog at once.
-    this.baseFogFar = fog ? fog.far : 150
+    this.altitude = group.position.y
     sfx.xwingStart()
   }
 
@@ -171,17 +177,18 @@ export class XWingFlight {
   }
 
   // Forced out of the cockpit: killed, grabbed, rocketed, or just dismounted
-  // mid-air. Hands the player back with the ship's attitude wiped.
+  // mid-air. Hands the player back with the ship's attitude wiped. The fog
+  // needs no undoing — fogLift reads zero the moment `flying` goes false, and
+  // daynight writes the ordinary distance on its very next pass.
   stop(group: THREE.Group): void {
     if (!this.flying) return
     this.flying = false
     this.takeoffT = -1
     this.speed = 0
+    this.altitude = 0
     this.pitch = this.roll = 0
     group.rotation.x = 0
     group.rotation.z = 0
-    const fog = this.scene.fog as THREE.Fog | null
-    if (fog) fog.far = this.baseFogFar
   }
 
   // Both endings leave the ship hovering one belly-height off the deck and
@@ -200,18 +207,16 @@ export class XWingFlight {
     this.onCrash(pos, kind)
   }
 
-  // Engine note and the fog window, both a function of how hard we're pushing
-  // and how high we've got.
+  // Engine note, plus the altitude `fogLift` reads from. From up here you can
+  // see both islands at once — the same trick rocket travel plays, and the
+  // reason a flight across the ocean isn't a grey wall.
   private engine(dt: number, pos: THREE.Vector3): void {
+    this.altitude = pos.y
     this.engineT -= dt
     if (this.engineT <= 0) {
       this.engineT = 0.16
       sfx.xwingEngine(this.throttle)
     }
-    const fog = this.scene.fog as THREE.Fog | null
-    // From up here you can see both islands at once — the same trick rocket
-    // travel plays, and the reason a flight across the ocean isn't a grey wall.
-    if (fog) fog.far = this.baseFogFar + Math.max(0, pos.y - 20) * FOG_GAIN
   }
 }
 

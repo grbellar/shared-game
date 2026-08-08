@@ -8,12 +8,25 @@ const SPEED = 9
 const RIDE_SPEED = 16 // wheelchair beats walking
 const RAMSEY_SPEED = 19 // and four limbs beat two wheels
 const TAXI_SPEED = 12 // an X-wing still parked on its skids, trundling about
+const PLANE_SPEED = 26 // and a propeller beats everything
+const PLANE_CLIMB = 13 // Space, held
+const PLANE_DIVE = 17 // C, held — down faster than up, like all good crashes
+const PLANE_SINK = 2.5 // hands off the stick: a lazy glide toward the ground
+const PLANE_CEILING = 150 // high enough to see the whole island, under the fog math's sanity
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
 // Sea level lives in world.ts (it's a fact about the terrain); re-exported
 // here because this is where the rest of the game already imports it from.
 export { WATER_LEVEL }
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
+
+// Turned down by the `moonjump` chat cheat (see cheats.ts). Local only —
+// everyone in the room types the code, so everyone floats together.
+let gravityScale = 1
+
+export function setGravityScale(scale: number): void {
+  gravityScale = scale
+}
 
 // A random dry-land spot so players don't stack on one point. Rejection
 // sampling against heightAt (crater-aware, so nobody wakes up at the bottom
@@ -44,7 +57,7 @@ export class Player {
   moving = false // movement input this frame? The follow cam only recenters while true.
   pose: Pose = 'stand'
   dead = false
-  ride: 'none' | 'wheelchair' | 'ramsey' | 'xwing' = 'none'
+  ride: 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' = 'none'
   // Something has hold of you (the shark) — input is ignored and whatever
   // grabbed you owns your position until it lets go.
   grabbed = false
@@ -184,13 +197,15 @@ export class Player {
       dz /= len
       const analog = Math.min(mag, 1)
       const moveSpeed =
-        this.ride === 'ramsey'
-          ? RAMSEY_SPEED
-          : this.ride === 'wheelchair'
-            ? RIDE_SPEED
-            : this.ride === 'xwing'
-              ? TAXI_SPEED
-              : SPEED
+        this.ride === 'plane'
+          ? PLANE_SPEED
+          : this.ride === 'ramsey'
+            ? RAMSEY_SPEED
+            : this.ride === 'wheelchair'
+              ? RIDE_SPEED
+              : this.ride === 'xwing'
+                ? TAXI_SPEED
+                : SPEED
       this.tryMove(dx * moveSpeed * speedMul * analog * dt, dz * moveSpeed * speedMul * analog * dt)
       // Face the direction of travel, taking the short way around —
       // unless the mouse owns the facing (first-person strafe).
@@ -216,9 +231,22 @@ export class Player {
     this.velX *= friction
     this.velZ *= friction
 
-    // Gravity, then ground, block-top, or water-surface collision.
-    this.velY -= GRAVITY * dt
+    // Gravity, then ground, block-top, or water-surface collision. At the
+    // controls of the plane, gravity yields: the throttle owns the vertical
+    // axis — Space climbs, C dives, hands off is a gentle glide down. The
+    // ease means takeoffs and pull-ups swoop instead of snapping. Moonjump
+    // only touches the falling branch; a plane already ignores gravity.
+    if (this.ride === 'plane' && !this.dead) {
+      const target = input.jump ? PLANE_CLIMB : input.crouch ? -PLANE_DIVE : -PLANE_SINK
+      this.velY += (target - this.velY) * Math.min(1, 5 * dt)
+    } else {
+      this.velY -= GRAVITY * gravityScale * dt
+    }
     this.group.position.y += this.velY * dt
+    if (this.ride === 'plane' && this.group.position.y > PLANE_CEILING) {
+      this.group.position.y = PLANE_CEILING
+      this.velY = Math.min(this.velY, 0)
+    }
     const ground = heightAt(this.group.position.x, this.group.position.z)
     // Highest built block we could stand on here. A block breaching the
     // surface turns deep water into a dock; a deeply sunk one stays swimmable.
@@ -257,7 +285,7 @@ export class Player {
         this.onGround = false
       }
     }
-    if (input.jump && this.onGround && !this.dead) {
+    if (input.jump && this.onGround && !this.dead && this.ride !== 'plane') {
       this.velY = JUMP_VELOCITY
       this.onGround = false
       sfx.jump()
@@ -270,7 +298,7 @@ export class Player {
     if (Math.floor(this.walkPhase / Math.PI) !== prevStep && !this.dead) {
       if (floating) moving > 0.15 ? sfx.paddle() : sfx.lap()
       else if (moving > 0.15 && this.onGround) {
-        if (this.ride === 'wheelchair') sfx.squeak()
+        if (this.ride === 'wheelchair' || this.ride === 'plane') sfx.squeak() // taxiing on unoiled gear
         else if (this.ride === 'ramsey') sfx.gallop()
         else if (this.ride !== 'xwing') sfx.step() // a parked fighter has no feet
       }

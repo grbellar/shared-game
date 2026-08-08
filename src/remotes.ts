@@ -8,6 +8,8 @@ import {
   setFace,
   setEmote,
   setLook,
+  setHat,
+  releaseCharacter,
   startSlash,
   popHead,
   type Pose,
@@ -29,6 +31,7 @@ interface Remote {
   name: string
   emote: string
   color: string
+  hat: string
 }
 
 // Renders and interpolates the other players in the room.
@@ -67,6 +70,7 @@ export class Remotes {
         name: p.name,
         emote: 'none',
         color: p.color,
+        hat: 'none',
       }
       this.players.set(p.id, remote)
       const face = this.faces.get(p.id)
@@ -84,6 +88,7 @@ export class Remotes {
     setLook(remote.group, p.hp ?? 0, p.hy ?? 0)
     const weapon =
       p.weapon === 'gun' ||
+      p.weapon === 'sniper' ||
       p.weapon === 'sword' ||
       p.weapon === 'shovel' ||
       p.weapon === 'bow' ||
@@ -96,10 +101,17 @@ export class Remotes {
       setWeapon(remote.group, weapon)
     }
     const ride =
-      p.ride === 'wheelchair' || p.ride === 'ramsey' || p.ride === 'xwing' ? p.ride : 'none'
+      p.ride === 'wheelchair' || p.ride === 'ramsey' || p.ride === 'plane' || p.ride === 'xwing'
+        ? p.ride
+        : 'none'
     if (remote.ride !== ride) {
       remote.ride = ride
       setRide(remote.group, ride)
+    }
+    const hat = typeof p.hat === 'string' ? p.hat : 'none'
+    if (remote.hat !== hat) {
+      remote.hat = hat
+      setHat(remote.group, hat)
     }
     // Unknown ids (older clients, garbage) just reset to the base look.
     const skin = p.skin ?? 'none'
@@ -148,6 +160,13 @@ export class Remotes {
 
   nameOf(id: string): string {
     return this.players.get(id)?.name ?? '???'
+  }
+
+  // Who is wearing what, for the killboard badges.
+  hats(): Map<string, string> {
+    const map = new Map<string, string>()
+    for (const [id, r] of this.players) map.set(id, r.hat)
+    return map
   }
 
   // Paint a webcam frame on a player's head; '' turns their camera off.
@@ -201,6 +220,7 @@ export class Remotes {
     const remote = this.players.get(id)
     if (!remote) return
     this.scene.remove(remote.group)
+    releaseCharacter(remote.group)
     this.players.delete(id)
     this.faces.delete(id)
   }

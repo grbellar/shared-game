@@ -13,7 +13,7 @@ import { Bubbles } from './bubbles'
 import { Effects } from './effects'
 import { Arrows } from './arrows'
 import { Destruction } from './destruction'
-import { DayNight } from './daynight'
+import { DayNight, SUN_AIM_DOT } from './daynight'
 import { Building } from './building'
 import { createRealm, inRealm } from './realm'
 import { buildCastle } from './castle'
@@ -23,13 +23,19 @@ import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
+import {
+  traceShot, muzzleOf,
+  FIFTY_RPM, FIFTY_PLAYER_DAMAGE, FIFTY_BLOCK_DAMAGE, FIFTY_CRATER,
+} from './fifty'
 import { FirstPersonAim } from './firstperson'
+import { Scope, ScopeInput, hitscan } from './sniper'
 import { Minimap } from './minimap'
-import { Health } from './health'
-import { Shark } from './shark'
-import { Mobs } from './mobs'
-import { Skeletons } from './skeletons'
+import { Health, MAX_HP } from './health'
+import { Shark, SHARK_TARGET_ID } from './shark'
+import { Mobs, MOB_TARGET_PREFIX } from './mobs'
+import { Skeletons, SKEL_TARGET_PREFIX } from './skeletons'
 import { Cats } from './cats'
+import { Meckies } from './meckies'
 import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
@@ -45,21 +51,29 @@ import {
   setFace,
   setEmote,
   setLook,
+  setHat,
   getLook,
   startSlash,
   startJabber,
   popHead,
   SLASH_DURATION,
 } from './character'
+import { Critters } from './critters'
+import { Treasure } from './treasure'
+import { Cheats, type CheatName } from './cheats'
+import { Hud } from './hud'
+import { Killboard } from './killboard'
 import { loadProfile, saveProfile } from './profile'
 import { SKINS, applySkin } from './skins'
 import { sfx } from './audio'
 import { Voice } from './voice'
 import { music } from './music'
+import { JumpScares } from './jumpscares'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
 const VIEW_H = 240
+const FOV = 70
 
 // How far the head glances toward the third-person camera's heading.
 const GLANCE = 0.9
@@ -82,7 +96,7 @@ window.addEventListener('resize', fitCanvas)
 fitCanvas()
 
 const scene = new THREE.Scene()
-const camera = new THREE.PerspectiveCamera(70, VIEW_W / VIEW_H, 0.1, 500)
+const camera = new THREE.PerspectiveCamera(FOV, VIEW_W / VIEW_H, 0.1, 500)
 // In the scene graph so camera children (the first-person view model) render.
 scene.add(camera)
 createWorld(scene)
@@ -150,6 +164,7 @@ const settings = initSettings(
     }
   },
 )
+new JumpScares(() => settings.jumpScares).start()
 faceBar.setEnabled(settings.webcamBar)
 // Camera was on last session: restart it. Denied (or camera gone) flips the
 // switch back off, same as toggling it by hand.
@@ -161,7 +176,15 @@ if (settings.webcamFace) {
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
+// Anything that hurts us and isn't a player — a bear, a skeleton, the lava —
+// still brings the house down. Nobody to strike, but they shout about it.
+health.onHurt = () => meckies.rally()
 const cats = new Cats(scene, touch.active)
+// The Meckies: residents you can pick up and carry somewhere else.
+const meckies = new Meckies(scene, touch.active)
+const hud = new Hud()
+const killboard = new Killboard()
+const treasure = new Treasure()
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -170,7 +193,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, worldDamage, faces) => {
+net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, found) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -193,6 +216,11 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces) => {
   // The castle regenerates pristine inside this call, then takes the room's
   // accumulated damage back on top.
   building.replay(blocks, worldDamage)
+  // Wherever the Meckies were left, including in somebody's arms.
+  for (const [i, x, z, by] of meck) meckies.applyRemote(i, x, z, by)
+  // Treasure somebody already dug up, and the damage already done.
+  found.forEach((i) => treasure.markClaimed(i))
+  killboard.setScores(scores)
 }
 net.onState = (p) => {
   const isNew = !remotes.getGroup(p.id)
@@ -200,6 +228,7 @@ net.onState = (p) => {
   if (isNew) voice.peerJoined(p.id)
 }
 net.onLeave = (id) => {
+  meckies.dropCarriedBy(id)
   remotes.remove(id)
   faceBar.remove(id)
   voice.peerLeft(id)
@@ -211,20 +240,25 @@ net.onFace = (id, dataUrl) => {
 }
 net.connect()
 
-type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
-type Ride = 'none' | 'wheelchair' | 'ramsey' | 'xwing'
+type Weapon =
+  | 'none' | 'gun' | 'sniper' | 'm2' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
+type Ride = 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
 let ride = profile.ride as Ride
 let material = profile.material // index into MATERIALS, picked with 1-4 while building
+// Whatever you dug up last session is still on your head.
+let hat = profile.hat
 setWeapon(player.group, weapon)
 setRide(player.group, ride)
+setHat(player.group, hat)
 player.ride = ride
 
 function saveLoadout(): void {
   profile.weapon = weapon
   profile.ride = ride
   profile.material = material
+  profile.hat = hat
   saveProfile(profile)
 }
 
@@ -264,6 +298,7 @@ setInterval(() => {
     emote: emotes.current,
     hp: look.pitch,
     hy: look.yaw,
+    hat,
   })
 }, 66)
 
@@ -302,6 +337,8 @@ setBuildUi(weapon === 'builder')
 function equipWeapon(next: Weapon): void {
   weapon = next
   bowDrawStart = -1
+  // Putting the rifle away puts the scope away with it, latched or not.
+  if (weapon !== 'sniper') scopeStow()
   setWeapon(player.group, weapon)
   sfx.equip(weapon !== 'none')
   setBuildUi(weapon === 'builder')
@@ -331,11 +368,13 @@ const handWheel = new ItemWheel(
   [
     { id: 'none', icon: '✋', label: 'empty' },
     { id: 'gun', icon: '🚀', label: 'G bazooka' },
+    { id: 'sniper', icon: '🎯', label: 'N sniper' },
     { id: 'sword', icon: '🗡️', label: 'H katana' },
     { id: 'shovel', icon: '⛏️', label: 'F shovel' },
     { id: 'bow', icon: '🏹', label: 'B bow' },
     { id: 'builder', icon: '🧱', label: 'T builder' },
     { id: 'firework', icon: '🎆', label: 'K firework' },
+    { id: 'm2', icon: '🔫', label: 'O fifty cal' },
   ],
   () => weapon,
   (id) => equipWeapon(id as Weapon),
@@ -347,7 +386,10 @@ const rideWheel = new ItemWheel(
     { id: 'none', icon: '🚶', label: 'on foot' },
     { id: 'wheelchair', icon: '🦽', label: 'R wheelchair' },
     { id: 'ramsey', icon: '🧍', label: 'Y ramsey' },
-    { id: 'xwing', icon: '🛩️', label: 'Z x-wing' },
+    { id: 'plane', icon: '✈️', label: 'U plane' },
+    // No hotkey of its own: every letter on the keyboard is spoken for, and
+    // the wheel is a perfectly good front door.
+    { id: 'xwing', icon: '🛩️', label: 'x-wing' },
   ],
   () => ride,
   (id) => equipRide(id as Ride),
@@ -367,10 +409,102 @@ effects.onOwnExplosion = (center) => {
   shark.blast(center)
   mobs.blast(center)
   skeletons.blast(center)
+  // Wildlife caught in the blast, under the same one-owner rule.
+  const duck = critters.duckPosition
+  if (duck && duck.distanceTo(center) < 6) killDuck(profile.name, true)
+  if (critters.nessieHitBy(center, 9)) annoyNessie(profile.name, true)
+}
+
+// --- easter eggs -----------------------------------------------------------
+
+const critters = new Critters(scene, effects)
+const cheats = new Cheats(effects)
+// Are we pointing at the sun? Nothing we fire can physically reach it, so a
+// hit is judged on aim alone — which means only first person can line it up,
+// and only in daylight.
+const SUN_AIM = new THREE.Vector3()
+function aimedAtSun(dir: THREE.Vector3): boolean {
+  return daynight.sunUp && dir.dot(daynight.sunDirection(SUN_AIM)) > SUN_AIM_DOT
+}
+
+// Loot: the finder puts the hat on (synced via PlayerState), everyone hears
+// about it, and the room remembers the cache is gone.
+function claimTreasure(index: number, byName: string, mine: boolean): void {
+  const cache = treasure.cache(index)
+  if (!cache) return
+  treasure.markClaimed(index)
+  const at = new THREE.Vector3(cache.x, Math.max(heightAt(cache.x, cache.z), 0) + 0.6, cache.z)
+  effects.spawnDebris(at, 0xffd54a, 16, 7)
+  sfx.fanfare(mine ? 1 : distVol(at, 70))
+  hud.feed(`${byName} dug up ${cache.label.toLowerCase()}`)
+  if (!mine) return
+  hud.banner(`YOU FOUND ${cache.label}`, 3200)
+  hat = cache.hat
+  setHat(player.group, hat)
+  saveLoadout()
+  net.sendEgg('dig', index)
+}
+
+// The duck. The culprit wears it as a hat from now on.
+function killDuck(byName: string, mine: boolean): void {
+  const at = critters.duckPosition?.clone()
+  if (!at) return
+  critters.killDuck()
+  sfx.quack(mine ? 1 : distVol(at, 60))
+  sfx.pop(mine ? 1 : distVol(at, 60))
+  hud.feed(`★ ${byName} MURDERED THE DUCK ★`)
+  if (!mine) return
+  hud.banner('YOU MONSTER', 3000)
+  hat = 'duck'
+  setHat(player.group, hat)
+  saveLoadout()
+  net.sendEgg('duck')
+}
+
+function annoyNessie(byName: string, mine: boolean): void {
+  critters.diveNessie()
+  sfx.bellow(0.8)
+  hud.feed(`${byName} hit something enormous out at sea`)
+  if (!mine) return
+  hud.banner('IT DIVED', 2600)
+  net.sendEgg('nessie')
+}
+
+// Nothing can physically reach the sun, so a hit is judged on aim: first
+// person, pointing straight at it, in daylight. It sulks for 45 seconds.
+function strikeSun(byName: string, mine: boolean): void {
+  if (daynight.isAngry) return
+  setTimeout(() => {
+    daynight.strike()
+    sfx.sunhit()
+    hud.banner(mine ? 'YOU SHOT THE SUN' : `${byName} SHOT THE SUN`, 3400)
+    hud.feed('the sun has taken this personally')
+  }, 1100)
+  if (mine) net.sendEgg('sun')
+}
+
+function applyCheat(cheat: CheatName, who: string): void {
+  const { on, banner } = cheats.toggle(cheat)
+  sfx.cheat(on)
+  hud.banner(banner, 2600)
+  hud.feed(`${who} typed "${cheat}"`)
+}
+
+net.onEgg = (e) => {
+  if (e.k === 'dig' && typeof e.n === 'number') claimTreasure(e.n, e.name, false)
+  else if (e.k === 'duck') killDuck(e.name, false)
+  else if (e.k === 'nessie') annoyNessie(e.name, false)
+  else if (e.k === 'sun') strikeSun(e.name, false)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
 
+net.onFifty = (_id, from, to) => {
+  const a = new THREE.Vector3(...from)
+  effects.spawnTracer(a, new THREE.Vector3(...to))
+  effects.spawnMuzzleFlash(a)
+  sfx.fiftyShot(distVol(a, 140))
+}
 const fireworks = new Fireworks(scene)
 // Fireworks are loud and high up, so they carry much further than gunfire.
 fireworks.onLaunch = (pos) => sfx.whistle(distVol(pos, 110))
@@ -405,7 +539,7 @@ net.onFire = (id, origin, dir) => {
 // Rocket travel and the map that aims it. Tab opens the map; clicking a
 // friend or the island you're not on straps a rocket to your chair and throws
 // you over there. See rocket.ts for why the flight itself sends nothing.
-const rocket = new RocketRide(scene, effects)
+const rocket = new RocketRide(effects)
 const map = new GameMap(touch.active)
 rocket.livePos = (id) => remotes.getGroup(id)?.position
 rocket.onLaunch = () => {
@@ -463,11 +597,9 @@ map.data = () => ({
 // The castle counts as a destination like anywhere else — the gate is still
 // the scenic route, the rocket is the fast one.
 // Every rocket trip goes through here, because the fighter has to be on the
-// ground before the arc starts: both of them borrow the scene's fog distance
-// and put it back afterwards, and whichever one grabs it second would
-// otherwise restore the other one's inflated value and leave the fog wall
-// permanently open. Grounding first also stops the flight model quietly
-// steering you while rocket.ts writes your position.
+// ground before the arc starts — otherwise the flight model keeps quietly
+// steering you while rocket.ts is writing your position, and the two fight
+// over where you are for the whole four seconds.
 function launchRocket(dest: { x: number; z: number; followId?: string }): boolean {
   xwing.stop(player.group)
   player.piloting = false
@@ -494,7 +626,7 @@ function rocketToNextIsland(): void {
 // The X-wing. Mounting it is just a ride (see equipRide); this is the part
 // that flies. Everything it does to the world on the way down happens here —
 // xwing.ts only ever decides that the flight ended and how badly.
-const xwing = new XWingFlight(scene)
+const xwing = new XWingFlight()
 const CRASH_DAMAGE = 45
 xwing.onTouchdown = () => {
   chat.addMessage('🛩️', 'down safe')
@@ -562,18 +694,56 @@ function fireCannons(ownerId: string, origin: THREE.Vector3, dir: THREE.Vector3)
   }
 }
 
+meckies.onMove = (i, x, z, by) => net.sendMeckie(i, x, z, by)
+meckies.personName = () => profile.name
+meckies.onWarCry = (group, text) => bubbles.show(group, text)
+meckies.onSay = (name, text) => chat.addMessage(name, text)
+// Struck through the ordinary `hit` path, so the rules still hold: attackers
+// only ever send damage, and the victim is the one who decides it was fatal
+// and announces their own death.
+meckies.onStrike = (id) => net.sendHit(id, MAX_HP)
+// 'me' on the wire means the sender, so resolve it to their id before it
+// reaches the Meckies — to us they're just another carrier.
+net.onMeckie = (id, i, x, z, by) => meckies.applyRemote(i, x, z, by === 'me' ? id : by)
 cats.onPet = (index) => net.sendPet(index)
 net.onPet = (index) => cats.pet(index)
+net.onSnipe = (_id, from, to) => {
+  const muzzle = new THREE.Vector3(...from)
+  const impact = new THREE.Vector3(...to)
+  // A rifle report carries most of the way across the island.
+  sfx.sniperShot(distVol(muzzle, 200))
+  sfx.boltCycle(distVol(muzzle, 40))
+  effects.spawnMuzzleFlash(muzzle)
+  effects.spawnTracer(muzzle, impact)
+  effects.spawnDebris(impact, 0x6b4526, 3, 3)
+}
 net.onSlash = (id) => {
   const group = remotes.getGroup(id)
   sfx.slash(group ? distVol(group.position) : 0.7)
   remotes.slash(id)
 }
-net.onHit = (_attacker, dmg) => health.damage(dmg)
+// Who last hurt us, and when. The killboard needs a culprit, and under
+// health.ts we're the only one who knows — everyone else just sent a `hit`
+// and moved on. Stale credit expires, so a shark finishing you 20 seconds
+// later doesn't get pinned on the last player who grazed you.
+const CREDIT_WINDOW = 10000
+let lastAttacker = ''
+let lastAttackerAt = 0
+net.onHit = (attacker, dmg) => {
+  lastAttacker = attacker
+  lastAttackerAt = performance.now()
+  // avenge BEFORE the damage lands: health.damage fires onHurt, and whichever
+  // fires first takes the per-resident cooldown. This one knows who did it and
+  // can hit back, so it has to win the race.
+  meckies.avenge(attacker)
+  health.damage(dmg)
+}
 // Losing the last of your health is your own announcement to make: the head
 // pops here, and everyone else hears about it through `kill`.
 health.onDeath = () => {
-  if (net.id) net.sendKill(net.id)
+  const fresh = performance.now() - lastAttackerAt < CREDIT_WINDOW
+  if (net.id) net.sendKill(net.id, fresh ? lastAttacker : undefined)
+  lastAttacker = ''
   dieLocally()
 }
 function dieLocally(): void {
@@ -581,9 +751,12 @@ function dieLocally(): void {
   if (headPos) effects.spawnHeadPop(headPos)
   sfx.pop()
   sfx.death()
+  // Otherwise a latched scope springs back up the moment you respawn.
+  scopeStow()
   player.die()
 }
-net.onKill = (victim) => {
+net.onKill = (victim, _killer, killerName, victimName) => {
+  hud.feed(killerName ? `${killerName} finished ${victimName}` : `${victimName} died`)
   if (victim === net.id) {
     health.kill()
     dieLocally()
@@ -593,6 +766,7 @@ net.onKill = (victim) => {
     remotes.decapitate(victim, effects)
   }
 }
+net.onScores = (scores) => killboard.setScores(scores)
 
 // Bow: hold to draw, release to loose. Power scales with hold time.
 const BOW_DRAW_MS = 1100
@@ -647,7 +821,10 @@ function inCockpit(): boolean {
 }
 
 let lastAttack = 0
+// Trigger held down. Only the M2 uses it; everything else is click-per-shot.
+let firing = false
 const SWORD_DAMAGE = 55 // two clean swings takes a head off
+const SNIPER_DAMAGE = 80 // brutal, but it's two hits and a slow bolt either way
 function attack(): void {
   if (player.dead) return
   const now = performance.now()
@@ -681,6 +858,62 @@ function attack(): void {
       .add(new THREE.Vector3(dir.x * 1.1, 1.8, dir.z * 1.1))
     effects.spawnRocket('me', origin, dir)
     net.sendFire(origin, dir)
+    // Rockets expire long before they'd reach the sun, so the sun is hit on
+    // aim alone — which means only first person can ever line it up, and
+    // only while it's actually up there.
+    if (aimedAtSun(dir)) strikeSun(profile.name, true)
+  } else if (weapon === 'sniper' && now - lastAttack > 1400) {
+    lastAttack = now
+    sfx.sniperShot()
+    sfx.boltCycle()
+    fp.kick()
+    fp.cycleBolt()
+    // Ray from the eye in first person, so the crosshair never lies about
+    // what it is pointing at; from the shoulder, dead level, in third.
+    const ry = player.group.rotation.y
+    const dir = fp.isActive
+      ? fp.aimDir(new THREE.Vector3())
+      : new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry)).normalize()
+    const origin = fp.isActive
+      ? fp.eyePosition(new THREE.Vector3())
+      : player.group.position.clone().add(new THREE.Vector3(0, 1.75, 0))
+    // Players, the shark and the mobs all ride in one target list, so the
+    // ray's own ordering decides who's in front — no second "did it also
+    // hit a bear" pass that could double-count one round.
+    const hit = hitscan(origin, dir, [
+      ...remotes.targets(),
+      ...shark.targets(),
+      ...mobs.targets(),
+      ...skeletons.targets(),
+    ])
+    // Start the tracer past the muzzle so it isn't drawn through your face.
+    const muzzle = origin.clone().addScaledVector(dir, 1.4)
+    effects.spawnMuzzleFlash(muzzle)
+    effects.spawnTracer(muzzle, hit.point)
+    net.sendSnipe(muzzle, hit.point)
+    fp.punch(0.1)
+    if (hit.id === SHARK_TARGET_ID) {
+      shark.shot(SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.id?.startsWith(MOB_TARGET_PREFIX)) {
+      mobs.shot(hit.id, SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.id?.startsWith(SKEL_TARGET_PREFIX)) {
+      skeletons.shot(hit.id, SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.id) {
+      // Same deal as the katana: send the damage, let the victim decide
+      // whether that was fatal and announce it back as `kill`.
+      net.sendHit(hit.id, SNIPER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.kind !== 'sky') {
+      sfx.ricochet(distVol(hit.point, 70))
+      effects.spawnDebris(hit.point, hit.kind === 'prop' ? 0x4a7a35 : 0x6b4526, 5, 4)
+    } else if (aimedAtSun(dir)) {
+      // A scoped rifle is a far more sensible way to shoot the sun than a
+      // rocket, and the scope makes lining it up genuinely possible.
+      strikeSun(profile.name, true)
+    }
   } else if (weapon === 'sword' && now - lastAttack > 500) {
     lastAttack = now
     sfx.slash()
@@ -711,6 +944,12 @@ function attack(): void {
       }
       if (shark.swing(player.group.position, player.group.rotation.y, 34)) return
       if (mobs.swing(player.group.position, player.group.rotation.y, 34)) return
+      // The duck only eats the blade once nothing that fights back has.
+      const duck = critters.duckPosition
+      if (duck && duck.distanceTo(player.group.position) < 2.6) {
+        killDuck(profile.name, true)
+        return
+      }
       const block = meleeBlockTarget()
       if (block) building.hit(block.gx, block.gy, block.gz, 1)
     }, SLASH_DURATION * 500)
@@ -740,10 +979,11 @@ function attack(): void {
       if (mobs.swing(player.group.position, player.group.rotation.y, 24)) return
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
-      destruction.dig(
-        aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6,
-        aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6,
-      )
+      const dx = aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6
+      const dz = aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6
+      destruction.dig(dx, dz)
+      const found = treasure.tryDig(dx, dz)
+      if (found !== null) claimTreasure(found, profile.name, true)
     }, SLASH_DURATION * 500)
   } else if (weapon === 'builder' && now - lastAttack > 250) {
     lastAttack = now
@@ -756,6 +996,37 @@ function attack(): void {
     // column just ahead; either way the column stacks upward.
     const aimed = fp.isActive ? fp.aimedDigPoint() : null
     building.place(player.group.position, player.group.rotation.y, material, aimed)
+  } else if (weapon === 'm2' && now - lastAttack > FIFTY_RPM) {
+    lastAttack = now
+    sfx.fiftyShot()
+    fp.kick()
+    const ry = player.group.rotation.y
+    const dir = fp.isActive
+      ? fp.aimDir(new THREE.Vector3())
+      : new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry)).normalize()
+    const from = muzzleOf(player.group.position, dir)
+    // Only the shooter traces. Everyone else just draws the tracer we send,
+    // so nobody's slightly-different idea of where we were aiming can mint a
+    // second, contradictory hit.
+    const hit = traceShot(from, dir, [...remotes.targets()], 'me')
+    effects.spawnTracer(from, hit.point)
+    effects.spawnMuzzleFlash(from)
+    net.sendFifty(from, hit.point)
+    effects.spawnDebris(hit.point, 0xffd27f, 3, 4)
+    if (hit.player) {
+      net.sendHit(hit.player, FIFTY_PLAYER_DAMAGE)
+      sfx.hitmark()
+    } else if (hit.block) {
+      // Anything, one round: full hp in a single bhit.
+      building.hit(hit.block.gx, hit.block.gy, hit.block.gz, FIFTY_BLOCK_DAMAGE)
+    } else {
+      // Into the dirt. Sustained fire is what flattens ground, so each round
+      // only takes a small bite — but it does take one, and it's synced.
+      if (hit.point.y <= Math.max(heightAt(hit.point.x, hit.point.z), 0) + 0.3) {
+        destruction.bite(hit.point.x, hit.point.z, FIFTY_CRATER)
+      }
+      shark.blast(hit.point)
+    }
   } else if (weapon === 'firework' && now - lastAttack > 450) {
     lastAttack = now
     sfx.plant()
@@ -806,6 +1077,12 @@ function breakBlock(): void {
   }
 }
 
+// Raising the scope: right mouse (tap or hold) and Z both go through here.
+// See ScopeInput for why a tap has to latch it. Works straight from third
+// person — the game drops into first person for as long as it's up.
+const scopeInput = new ScopeInput()
+const scopeStow = (): void => scopeInput.stow()
+
 // Light every firework we've planted. They also self-launch when the fuse
 // burns down, so touch players (no keyboard) still get the show.
 function launchFireworks(): void {
@@ -826,10 +1103,12 @@ window.addEventListener('mousedown', (e) => {
     void lock?.catch(() => {})
     return
   }
-  // Right-click is the builder's eraser. Every other tool ignores it — it
-  // used to fire whatever you were holding, which nobody meant to do.
+  // Right-click is the builder's eraser and the sniper's scope. Every other
+  // tool ignores it — it used to fire whatever you were holding, which
+  // nobody meant to do.
   if (e.button !== 0) {
     if (e.button === 2 && weapon === 'builder') breakBlock()
+    if (e.button === 2 && weapon === 'sniper') scopeInput.press(performance.now())
     return
   }
   if (weapon === 'bow' && !inCockpit()) {
@@ -837,12 +1116,18 @@ window.addEventListener('mousedown', (e) => {
     sfx.bowDraw()
     return
   }
+  // The M2 is belt-fed: hold the button and it keeps going.
+  if (weapon === 'm2') firing = true
   attack()
 })
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 2) scopeInput.release(performance.now())
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
+  firing = false
 })
+// Lost focus mid-hold (alt-tab, dev tools) — don't get stuck scoped.
+window.addEventListener('blur', scopeStow)
 // Third-person mouse look: locked mouse movement orbits the camera — unless
 // first person owns it (it turns the player instead) or a wheel is sweeping.
 window.addEventListener('mousemove', (e) => {
@@ -925,14 +1210,26 @@ const stripper = new Stripper(scene, bubbles)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
 chat.onSend = (text) => {
-  sfx.chat()
+  // Cheat codes ride the chat channel — everyone in the room already gets
+  // the text, so both ends parse it and toggle together. No new message type.
   net.sendChat(text)
+  const cheat = cheats.parse(text)
+  if (cheat) {
+    applyCheat(cheat, profile.name)
+    return
+  }
+  sfx.chat()
   bubbles.show(player.group, text)
   startJabber(player.group, jabberFor(text))
   chat.addMessage(profile.name, text)
   minimap.talkLocal()
 }
 net.onChat = (id, senderName, text) => {
+  const cheat = cheats.parse(text)
+  if (cheat) {
+    applyCheat(cheat, senderName)
+    return
+  }
   sfx.chat()
   const group = remotes.getGroup(id)
   if (group) {
@@ -970,6 +1267,8 @@ window.addEventListener('keydown', (e) => {
     chat.open()
   }
   if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
+  if (e.code === 'KeyN') equipWeapon(weapon === 'sniper' ? 'none' : 'sniper')
+  if (e.code === 'KeyZ' && !e.repeat && weapon === 'sniper') scopeInput.toggle()
   if (e.code === 'KeyH') equipWeapon(weapon === 'sword' ? 'none' : 'sword')
   if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
   if (e.code === 'KeyB') equipWeapon(weapon === 'bow' ? 'none' : 'bow')
@@ -980,17 +1279,19 @@ window.addEventListener('keydown', (e) => {
     saveLoadout()
   }
   if (e.code === 'KeyK') equipWeapon(weapon === 'firework' ? 'none' : 'firework')
+  if (e.code === 'KeyO') equipWeapon(weapon === 'm2' ? 'none' : 'm2')
   if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
   if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
-  // Z, not X: X already opens the emote wheel.
-  if (e.code === 'KeyZ') equipRide(ride === 'xwing' ? 'none' : 'xwing')
-  // Space is the throttle once you're strapped in: it lights the engines
-  // from a standstill, and boosts (in the flight input below) after that.
+  if (e.code === 'KeyU') equipRide(ride === 'plane' ? 'none' : 'plane')
+  // The X-wing has no letter of its own — the alphabet ran out — so it's
+  // wheel-only. Space is still its throttle once you're strapped in: it
+  // lights the engines from a standstill, and boosts after that.
   if (e.code === 'Space' && ride === 'xwing' && !xwing.airborne && !player.dead && !e.repeat) {
     xwing.takeoff(player.group)
   }
   if (e.code === 'KeyJ') rocketToNextIsland()
+  if (e.code === 'KeyU') meckies.toggleNearest()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat)
@@ -998,11 +1299,27 @@ window.addEventListener('keydown', (e) => {
       setVoicePref(on)
       sfx.equip(on)
     })
+  // Held, FPS-style. I for info, since Tab is the map and N is the sniper.
+  if (e.code === 'KeyI' && !chat.isOpen) {
+    killboard.setHats(allHats())
+    killboard.show()
+  }
 })
-window.addEventListener('keyup', (e) => keys.delete(e.code))
+window.addEventListener('keyup', (e) => {
+  keys.delete(e.code)
+  if (e.code === 'KeyI') killboard.hide()
+})
+
+// Everyone's headwear, so the killboard can badge the crown-wearer.
+function allHats(): Map<string, string> {
+  const hats = remotes.hats()
+  if (net.id) hats.set(net.id, hat)
+  return hats
+}
 
 const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
+const scope = new Scope(camera, FOV)
 const minimap = new Minimap(touch.active, color)
 const daynight = new DayNight(scene)
 
@@ -1075,7 +1392,11 @@ function crossTo(gate: Gate): void {
   building,
   blockGhost,
   cats,
+  meckies,
   stripper,
+  critters,
+  treasure,
+  cheats,
   fireworks,
   webcam,
   emotes,
@@ -1090,6 +1411,10 @@ function crossTo(gate: Gate): void {
   lasers,
   scene,
   camera,
+  attack,
+  scope,
+  // Pure function; handy for working out what a shot actually met.
+  traceShot,
   draw: () => renderer.render(scene, camera),
 }
 
@@ -1104,12 +1429,29 @@ renderer.setAnimationLoop(() => {
   music.setScore(shadow ? 'shadow' : 'island')
   // Any overlay borrows the mouse — the wheels and the travel map alike.
   fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen
-  // No aiming down a scope while the rocket flies you, or from the cockpit;
-  // the chase cam sells both.
+  // The scope only comes up when you're actually holding the rifle, on your
+  // feet, and nothing else owns the mouse.
+  scope.setActive(
+    scopeInput.isUp && weapon === 'sniper' && !touch.active && !rocket.active && !player.dead && !fp.paused,
+  )
+  scope.update(dt)
+  // No aiming down a scope while the rocket flies you; the chase cam sells it.
+  // Scoping in forces first person for as long as the scope is up, even if
+  // the player normally plays in third. The plane counts as a reason to be in
+  // first person on its own — a cockpit view needs no weapon in hand. The
+  // X-wing goes the other way: it's the one ride you want to watch from
+  // behind, because the whole point is the ship.
   fp.setActive(
-    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active && ride !== 'xwing',
+    (settings.firstPerson || scope.active) &&
+      (weapon !== 'none' || ride === 'plane') &&
+      !touch.active &&
+      !rocket.active &&
+      ride !== 'xwing',
     weapon,
   )
+  fp.setScoped(scope.active)
+  fp.setSway(scope.swayX, scope.swayY)
+  fp.aimScale = scope.zoom
   fp.update(dt)
 
   // Head tracks where we're looking: the mouse pitch in first person (the
@@ -1230,9 +1572,24 @@ renderer.setAnimationLoop(() => {
     remoteTrailT = 0.04
     for (const pos of remotes.flying()) effects.spawnTrail(pos)
   }
-  effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
-  arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
+  // Anything a rocket should burst against on contact. Enemies belong in here
+  // as much as players do — left out, a rocket flies straight through a
+  // skeleton and only kills it by cratering the floor underneath.
+  effects.update(dt, [
+    ...remotes.targets(),
+    { id: 'me', pos: player.group.position },
+    ...skeletons.targets(),
+    ...mobs.targets(),
+  ])
+  arrows.update(dt, [
+    ...remotes.stickTargets(),
+    { id: 'me', group: player.group },
+    ...skeletons.stickTargets(),
+  ])
+  // Bolts only need the players: everything else they can hit is resolved at
+  // the impact point through the same `swing` calls a katana uses.
   lasers.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
+  if (firing && weapon === 'm2' && !player.dead) attack()
   fireworks.update(dt)
   remotes.update(dt)
   // After the player and remotes have moved: the shark chases current
@@ -1242,6 +1599,7 @@ renderer.setAnimationLoop(() => {
   skeletons.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
+  meckies.update(dt, player.group.position, camera.position, (id) => remotes.getGroup(id)?.position)
   stripper.update(dt, [player.group.position, ...remotes.targets().map(({ pos }) => pos)])
   gameCamera.update(dt, player, settings, fp)
   // After the player has settled: the ghost is aimed from where you actually
@@ -1255,8 +1613,22 @@ renderer.setAnimationLoop(() => {
     },
     dt,
   )
-  daynight.update(settings, camera.position, shadow ? 1 : 0)
+  // The plane earns the rocket's view: altitude pushes the fog wall back the
+  // same way, so climbing actually reveals the world spread out below.
+  const planeLift =
+    ride === 'plane' ? Math.max(0, player.group.position.y - 20) * 4.5 : 0
+  daynight.update(
+    settings,
+    camera.position,
+    shadow ? 1 : 0,
+    Math.max(rocket.fogLift, planeLift, xwing.fogLift),
+  )
   minimap.update(player, remotes, settings, voice.level, skeletons)
+  critters.update(dt, player.group.position)
+  cheats.update()
+  hud.detector(
+    treasure.update(dt, player.group.position, weapon === 'shovel' && !player.dead && !shadow),
+  )
 
   renderer.render(scene, camera)
 })

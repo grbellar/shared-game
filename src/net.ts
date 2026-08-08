@@ -1,5 +1,7 @@
 // Keep the message types in sync with server/room.ts
 
+import type * as THREE from 'three'
+
 import type { Pose } from './character'
 import type { Crater } from './world'
 import type { BlockSpec, WorldDamage } from './blocks'
@@ -20,18 +22,36 @@ export interface PlayerState {
   color: string
   name: string
   pose: Pose
-  weapon: string // 'none' | 'gun' | 'sword' | 'shovel' | 'firework'
-  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'xwing'
+  weapon: string // 'none' | 'gun' | 'sniper' | 'sword' | 'shovel' | 'firework'
+  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing'
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
   emote: string // 'none' or an id from src/emotes.ts
   hp: number // head pitch, up-positive radians
   hy: number // head yaw, offset from the body's facing
+  hat: string // 'none' or dug-up loot / the duck (see character.ts)
 }
 
 export interface Face {
   id: string
   d: string
+}
+
+export interface Score {
+  id: string
+  name: string
+  kills: number
+  deaths: number
+}
+
+// One-off world events for the easter eggs: 'dig' (treasure cache n claimed),
+// 'duck' (the duck was murdered), 'sun' (someone shot the sun), 'nessie'
+// (Nessie was hit). Only 'dig' is remembered by the room.
+export interface EggEvent {
+  id: string
+  name: string
+  k: string
+  n?: number
 }
 
 type ServerMsg =
@@ -46,16 +66,23 @@ type ServerMsg =
       wdmg?: WorldDamage[]
       clock?: { hours: number; running: boolean }
       faces?: Face[]
+      // Where each Meckie was left: [index, x, z, carrierId].
+      meck?: [number, number, number, string][]
+      scores?: Score[]
+      found?: number[]
     }
   | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
   | { t: 'leave'; id: string }
   | { t: 'chat'; id: string; name: string; text: string }
   | { t: 'fire'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+  | { t: 'snipe'; id: string; x: number; y: number; z: number; ex: number; ey: number; ez: number }
   | { t: 'slash'; id: string }
   | { t: 'hit'; id: string; victim: string; dmg: number }
-  | { t: 'kill'; victim: string }
+  | { t: 'kill'; victim: string; killer: string; killerName: string; victimName: string }
   | { t: 'crater'; x: number; z: number; r: number; d: number }
+  | { t: 'score'; scores: Score[] }
+  | { t: 'egg'; id: string; name: string; k: string; n?: number }
   | { t: 'rtc'; from: string; data: unknown }
   | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
   | { t: 'laser'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
@@ -68,6 +95,8 @@ type ServerMsg =
   | { t: 'shark'; x: number; z: number; ry: number; hp: number; st: string; grab: string }
   | { t: 'sharkhit'; dmg: number }
   | { t: 'land'; id: string; x: number; y: number; z: number }
+  | { t: 'meck'; id: string; i: number; x: number; z: number; by: string }
+  | { t: 'mg'; id: string; x: number; y: number; z: number; tx: number; ty: number; tz: number }
   | { t: 'mob'; i: number; x: number; z: number; ry: number; hp: number; st: string }
   | { t: 'mobhit'; i: number; dmg: number }
   | { t: 'skel'; s: number[] }
@@ -81,17 +110,26 @@ export class Net {
     blocks: BlockSpec[],
     worldDamage: WorldDamage[],
     faces: Face[],
+    meck: [number, number, number, string][],
+    scores: Score[],
+    found: number[],
   ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
   onChat: (id: string, name: string, text: string) => void = () => {}
   onFire: (id: string, origin: [number, number, number], dir: [number, number, number]) => void =
     () => {}
+  // Sniper tracer: muzzle point and where the round stopped. Hitscan is
+  // resolved entirely by the shooter; this is the show everyone else sees.
+  onSnipe: (id: string, from: [number, number, number], to: [number, number, number]) => void =
+    () => {}
   onSlash: (id: string) => void = () => {}
   // Only fires when the hit was aimed at us — you apply your own damage.
   onHit: (attacker: string, dmg: number) => void = () => {}
-  onKill: (victim: string) => void = () => {}
+  onKill: (victim: string, killer: string, killerName: string, victimName: string) => void = () => {}
   onCrater: (c: Crater) => void = () => {}
+  onScores: (scores: Score[]) => void = () => {}
+  onEgg: (e: EggEvent) => void = () => {}
   onRtc: (from: string, data: unknown) => void = () => {}
   onArrow: (
     id: string,
@@ -114,6 +152,13 @@ export class Net {
   onSharkHit: (dmg: number) => void = () => {}
   // Somebody's rocket trip touching down near us.
   onLand: (id: string, pos: [number, number, number]) => void = () => {}
+  // A Meckie was picked up or set down. `by` is the carrier's id, '' if they
+  // were put down. The sender's own id arrives so 'me' can be resolved.
+  onMeckie: (id: string, i: number, x: number, z: number, by: string) => void = () => {}
+  // One .50 round: muzzle and where it stopped. Cosmetic on every client but
+  // the shooter's, who already resolved and applied the hit.
+  onFifty: (id: string, from: [number, number, number], to: [number, number, number]) => void =
+    () => {}
   onMob: (s: MobNetState) => void = () => {}
   onMobHit: (i: number, dmg: number) => void = () => {}
   // The castle garrison, packed five numbers per skeleton (see skeletons.ts).
@@ -142,6 +187,9 @@ export class Net {
           msg.blocks ?? [],
           msg.wdmg ?? [],
           msg.faces ?? [],
+          msg.meck ?? [],
+          msg.scores ?? [],
+          msg.found ?? [],
         )
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
@@ -155,12 +203,21 @@ export class Net {
         if (msg.id !== this.id) this.onChat(msg.id, msg.name, msg.text)
       } else if (msg.t === 'fire') {
         if (msg.id !== this.id) this.onFire(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz])
+      } else if (msg.t === 'snipe') {
+        if (msg.id !== this.id) {
+          this.onSnipe(msg.id, [msg.x, msg.y, msg.z], [msg.ex, msg.ey, msg.ez])
+        }
       } else if (msg.t === 'slash') {
         if (msg.id !== this.id) this.onSlash(msg.id)
       } else if (msg.t === 'hit') {
         if (msg.victim === this.id) this.onHit(msg.id, msg.dmg)
       } else if (msg.t === 'kill') {
-        this.onKill(msg.victim)
+        this.onKill(msg.victim, msg.killer, msg.killerName, msg.victimName)
+      } else if (msg.t === 'score') {
+        // Broadcast to everyone including the dead, so all boards agree.
+        this.onScores(msg.scores)
+      } else if (msg.t === 'egg') {
+        this.onEgg({ id: msg.id, name: msg.name, k: msg.k, n: msg.n })
       } else if (msg.t === 'crater') {
         // No self-echo check needed: the server never echoes to the sender.
         this.onCrater({ x: msg.x, z: msg.z, r: msg.r, d: msg.d })
@@ -204,6 +261,10 @@ export class Net {
         this.onSkeletonHit(msg.i, msg.dmg)
       } else if (msg.t === 'land') {
         if (msg.id !== this.id) this.onLand(msg.id, [msg.x, msg.y, msg.z])
+      } else if (msg.t === 'meck') {
+        if (msg.id !== this.id) this.onMeckie(msg.id, msg.i, msg.x, msg.z, msg.by)
+      } else if (msg.t === 'mg') {
+        if (msg.id !== this.id) this.onFifty(msg.id, [msg.x, msg.y, msg.z], [msg.tx, msg.ty, msg.tz])
       } else if (msg.t === 'mob') {
         const st = msg.st
         this.onMob({
@@ -258,6 +319,16 @@ export class Net {
     )
   }
 
+  sendSnipe(
+    from: { x: number; y: number; z: number },
+    to: { x: number; y: number; z: number },
+  ): void {
+    if (!this.connected) return
+    this.ws!.send(
+      JSON.stringify({ t: 'snipe', x: from.x, y: from.y, z: from.z, ex: to.x, ey: to.y, ez: to.z }),
+    )
+  }
+
   sendSlash(): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'slash' }))
@@ -268,9 +339,17 @@ export class Net {
     this.ws!.send(JSON.stringify({ t: 'hit', victim, dmg }))
   }
 
-  sendKill(victim: string): void {
+  // You announce your own death. `by` is whoever last hurt you, so the room
+  // can credit the kill — the victim is the only one who knows for sure,
+  // since the victim is the only one who runs their own health.
+  sendKill(victim: string, by?: string): void {
     if (!this.connected) return
-    this.ws!.send(JSON.stringify({ t: 'kill', victim }))
+    this.ws!.send(JSON.stringify({ t: 'kill', victim, by }))
+  }
+
+  sendEgg(k: string, n?: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'egg', k, n }))
   }
 
   sendCrater(c: Crater): void {
@@ -376,6 +455,24 @@ export class Net {
   sendFireworkLaunch(): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'fwgo' }))
+  }
+
+  // One round from the M2. The shooter resolves the hit and mints its
+  // consequences (hit / bhit / crater); this is only so everyone can see the
+  // tracer land in the same place.
+  sendFifty(from: { x: number; y: number; z: number }, to: THREE.Vector3Like): void {
+    if (!this.connected) return
+    this.ws!.send(
+      JSON.stringify({ t: 'mg', x: from.x, y: from.y, z: from.z, tx: to.x, ty: to.y, tz: to.z }),
+    )
+  }
+
+  // Picked a Meckie up ('me' as `by`) or set them down (''). Where a carried
+  // Meckie actually is needs no traffic at all — it's derived from the
+  // carrier's position, which already streams.
+  sendMeckie(i: number, x: number, z: number, by: string): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'meck', i, x, z, by }))
   }
 
   // A 64px webcam frame as a JPEG data URL, or '' to drop back to a blocky

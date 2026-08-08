@@ -9,6 +9,7 @@ export interface Settings {
   clockRun: boolean // day/night cycle advances on its own
   timeOfDay: number // hours, 0-24; daynight.ts mutates this while clockRun is on
   music: boolean
+  jumpScares: boolean
   webcamFace: boolean
   webcamBar: boolean
   // Fired when the USER scrubs the time slider or flips the clock toggle
@@ -52,6 +53,7 @@ function load(): Settings {
       timeOfDay: typeof obj.timeOfDay === 'number' && isFinite(obj.timeOfDay) ? obj.timeOfDay : 10,
       // Music defaults on, so absence means true.
       music: obj.music !== false,
+      jumpScares: obj.jumpScares !== false,
       // Restored from storage: main.ts restarts the camera on load (the
       // browser's permission prompt still gates it if access wasn't granted).
       webcamFace: obj.webcamFace === true,
@@ -65,6 +67,7 @@ function load(): Settings {
       clockRun: true,
       timeOfDay: 10,
       music: true,
+      jumpScares: true,
       webcamFace: false,
       webcamBar: false,
     }
@@ -387,6 +390,7 @@ export function initSettings(
     timeRow,
     slider,
     makeRow('settings-music-label', 'music', 'music'),
+    makeRow('settings-jump-scares-label', 'random jump scares', 'jumpScares'),
     makeRow('settings-webcam-label', 'my webcam on my head', 'webcamFace'),
     makeRow('settings-webcam-bar-label', 'webcam strip along the top', 'webcamBar'),
   )

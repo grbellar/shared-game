@@ -35,7 +35,7 @@
         font: 12px monospace;
         pointer-events: none;
       }
-      #pet-hint {
+      #pet-hint, #meckie-hint {
         position: fixed;
         /* Above the build HUD and the chat input, which both sit at 34-36px. */
         bottom: 66px;
@@ -48,6 +48,11 @@
         font: 12px monospace;
         padding: 5px 10px;
         -webkit-tap-highlight-color: transparent;
+      }
+      /* Stacked above the cat prompt so both can be up at once. */
+      #meckie-hint {
+        bottom: 96px;
+        color: #cfe9ff;
       }
       #status {
         position: fixed;
@@ -210,6 +215,80 @@
         18%, 65% { opacity: 1; letter-spacing: 3px; }
         100% { opacity: 0; letter-spacing: 3px; }
       }
+      #banner {
+        position: fixed;
+        top: 22%;
+        left: 0;
+        right: 0;
+        display: none;
+        text-align: center;
+        color: #ffe066;
+        font: bold 26px monospace;
+        letter-spacing: 2px;
+        text-shadow: 3px 3px 0 #000;
+        pointer-events: none;
+      }
+      /* Under the hp meter, which sits at top+32. */
+      #feed {
+        position: fixed;
+        top: calc(env(safe-area-inset-top) + 56px);
+        left: calc(env(safe-area-inset-left) + 12px);
+        color: #ffd54a;
+        font: 12px monospace;
+        text-shadow: 0 1px 2px #000;
+        pointer-events: none;
+      }
+      /* Above the chat input and build HUD, which live at 34-36px. */
+      #detector {
+        position: fixed;
+        bottom: 88px;
+        left: 0;
+        right: 0;
+        display: none;
+        text-align: center;
+        color: #b7f7c0;
+        font: 13px monospace;
+        text-shadow: 2px 2px 0 #000;
+        pointer-events: none;
+      }
+      #killboard {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        display: none;
+        min-width: 260px;
+        background: rgba(0, 0, 0, 0.78);
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        color: #fff;
+        font: 13px monospace;
+        padding: 10px 14px;
+        pointer-events: none;
+      }
+      .kb-title {
+        text-align: center;
+        color: #ffd54a;
+        letter-spacing: 3px;
+        margin-bottom: 8px;
+      }
+      .kb-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 2px 0;
+      }
+      .kb-row span:not(:first-child) {
+        width: 28px;
+        text-align: right;
+      }
+      .kb-head {
+        color: rgba(255, 255, 255, 0.45);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+        margin-bottom: 4px;
+      }
+      .kb-empty {
+        color: rgba(255, 255, 255, 0.45);
+      }
     </style>
   </head>
   <body>
@@ -217,7 +296,7 @@
     <div id="status"></div>
     <div id="flash"></div>
     <div id="realm-banner"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; mouse aim (click grabs, Esc frees) &middot; E items &middot; Q ride &middot; Z x-wing &middot; X emotes &middot; Tab map (click a friend to rocket to them) &middot; J next place &middot; Enter chat &middot; V voice &middot; P pet cat &middot; click attack</div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; mouse aim (click grabs, Esc frees) &middot; E items &middot; Q ride (x-wing in here) &middot; X emotes &middot; Tab map (click a friend to rocket to them) &middot; J next place &middot; I scores &middot; Enter chat &middot; V voice &middot; P pet cat &middot; click attack &middot; N sniper (right-click or Z to scope) &middot; O fifty cal (hold to fire) &middot; U carry a meckie</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

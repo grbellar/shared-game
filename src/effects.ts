@@ -46,7 +46,20 @@ interface SplashRing {
   t: number
 }
 
+// Neon splatter for the `paintball` chat cheat.
+const PAINT = [0xff2fa8, 0x2fe0ff, 0xa8ff2f, 0xffe22f, 0xb02fff, 0xff6a2f]
+
+// A bullet tracer or muzzle flash: something bright that fades out fast.
+interface Beam {
+  mesh: THREE.Mesh
+  t: number
+  life: number
+  grow: number
+}
+
 export class Effects {
+  // Toggled by cheats.ts: every burst and fireball goes highlighter-coloured.
+  paintball = false
   onBlast: (center: THREE.Vector3) => void = () => {}
   // Fires only for the local player's own rockets. Craters hang off this so
   // exactly one client (the shooter) mints the world damage — per-client sim
@@ -59,6 +72,7 @@ export class Effects {
   private puffs: Puff[] = []
   private explosions: Explosion[] = []
   private splashRings: SplashRing[] = []
+  private beams: Beam[] = []
   private tmp = new THREE.Vector3()
 
   constructor(private scene: THREE.Scene) {}
@@ -101,6 +115,45 @@ export class Effects {
     ring.position.set(x, 0.03, z)
     this.scene.add(ring)
     this.splashRings.push({ mesh: ring, t: 0 })
+  }
+
+  // Hitscan tracer: a long thin glowing box laid down the bullet's path.
+  // Gone in a blink, so at 320x240 it reads as a streak of light.
+  spawnTracer(from: THREE.Vector3, to: THREE.Vector3): void {
+    const len = from.distanceTo(to)
+    if (len < 0.2) return
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.07, 0.07, len),
+      new THREE.MeshLambertMaterial({
+        color: 0x8a6a20,
+        emissive: 0xffd070,
+        flatShading: true,
+        transparent: true,
+      }),
+    )
+    mesh.position.copy(from).add(to).multiplyScalar(0.5)
+    mesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      this.tmp.copy(to).sub(from).normalize(),
+    )
+    this.scene.add(mesh)
+    this.beams.push({ mesh, t: 0, life: 0.13, grow: 0 })
+  }
+
+  // Fat spark at the muzzle for a couple of frames.
+  spawnMuzzleFlash(pos: THREE.Vector3): void {
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.28, 0),
+      new THREE.MeshLambertMaterial({
+        color: 0x8a6000,
+        emissive: 0xffc040,
+        flatShading: true,
+        transparent: true,
+      }),
+    )
+    mesh.position.copy(pos)
+    this.scene.add(mesh)
+    this.beams.push({ mesh, t: 0, life: 0.09, grow: 1.6 })
   }
 
   spawnHeadPop(pos: THREE.Vector3): void {
@@ -168,6 +221,20 @@ export class Effects {
       r.mesh.scale.setScalar(1 + 3.2 * r.t)
       const mat = r.mesh.material as THREE.MeshLambertMaterial
       mat.opacity = 0.85 * (1 - r.t)
+    }
+
+    for (let i = this.beams.length - 1; i >= 0; i--) {
+      const b = this.beams[i]
+      b.t += dt / b.life
+      if (b.t >= 1) {
+        this.scene.remove(b.mesh)
+        b.mesh.geometry.dispose()
+        this.beams.splice(i, 1)
+        continue
+      }
+      const mat = b.mesh.material as THREE.MeshLambertMaterial
+      mat.opacity = 1 - b.t
+      if (b.grow) b.mesh.scale.setScalar(1 + b.grow * b.t)
     }
 
     for (let i = this.puffs.length - 1; i >= 0; i--) {
@@ -271,12 +338,17 @@ export class Effects {
     }
   }
 
+  private paint(): number {
+    return PAINT[Math.floor(Math.random() * PAINT.length)]
+  }
+
   private explode(center: THREE.Vector3, ownerId: string): void {
+    const splat = this.paintball ? this.paint() : 0
     const mesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(1, 0),
       new THREE.MeshLambertMaterial({
-        color: 0x662200,
-        emissive: 0xff7a1a,
+        color: this.paintball ? splat : 0x662200,
+        emissive: this.paintball ? splat : 0xff7a1a,
         flatShading: true,
         transparent: true,
       }),
@@ -294,7 +366,10 @@ export class Effects {
     for (let i = 0; i < count; i++) {
       const cube = new THREE.Mesh(
         new THREE.BoxGeometry(0.14, 0.14, 0.14),
-        new THREE.MeshLambertMaterial({ color, flatShading: true }),
+        new THREE.MeshLambertMaterial({
+          color: this.paintball ? this.paint() : color,
+          flatShading: true,
+        }),
       )
       cube.position.copy(center)
       this.scene.add(cube)
