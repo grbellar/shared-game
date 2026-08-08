@@ -82,6 +82,7 @@ export class Remotes {
     setLook(remote.group, p.hp ?? 0, p.hy ?? 0)
     const weapon =
       p.weapon === 'gun' ||
+      p.weapon === 'sniper' ||
       p.weapon === 'sword' ||
       p.weapon === 'shovel' ||
       p.weapon === 'bow' ||

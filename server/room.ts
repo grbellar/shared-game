@@ -166,6 +166,20 @@ export class GameRoom extends DurableObject<Env> {
         }),
         ws,
       )
+    } else if (msg.t === 'snipe') {
+      this.broadcast(
+        JSON.stringify({
+          t: 'snipe',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          ex: Number(msg.ex) || 0,
+          ey: Number(msg.ey) || 0,
+          ez: Number(msg.ez) || 0,
+        }),
+        ws,
+      )
     } else if (msg.t === 'slash') {
       this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
     } else if (msg.t === 'hit') {

@@ -72,9 +72,7 @@ export class GameCamera {
     if (fp.isActive) {
       // Rigid eye camera: at the head, looking along the crosshair. Follows
       // the crouch squat via the animation blend so ducking actually ducks.
-      const anim = player.group.userData.anim as { crouch: number } | undefined
-      const eyeY = player.group.position.y + 1.9 - 0.5 * (anim?.crouch ?? 0)
-      this.camera.position.set(player.group.position.x, eyeY, player.group.position.z)
+      fp.eyePosition(this.camera.position)
       fp.aimDir(this.lookTarget).add(this.camera.position)
       this.camera.lookAt(this.lookTarget)
       // Park the orbit behind the player at the default framing: movement
