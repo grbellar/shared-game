@@ -55,6 +55,13 @@ build) is the only gate.
   - `player.ts` — local movement, physics, input.
   - `net.ts` — websocket client and message types.
   - `remotes.ts` — rendering/interpolation of other players.
+  - `sky.ts` — sky colour, fog, lights, and the sun (which is shootable).
+  - `critters.ts` — the duck and Nessie. Both ride the wall clock rather than
+    a synced tick; a second of drift is invisible on wildlife.
+  - `treasure.ts` — buried caches and the shovel's detector.
+  - `cheats.ts` — chat cheat codes. They ride the existing chat relay, so
+    both ends parse the text and toggle together — no new message type.
+  - `hud.ts` / `killboard.ts` — overlay text and the Tab scoreboard.
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
   `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
@@ -89,6 +96,20 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   list and replays it in `welcome`; `world.heightAt` subtracts craters as an
   order-independent clamped sum, and prop destruction (trees/rocks caught in
   a crater) is derived from craters, never messaged. See `destruction.ts`.
+- server→client `score`: the whole killboard (`{id, name, kills, deaths}[]`).
+  The room counts `kill` messages — the one piece of bookkeeping it does — so
+  every board agrees and late joiners see the damage already done. Also
+  replayed in `welcome`. See `killboard.ts`.
+- client→server `egg`: one-off easter-egg events, `{k, n?}`, relayed with the
+  sender's id and name. Kinds: `dig` (treasure cache `n` claimed), `duck`
+  (the duck was murdered), `sun` (someone shot the sun), `nessie` (Nessie was
+  hit). Only `dig` is remembered — the room stores claimed cache indices and
+  replays them in `welcome`, so nobody digs up a chest that's already gone.
+  Everything else is fire-and-forget. Add new eggs as new `k` values rather
+  than new message types.
+
+`state` also carries `hat` — buried-treasure loot, so everyone can see what
+you dug up. Hats are built in `character.ts` and parented to the head.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
 over the network — every client computes the same island. If you add world

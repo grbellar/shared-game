@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createWorld } from './world'
+import { createWorld, heightAt } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
@@ -11,8 +11,14 @@ import { Bubbles } from './bubbles'
 import { Effects } from './effects'
 import { Destruction } from './destruction'
 import { FirstPersonAim } from './firstperson'
-import { setWeapon, setRide, startSlash, popHead, SLASH_DURATION } from './character'
+import { setWeapon, setRide, setHat, startSlash, popHead, SLASH_DURATION } from './character'
 import { sfx } from './audio'
+import { Sky, SUN_AIM_DOT } from './sky'
+import { Critters } from './critters'
+import { Treasure } from './treasure'
+import { Cheats, type CheatName } from './cheats'
+import { Hud } from './hud'
+import { Killboard } from './killboard'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -40,12 +46,16 @@ const scene = new THREE.Scene()
 const camera = new THREE.PerspectiveCamera(70, VIEW_W / VIEW_H, 0.1, 500)
 // In the scene graph so camera children (the first-person view model) render.
 scene.add(camera)
+const sky = new Sky(scene)
 createWorld(scene)
 
 const player = new Player(scene, color, name)
 const remotes = new Remotes(scene)
 const settings = initSettings()
 const touch = new TouchControls()
+const hud = new Hud()
+const killboard = new Killboard()
+const treasure = new Treasure()
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -53,12 +63,15 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 }
 
 const net = new Net()
-net.onWelcome = (players, craters) => {
+net.onWelcome = (w) => {
   remotes.clear()
-  players.forEach((p) => remotes.upsert(p))
+  w.players.forEach((p) => remotes.upsert(p))
   // Catch up on world damage. Silent: no debris bursts, and reconnect
   // replays dedupe to a no-op inside addCraters.
-  destruction.applyRemote(craters, true)
+  destruction.applyRemote(w.craters, true)
+  // Treasure somebody already dug up, and the damage already done.
+  w.found.forEach((i) => treasure.markClaimed(i))
+  killboard.setScores(w.scores)
 }
 net.onState = (p) => remotes.upsert(p)
 net.onLeave = (id) => remotes.remove(id)
@@ -66,6 +79,7 @@ net.connect()
 
 let weapon: 'none' | 'gun' | 'sword' | 'shovel' = 'none'
 let ride: 'none' | 'wheelchair' = 'none'
+let hat = 'none'
 
 setInterval(() => {
   net.sendState({
@@ -78,12 +92,96 @@ setInterval(() => {
     pose: player.pose,
     weapon,
     ride,
+    hat,
   })
 }, 66)
 
 const effects = new Effects(scene)
 const destruction = new Destruction(effects, net)
-effects.onOwnExplosion = (center) => destruction.rocketCrater(center)
+const critters = new Critters(scene, effects)
+const cheats = new Cheats(effects)
+
+// --- easter eggs -----------------------------------------------------------
+
+// Loot: the finder puts the hat on (synced via PlayerState), everyone hears
+// about it, and the room remembers the cache is gone.
+function claimTreasure(index: number, byName: string, mine: boolean): void {
+  const cache = treasure.cache(index)
+  if (!cache) return
+  treasure.markClaimed(index)
+  const at = new THREE.Vector3(cache.x, Math.max(heightAt(cache.x, cache.z), 0) + 0.6, cache.z)
+  effects.spawnDebris(at, 0xffd54a, 16, 7)
+  sfx.fanfare(mine ? 1 : distVol(at, 70))
+  hud.feed(`${byName} dug up ${cache.label.toLowerCase()}`)
+  if (!mine) return
+  hud.banner(`YOU FOUND ${cache.label}`, 3200)
+  hat = cache.hat
+  setHat(player.group, hat)
+  net.sendEgg('dig', index)
+}
+
+// The duck. The culprit wears it as a hat from now on.
+function killDuck(byName: string, mine: boolean): void {
+  const at = critters.duckPosition?.clone()
+  if (!at) return
+  critters.killDuck()
+  sfx.quack(mine ? 1 : distVol(at, 60))
+  sfx.pop(mine ? 1 : distVol(at, 60))
+  hud.feed(`★ ${byName} MURDERED THE DUCK ★`)
+  if (!mine) return
+  hud.banner('YOU MONSTER', 3000)
+  hat = 'duck'
+  setHat(player.group, hat)
+  net.sendEgg('duck')
+}
+
+function annoyNessie(byName: string, mine: boolean): void {
+  critters.diveNessie()
+  sfx.roar(0.8)
+  hud.feed(`${byName} hit something enormous out at sea`)
+  if (!mine) return
+  hud.banner('IT DIVED', 2600)
+  net.sendEgg('nessie')
+}
+
+// Nothing can physically reach the sun, so a hit is judged on aim: you have
+// to be in first person, pointing straight at it. It sulks for 45 seconds.
+function strikeSun(byName: string, mine: boolean): void {
+  if (sky.isAngry) return
+  setTimeout(() => {
+    sky.strike()
+    sfx.sunhit()
+    hud.banner(mine ? 'YOU SHOT THE SUN' : `${byName} SHOT THE SUN`, 3400)
+    hud.feed('the sun has taken this personally')
+  }, 1100)
+  if (mine) net.sendEgg('sun')
+}
+
+function applyCheat(cheat: CheatName, who: string): void {
+  const { on, banner } = cheats.toggle(cheat)
+  sfx.cheat(on)
+  hud.banner(banner, 2600)
+  hud.feed(`${who} typed "${cheat}"`)
+}
+
+net.onEgg = (e) => {
+  if (e.k === 'dig' && typeof e.n === 'number') claimTreasure(e.n, e.name, false)
+  else if (e.k === 'duck') killDuck(e.name, false)
+  else if (e.k === 'nessie') annoyNessie(e.name, false)
+  else if (e.k === 'sun') strikeSun(e.name, false)
+}
+
+net.onScores = (scores) => killboard.setScores(scores)
+
+effects.onOwnExplosion = (center) => {
+  destruction.rocketCrater(center)
+  // Wildlife caught in your own blast. Only the shooter mints these, same
+  // rule as craters — every client simulates the rocket, so letting all of
+  // them decide would fire the event N times.
+  const duck = critters.duckPosition
+  if (duck && duck.distanceTo(center) < 6) killDuck(name, true)
+  if (critters.nessieHitBy(center, 9)) annoyNessie(name, true)
+}
 net.onCrater = (c) => {
   // Dig-sized craters get a scoop sound; rocket craters already boomed.
   if (c.r < 3) sfx.dig(distVol(new THREE.Vector3(c.x, player.group.position.y, c.z), 50))
@@ -111,7 +209,8 @@ net.onSlash = (id) => {
   sfx.slash(group ? distVol(group.position) : 0.7)
   remotes.slash(id)
 }
-net.onKill = (victim) => {
+net.onKill = (victim, _killer, killerName, victimName) => {
+  hud.feed(`${killerName} sliced ${victimName}`)
   if (victim === net.id) {
     const headPos = popHead(player.group)
     if (headPos) effects.spawnHeadPop(headPos)
@@ -142,6 +241,9 @@ function attack(): void {
       .add(new THREE.Vector3(dir.x * 1.1, 1.8, dir.z * 1.1))
     effects.spawnRocket('me', origin, dir)
     net.sendFire(origin, dir)
+    // Rockets expire long before they'd reach the sun, so the sun is hit on
+    // aim alone — which means only first person can ever line it up.
+    if (dir.dot(sky.dir) > SUN_AIM_DOT) strikeSun(name, true)
   } else if (weapon === 'sword' && now - lastAttack > 500) {
     lastAttack = now
     sfx.slash()
@@ -150,6 +252,7 @@ function attack(): void {
     net.sendSlash()
     // Check for a hit at the midpoint of the swing.
     setTimeout(() => {
+      let hit = false
       for (const { id, pos } of remotes.targets()) {
         const to = pos.clone().sub(player.group.position)
         if (to.length() > 2.4) continue
@@ -160,9 +263,14 @@ function attack(): void {
         if (Math.abs(facing) < 1.2) {
           net.sendKill(id)
           remotes.decapitate(id, effects)
+          hud.feed(`${name} sliced ${remotes.nameOf(id)}`)
+          hit = true
           break
         }
       }
+      // Players first — the duck only eats the blade if nobody else did.
+      const duck = critters.duckPosition
+      if (!hit && duck && duck.distanceTo(player.group.position) < 2.6) killDuck(name, true)
     }, SLASH_DURATION * 500)
   } else if (weapon === 'shovel' && now - lastAttack > 600) {
     lastAttack = now
@@ -176,10 +284,11 @@ function attack(): void {
     setTimeout(() => {
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
-      destruction.dig(
-        aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6,
-        aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6,
-      )
+      const dx = aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6
+      const dz = aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6
+      destruction.dig(dx, dz)
+      const found = treasure.tryDig(dx, dz)
+      if (found !== null) claimTreasure(found, name, true)
     }, SLASH_DURATION * 500)
   }
 }
@@ -205,12 +314,24 @@ if (touch.active) {
 const chat = new Chat()
 const bubbles = new Bubbles(camera, renderer.domElement)
 chat.onSend = (text) => {
-  sfx.chat()
+  // Cheat codes ride the chat channel — everyone in the room already gets
+  // the text, so both ends parse it and toggle together. No new message type.
   net.sendChat(text)
+  const cheat = cheats.parse(text)
+  if (cheat) {
+    applyCheat(cheat, name)
+    return
+  }
+  sfx.chat()
   bubbles.show(player.group, text)
   chat.addMessage(name, text)
 }
 net.onChat = (id, senderName, text) => {
+  const cheat = cheats.parse(text)
+  if (cheat) {
+    applyCheat(cheat, senderName)
+    return
+  }
   sfx.chat()
   const group = remotes.getGroup(id)
   if (group) bubbles.show(group, text)
@@ -255,15 +376,40 @@ window.addEventListener('keydown', (e) => {
     sfx.equip(ride !== 'none')
   }
   if (e.code === 'KeyM') sfx.toggleMute()
+  if (e.code === 'Tab' && !chat.isOpen) {
+    // Held, FPS-style. preventDefault or the browser moves focus off canvas.
+    e.preventDefault()
+    killboard.setHats(allHats())
+    killboard.show()
+  }
 })
-window.addEventListener('keyup', (e) => keys.delete(e.code))
+window.addEventListener('keyup', (e) => {
+  keys.delete(e.code)
+  if (e.code === 'Tab') killboard.hide()
+})
+
+// Everyone's headwear, so the killboard can badge the crown-wearer.
+function allHats(): Map<string, string> {
+  const hats = remotes.hats()
+  if (net.id) hats.set(net.id, hat)
+  return hats
+}
 
 const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera)
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp }
+;(window as unknown as Record<string, unknown>).game = {
+  player,
+  remotes,
+  net,
+  fp,
+  sky,
+  critters,
+  treasure,
+  cheats,
+}
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -288,6 +434,10 @@ renderer.setAnimationLoop(() => {
   bubbles.update()
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   remotes.update(dt)
+  sky.update(dt)
+  critters.update(dt, player.group.position)
+  cheats.update()
+  hud.detector(treasure.update(dt, player.group.position, weapon === 'shovel' && !player.dead))
   gameCamera.update(dt, keys, player, settings, fp)
 
   renderer.render(scene, camera)
