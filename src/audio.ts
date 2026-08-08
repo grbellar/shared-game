@@ -628,6 +628,50 @@ class Sfx {
     this.tone('sine', 620, 1150, 0.09, 0.07 * vol, 0.68)
   }
 
+  // --- easter eggs ---
+
+  // Treasure detector blip. Climbs in pitch and volume as you close in.
+  ping(closeness: number): void {
+    const f = 700 + 900 * closeness
+    this.tone('square', f, f, 0.05, 0.05 + 0.06 * closeness)
+  }
+
+  // You dug something up.
+  fanfare(vol = 1): void {
+    if (vol <= 0.02) return
+    const notes = [523, 659, 784, 1047]
+    notes.forEach((n, i) => this.tone('square', n, n, 0.16, 0.14 * vol, i * 0.1))
+    this.tone('square', 1047, 1568, 0.45, 0.12 * vol, 0.44)
+  }
+
+  quack(vol = 1): void {
+    if (vol <= 0.02) return
+    this.tone('sawtooth', 420, 255, 0.16, 0.22 * vol)
+    this.tone('sawtooth', 300, 195, 0.1, 0.12 * vol, 0.14)
+  }
+
+  // Nessie, disturbed. Deeper and far longer than the bear's roar.
+  bellow(vol = 1): void {
+    if (vol <= 0.02) return
+    this.tone('sawtooth', 95, 42, 1.1, 0.3 * vol)
+    this.noise('lowpass', 500, 120, 1, 0.16 * vol)
+  }
+
+  // The sun taking it personally.
+  sunhit(): void {
+    this.noise('highpass', 1200, 6000, 0.5, 0.28)
+    this.tone('sawtooth', 1400, 120, 1.4, 0.28)
+  }
+
+  cheat(on: boolean): void {
+    if (on) {
+      this.tone('square', 330, 880, 0.18, 0.16)
+      this.tone('square', 440, 1320, 0.2, 0.11, 0.1)
+    } else {
+      this.tone('square', 880, 220, 0.25, 0.13)
+    }
+  }
+
   // --- ui ---
 
   chat(): void {

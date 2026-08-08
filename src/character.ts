@@ -3,6 +3,23 @@ import { applyEmote, clearEmotePose } from './emotes'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
 
+// Every live character (local + remotes), so cheats.ts can restyle everyone
+// at once without threading a registration callback through main.ts.
+const registry = new Set<THREE.Group>()
+
+export function forEachCharacter(fn: (group: THREE.Group) => void): void {
+  registry.forEach(fn)
+}
+
+export function characterCount(): number {
+  return registry.size
+}
+
+// Drop a character from the registry when it leaves the scene.
+export function releaseCharacter(group: THREE.Group): void {
+  registry.delete(group)
+}
+
 // Blocky N64-style character. Front of the character faces +Z.
 // Limbs pivot at the hip/shoulder and are stashed in userData so
 // animateCharacter can pose them.
@@ -59,6 +76,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   group.userData.anim = { crouch: 0, swim: 0, mouth: 0 }
   group.userData.look = { pitch: 0, yaw: 0, tPitch: 0, tYaw: 0 }
   group.userData.baseColor = color // skins.ts resets to this when undressing
+  registry.add(group)
   return group
 }
 
@@ -411,6 +429,93 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
   } else if (weapon === 'firework') {
     armR.add(buildFirework())
   }
+}
+
+// Buried-treasure loot (and the duck's revenge). Synced via the `hat` field
+// in PlayerState so everyone sees what you dug up. Parented to the head, so
+// hats crouch, decapitate and big-head along with it — and survive a skin
+// change, since applySkin only clears children named 'skinparts'.
+export type Hat = 'none' | 'crown' | 'wizard' | 'cone' | 'tinfoil' | 'pirate' | 'bucket' | 'duck'
+
+export function setHat(group: THREE.Group, hat: string): void {
+  const head = (group.userData.rig as Rig | undefined)?.head
+  if (!head) return
+  const existing = head.getObjectByName('hat')
+  if (existing) existing.parent!.remove(existing)
+  group.userData.hat = hat
+  const built = buildHat(hat as Hat)
+  if (built) head.add(built)
+}
+
+function buildHat(hat: Hat): THREE.Group | null {
+  const group = new THREE.Group()
+  group.name = 'hat'
+  const mat = (color: number) => new THREE.MeshLambertMaterial({ color, flatShading: true })
+
+  if (hat === 'crown') {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.28, 0.14, 8), mat(0xe8c14a))
+    band.position.y = 0.37
+    group.add(band)
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 4), mat(0xe8c14a))
+      spike.position.set(Math.sin(a) * 0.24, 0.51, Math.cos(a) * 0.24)
+      group.add(spike)
+    }
+  } else if (hat === 'wizard') {
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 10), mat(0x4b2c8f))
+    brim.position.y = 0.32
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.7, 7), mat(0x5c37ad))
+    cone.position.y = 0.68
+    const star = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), mat(0xffe066))
+    star.position.set(0, 0.62, 0.22)
+    star.rotation.set(0.6, 0.6, 0)
+    group.add(brim, cone, star)
+  } else if (hat === 'cone') {
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.5), mat(0xe2621f))
+    base.position.y = 0.33
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.55, 6), mat(0xe2621f))
+    cone.position.y = 0.62
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.21, 0.09, 6), mat(0xf0f0f0))
+    band.position.y = 0.58
+    group.add(base, cone, band)
+  } else if (hat === 'tinfoil') {
+    const foil = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.44, 5), mat(0xc9ced6))
+    foil.position.y = 0.5
+    foil.rotation.set(0.14, 0.4, 0.1)
+    const crumple = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.16), mat(0xdfe4ea))
+    crumple.position.set(0.09, 0.66, -0.05)
+    crumple.rotation.set(0.5, 0.3, 0.4)
+    group.add(foil, crumple)
+  } else if (hat === 'pirate') {
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.07, 0.44), mat(0x17181c))
+    brim.position.y = 0.34
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.22, 0.34), mat(0x17181c))
+    crown.position.y = 0.46
+    const skull = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.03), mat(0xf2f2f2))
+    skull.position.set(0, 0.46, 0.18)
+    group.add(brim, crown, skull)
+  } else if (hat === 'bucket') {
+    const pail = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.26, 0.46, 8), mat(0x8d949e))
+    pail.position.y = 0.28
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.05, 8), mat(0x6f757e))
+    rim.position.y = 0.06
+    group.add(pail, rim)
+  } else if (hat === 'duck') {
+    // The duck you killed, riding your skull forever.
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.36), mat(0xf7f4ea))
+    body.position.y = 0.42
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.17, 0.17), mat(0xf7f4ea))
+    head.position.set(0, 0.6, 0.11)
+    const beak = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.13), mat(0xf0a02a))
+    beak.position.set(0, 0.57, 0.24)
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.04, 0.04), mat(0x111111))
+    eye.position.set(0, 0.64, 0.18)
+    group.add(body, head, beak, eye)
+  } else {
+    return null
+  }
+  return group
 }
 
 // Mount or dismount a ride: 'wheelchair', 'ramsey' (a guy you ride like

@@ -76,6 +76,15 @@ build) is the only gate.
     onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
     overlay that aims it — the islands drawn straight out of `baseHeightAt`,
     with a clickable pin per player.
+  - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
+    island out past the fog. Both ride the wall clock rather than a synced
+    tick; a second of drift between clients is invisible on wildlife.
+  - `treasure.ts` — buried caches and the shovel's detector. Placed by their
+    own seed, so digging can never shift where the trees are.
+  - `cheats.ts` — chat cheat codes. They ride the existing chat relay, so
+    both ends parse the text and toggle together — no new message type.
+  - `hud.ts` / `killboard.ts` — the banner, the event ticker, and the I-key
+    scoreboard (Tab is the map).
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
   `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
@@ -94,7 +103,9 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 
 - server→client `welcome`: your id + everyone's last known state
 - client→server `state`: your position/rotation/color/name/weapon/ride/skin/
-  talk/emote/head aim (~15x/sec). `emote` is the radial-menu pose you're
+  talk/emote/hat/head aim (~15x/sec). `hat` is buried-treasure loot (or the
+  duck, if you killed it), built in `character.ts` and parented to the head
+  so it crouches and decapitates along with it. `emote` is the radial-menu pose you're
   playing (see `emotes.ts`); it rides in `state` rather than being its own
   message, so late joiners see a dance already in progress. Each client
   animates it off its own clock. Two poses aren't on the wheel at all:
@@ -113,8 +124,12 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 - client→server `slash`: katana swing (relayed for the animation). The
   attacker detects hits and sends `hit` `{victim, dmg}`; the server relays it
   with the attacker's id, and only the named victim acts on it.
-- client→server `kill`: you announce your own death (see Health below). The
-  server relays it to everyone and each client plays the decapitation.
+- client→server `kill`: you announce your own death (see Health below), with
+  an optional `by` — whoever last hurt you inside a 10s window. You are the
+  only one who can name your killer, since you are the only one running your
+  own health; deaths to lava, sharks and gravity carry no `by` at all. The
+  server relays it to everyone (adding `killer` and both names) and each
+  client plays the decapitation.
 - client→server `arrow`: a bow shot — origin, direction, and draw power;
   relayed with the archer's id. Every client simulates the same ballistic
   arc (`arrows.ts`); hits are cosmetic (arrows embed in terrain, props, and
@@ -137,6 +152,17 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   list and replays it in `welcome`; `world.heightAt` subtracts craters as an
   order-independent clamped sum, and prop destruction (trees/rocks caught in
   a crater) is derived from craters, never messaged. See `destruction.ts`.
+- server→client `score`: the whole killboard (`{id, name, kills, deaths}[]`).
+  The room counts `kill` messages — the one piece of bookkeeping it does — so
+  every board agrees and late joiners see the damage already done. Also
+  replayed in `welcome`. See `killboard.ts`.
+- client→server `egg`: one-off easter-egg events, `{k, n?}`, relayed with the
+  sender's id and name. Kinds: `dig` (treasure cache `n` claimed), `duck`
+  (the duck was murdered), `sun` (someone shot the sun), `nessie` (Nessie was
+  hit). Only `dig` is remembered — the room stores claimed cache indices and
+  replays them in `welcome`, so nobody digs up a chest that's already gone.
+  Everything else is fire-and-forget. Add new eggs as new `k` values rather
+  than new message types.
 - client→server `shark`: the shark's `{x, z, ry, hp, st, grab}`, ~10x/sec.
   Only ONE client sends it — the lowest player id in the room hosts the sim
   and everyone else interpolates the stream (see `shark.ts`). It can't be

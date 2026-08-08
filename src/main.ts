@@ -13,7 +13,7 @@ import { Bubbles } from './bubbles'
 import { Effects } from './effects'
 import { Arrows } from './arrows'
 import { Destruction } from './destruction'
-import { DayNight } from './daynight'
+import { DayNight, SUN_AIM_DOT } from './daynight'
 import { Building } from './building'
 import { createRealm, inRealm } from './realm'
 import { buildCastle } from './castle'
@@ -49,12 +49,18 @@ import {
   setFace,
   setEmote,
   setLook,
+  setHat,
   getLook,
   startSlash,
   startJabber,
   popHead,
   SLASH_DURATION,
 } from './character'
+import { Critters } from './critters'
+import { Treasure } from './treasure'
+import { Cheats, type CheatName } from './cheats'
+import { Hud } from './hud'
+import { Killboard } from './killboard'
 import { loadProfile, saveProfile } from './profile'
 import { SKINS, applySkin } from './skins'
 import { sfx } from './audio'
@@ -174,6 +180,9 @@ health.onHurt = () => meckies.rally()
 const cats = new Cats(scene, touch.active)
 // The Meckies: residents you can pick up and carry somewhere else.
 const meckies = new Meckies(scene, touch.active)
+const hud = new Hud()
+const killboard = new Killboard()
+const treasure = new Treasure()
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -182,7 +191,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, worldDamage, faces, meck) => {
+net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, found) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -207,6 +216,9 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces, meck) => {
   building.replay(blocks, worldDamage)
   // Wherever the Meckies were left, including in somebody's arms.
   for (const [i, x, z, by] of meck) meckies.applyRemote(i, x, z, by)
+  // Treasure somebody already dug up, and the damage already done.
+  found.forEach((i) => treasure.markClaimed(i))
+  killboard.setScores(scores)
 }
 net.onState = (p) => {
   const isNew = !remotes.getGroup(p.id)
@@ -233,14 +245,18 @@ type Ride = 'none' | 'wheelchair' | 'ramsey' | 'plane'
 let weapon = profile.weapon as Weapon
 let ride = profile.ride as Ride
 let material = profile.material // index into MATERIALS, picked with 1-4 while building
+// Whatever you dug up last session is still on your head.
+let hat = profile.hat
 setWeapon(player.group, weapon)
 setRide(player.group, ride)
+setHat(player.group, hat)
 player.ride = ride
 
 function saveLoadout(): void {
   profile.weapon = weapon
   profile.ride = ride
   profile.material = material
+  profile.hat = hat
   saveProfile(profile)
 }
 
@@ -275,6 +291,7 @@ setInterval(() => {
     emote: emotes.current,
     hp: look.pitch,
     hy: look.yaw,
+    hat,
   })
 }, 66)
 
@@ -376,6 +393,92 @@ effects.onOwnExplosion = (center) => {
   shark.blast(center)
   mobs.blast(center)
   skeletons.blast(center)
+  // Wildlife caught in the blast, under the same one-owner rule.
+  const duck = critters.duckPosition
+  if (duck && duck.distanceTo(center) < 6) killDuck(profile.name, true)
+  if (critters.nessieHitBy(center, 9)) annoyNessie(profile.name, true)
+}
+
+// --- easter eggs -----------------------------------------------------------
+
+const critters = new Critters(scene, effects)
+const cheats = new Cheats(effects)
+// Are we pointing at the sun? Nothing we fire can physically reach it, so a
+// hit is judged on aim alone — which means only first person can line it up,
+// and only in daylight.
+const SUN_AIM = new THREE.Vector3()
+function aimedAtSun(dir: THREE.Vector3): boolean {
+  return daynight.sunUp && dir.dot(daynight.sunDirection(SUN_AIM)) > SUN_AIM_DOT
+}
+
+// Loot: the finder puts the hat on (synced via PlayerState), everyone hears
+// about it, and the room remembers the cache is gone.
+function claimTreasure(index: number, byName: string, mine: boolean): void {
+  const cache = treasure.cache(index)
+  if (!cache) return
+  treasure.markClaimed(index)
+  const at = new THREE.Vector3(cache.x, Math.max(heightAt(cache.x, cache.z), 0) + 0.6, cache.z)
+  effects.spawnDebris(at, 0xffd54a, 16, 7)
+  sfx.fanfare(mine ? 1 : distVol(at, 70))
+  hud.feed(`${byName} dug up ${cache.label.toLowerCase()}`)
+  if (!mine) return
+  hud.banner(`YOU FOUND ${cache.label}`, 3200)
+  hat = cache.hat
+  setHat(player.group, hat)
+  saveLoadout()
+  net.sendEgg('dig', index)
+}
+
+// The duck. The culprit wears it as a hat from now on.
+function killDuck(byName: string, mine: boolean): void {
+  const at = critters.duckPosition?.clone()
+  if (!at) return
+  critters.killDuck()
+  sfx.quack(mine ? 1 : distVol(at, 60))
+  sfx.pop(mine ? 1 : distVol(at, 60))
+  hud.feed(`★ ${byName} MURDERED THE DUCK ★`)
+  if (!mine) return
+  hud.banner('YOU MONSTER', 3000)
+  hat = 'duck'
+  setHat(player.group, hat)
+  saveLoadout()
+  net.sendEgg('duck')
+}
+
+function annoyNessie(byName: string, mine: boolean): void {
+  critters.diveNessie()
+  sfx.bellow(0.8)
+  hud.feed(`${byName} hit something enormous out at sea`)
+  if (!mine) return
+  hud.banner('IT DIVED', 2600)
+  net.sendEgg('nessie')
+}
+
+// Nothing can physically reach the sun, so a hit is judged on aim: first
+// person, pointing straight at it, in daylight. It sulks for 45 seconds.
+function strikeSun(byName: string, mine: boolean): void {
+  if (daynight.isAngry) return
+  setTimeout(() => {
+    daynight.strike()
+    sfx.sunhit()
+    hud.banner(mine ? 'YOU SHOT THE SUN' : `${byName} SHOT THE SUN`, 3400)
+    hud.feed('the sun has taken this personally')
+  }, 1100)
+  if (mine) net.sendEgg('sun')
+}
+
+function applyCheat(cheat: CheatName, who: string): void {
+  const { on, banner } = cheats.toggle(cheat)
+  sfx.cheat(on)
+  hud.banner(banner, 2600)
+  hud.feed(`${who} typed "${cheat}"`)
+}
+
+net.onEgg = (e) => {
+  if (e.k === 'dig' && typeof e.n === 'number') claimTreasure(e.n, e.name, false)
+  else if (e.k === 'duck') killDuck(e.name, false)
+  else if (e.k === 'nessie') annoyNessie(e.name, false)
+  else if (e.k === 'sun') strikeSun(e.name, false)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
@@ -523,17 +626,28 @@ net.onSlash = (id) => {
   sfx.slash(group ? distVol(group.position) : 0.7)
   remotes.slash(id)
 }
+// Who last hurt us, and when. The killboard needs a culprit, and under
+// health.ts we're the only one who knows — everyone else just sent a `hit`
+// and moved on. Stale credit expires, so a shark finishing you 20 seconds
+// later doesn't get pinned on the last player who grazed you.
+const CREDIT_WINDOW = 10000
+let lastAttacker = ''
+let lastAttackerAt = 0
 net.onHit = (attacker, dmg) => {
-  // avenge BEFORE the damage lands: health.damage fires onHurt below, and
-  // whichever fires first takes the per-resident cooldown. This one knows who
-  // did it and can hit back, so it has to win.
+  lastAttacker = attacker
+  lastAttackerAt = performance.now()
+  // avenge BEFORE the damage lands: health.damage fires onHurt, and whichever
+  // fires first takes the per-resident cooldown. This one knows who did it and
+  // can hit back, so it has to win the race.
   meckies.avenge(attacker)
   health.damage(dmg)
 }
 // Losing the last of your health is your own announcement to make: the head
 // pops here, and everyone else hears about it through `kill`.
 health.onDeath = () => {
-  if (net.id) net.sendKill(net.id)
+  const fresh = performance.now() - lastAttackerAt < CREDIT_WINDOW
+  if (net.id) net.sendKill(net.id, fresh ? lastAttacker : undefined)
+  lastAttacker = ''
   dieLocally()
 }
 function dieLocally(): void {
@@ -545,7 +659,8 @@ function dieLocally(): void {
   scopeStow()
   player.die()
 }
-net.onKill = (victim) => {
+net.onKill = (victim, _killer, killerName, victimName) => {
+  hud.feed(killerName ? `${killerName} finished ${victimName}` : `${victimName} died`)
   if (victim === net.id) {
     health.kill()
     dieLocally()
@@ -555,6 +670,7 @@ net.onKill = (victim) => {
     remotes.decapitate(victim, effects)
   }
 }
+net.onScores = (scores) => killboard.setScores(scores)
 
 // Bow: hold to draw, release to loose. Power scales with hold time.
 const BOW_DRAW_MS = 1100
@@ -625,6 +741,10 @@ function attack(): void {
       .add(new THREE.Vector3(dir.x * 1.1, 1.8, dir.z * 1.1))
     effects.spawnRocket('me', origin, dir)
     net.sendFire(origin, dir)
+    // Rockets expire long before they'd reach the sun, so the sun is hit on
+    // aim alone — which means only first person can ever line it up, and
+    // only while it's actually up there.
+    if (aimedAtSun(dir)) strikeSun(profile.name, true)
   } else if (weapon === 'sniper' && now - lastAttack > 1400) {
     lastAttack = now
     sfx.sniperShot()
@@ -672,6 +792,10 @@ function attack(): void {
     } else if (hit.kind !== 'sky') {
       sfx.ricochet(distVol(hit.point, 70))
       effects.spawnDebris(hit.point, hit.kind === 'prop' ? 0x4a7a35 : 0x6b4526, 5, 4)
+    } else if (aimedAtSun(dir)) {
+      // A scoped rifle is a far more sensible way to shoot the sun than a
+      // rocket, and the scope makes lining it up genuinely possible.
+      strikeSun(profile.name, true)
     }
   } else if (weapon === 'sword' && now - lastAttack > 500) {
     lastAttack = now
@@ -703,6 +827,12 @@ function attack(): void {
       }
       if (shark.swing(player.group.position, player.group.rotation.y, 34)) return
       if (mobs.swing(player.group.position, player.group.rotation.y, 34)) return
+      // The duck only eats the blade once nothing that fights back has.
+      const duck = critters.duckPosition
+      if (duck && duck.distanceTo(player.group.position) < 2.6) {
+        killDuck(profile.name, true)
+        return
+      }
       const block = meleeBlockTarget()
       if (block) building.hit(block.gx, block.gy, block.gz, 1)
     }, SLASH_DURATION * 500)
@@ -732,10 +862,11 @@ function attack(): void {
       if (mobs.swing(player.group.position, player.group.rotation.y, 24)) return
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
-      destruction.dig(
-        aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6,
-        aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6,
-      )
+      const dx = aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6
+      const dz = aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6
+      destruction.dig(dx, dz)
+      const found = treasure.tryDig(dx, dz)
+      if (found !== null) claimTreasure(found, profile.name, true)
     }, SLASH_DURATION * 500)
   } else if (weapon === 'builder' && now - lastAttack > 250) {
     lastAttack = now
@@ -962,14 +1093,26 @@ const stripper = new Stripper(scene, bubbles)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
 chat.onSend = (text) => {
-  sfx.chat()
+  // Cheat codes ride the chat channel — everyone in the room already gets
+  // the text, so both ends parse it and toggle together. No new message type.
   net.sendChat(text)
+  const cheat = cheats.parse(text)
+  if (cheat) {
+    applyCheat(cheat, profile.name)
+    return
+  }
+  sfx.chat()
   bubbles.show(player.group, text)
   startJabber(player.group, jabberFor(text))
   chat.addMessage(profile.name, text)
   minimap.talkLocal()
 }
 net.onChat = (id, senderName, text) => {
+  const cheat = cheats.parse(text)
+  if (cheat) {
+    applyCheat(cheat, senderName)
+    return
+  }
   sfx.chat()
   const group = remotes.getGroup(id)
   if (group) {
@@ -1033,8 +1176,23 @@ window.addEventListener('keydown', (e) => {
       setVoicePref(on)
       sfx.equip(on)
     })
+  // Held, FPS-style. I for info, since Tab is the map and N is the sniper.
+  if (e.code === 'KeyI' && !chat.isOpen) {
+    killboard.setHats(allHats())
+    killboard.show()
+  }
 })
-window.addEventListener('keyup', (e) => keys.delete(e.code))
+window.addEventListener('keyup', (e) => {
+  keys.delete(e.code)
+  if (e.code === 'KeyI') killboard.hide()
+})
+
+// Everyone's headwear, so the killboard can badge the crown-wearer.
+function allHats(): Map<string, string> {
+  const hats = remotes.hats()
+  if (net.id) hats.set(net.id, hat)
+  return hats
+}
 
 const gameCamera = new GameCamera(camera)
 const fp = new FirstPersonAim(player, renderer.domElement, camera, color)
@@ -1113,6 +1271,9 @@ function crossTo(gate: Gate): void {
   cats,
   meckies,
   stripper,
+  critters,
+  treasure,
+  cheats,
   fireworks,
   webcam,
   emotes,
@@ -1293,6 +1454,11 @@ renderer.setAnimationLoop(() => {
     ride === 'plane' ? Math.max(0, player.group.position.y - 20) * 4.5 : 0
   daynight.update(settings, camera.position, shadow ? 1 : 0, Math.max(rocket.fogLift, planeLift))
   minimap.update(player, remotes, settings, voice.level, skeletons)
+  critters.update(dt, player.group.position)
+  cheats.update()
+  hud.detector(
+    treasure.update(dt, player.group.position, weapon === 'shovel' && !player.dead && !shadow),
+  )
 
   renderer.render(scene, camera)
 })

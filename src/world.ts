@@ -246,7 +246,9 @@ export function propInPath(p: THREE.Vector3): boolean {
 }
 
 // Deterministic PRNG so tree/rock placement matches on every client.
-function mulberry32(seed: number): () => number {
+// Exported for other world content (treasure.ts) — always give new content
+// its own seed so the existing prop streams don't shift.
+export function mulberry32(seed: number): () => number {
   let a = seed
   return () => {
     a |= 0

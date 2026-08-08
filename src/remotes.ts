@@ -8,6 +8,8 @@ import {
   setFace,
   setEmote,
   setLook,
+  setHat,
+  releaseCharacter,
   startSlash,
   popHead,
   type Pose,
@@ -28,6 +30,7 @@ interface Remote {
   name: string
   emote: string
   color: string
+  hat: string
 }
 
 // Renders and interpolates the other players in the room.
@@ -66,6 +69,7 @@ export class Remotes {
         name: p.name,
         emote: 'none',
         color: p.color,
+        hat: 'none',
       }
       this.players.set(p.id, remote)
       const face = this.faces.get(p.id)
@@ -99,6 +103,11 @@ export class Remotes {
     if (remote.ride !== ride) {
       remote.ride = ride
       setRide(remote.group, ride)
+    }
+    const hat = typeof p.hat === 'string' ? p.hat : 'none'
+    if (remote.hat !== hat) {
+      remote.hat = hat
+      setHat(remote.group, hat)
     }
     // Unknown ids (older clients, garbage) just reset to the base look.
     const skin = p.skin ?? 'none'
@@ -149,6 +158,13 @@ export class Remotes {
     return this.players.get(id)?.name ?? '???'
   }
 
+  // Who is wearing what, for the killboard badges.
+  hats(): Map<string, string> {
+    const map = new Map<string, string>()
+    for (const [id, r] of this.players) map.set(id, r.hat)
+    return map
+  }
+
   // Paint a webcam frame on a player's head; '' turns their camera off.
   setFace(id: string, dataUrl: string): void {
     if (dataUrl) this.faces.set(id, dataUrl)
@@ -194,6 +210,7 @@ export class Remotes {
     const remote = this.players.get(id)
     if (!remote) return
     this.scene.remove(remote.group)
+    releaseCharacter(remote.group)
     this.players.delete(id)
     this.faces.delete(id)
   }

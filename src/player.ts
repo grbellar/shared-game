@@ -17,6 +17,14 @@ const JUMP_VELOCITY = 11
 export const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
 
+// Turned down by the `moonjump` chat cheat (see cheats.ts). Local only —
+// everyone in the room types the code, so everyone floats together.
+let gravityScale = 1
+
+export function setGravityScale(scale: number): void {
+  gravityScale = scale
+}
+
 // A random dry-land spot so players don't stack on one point. Rejection
 // sampling against heightAt (crater-aware, so nobody wakes up at the bottom
 // of a freshly dug pond); center of the island as a last resort.
@@ -204,12 +212,13 @@ export class Player {
     // Gravity, then ground, block-top, or water-surface collision. At the
     // controls of the plane, gravity yields: the throttle owns the vertical
     // axis — Space climbs, C dives, hands off is a gentle glide down. The
-    // ease means takeoffs and pull-ups swoop instead of snapping.
+    // ease means takeoffs and pull-ups swoop instead of snapping. Moonjump
+    // only touches the falling branch; a plane already ignores gravity.
     if (this.ride === 'plane' && !this.dead) {
       const target = input.jump ? PLANE_CLIMB : input.crouch ? -PLANE_DIVE : -PLANE_SINK
       this.velY += (target - this.velY) * Math.min(1, 5 * dt)
     } else {
-      this.velY -= GRAVITY * dt
+      this.velY -= GRAVITY * gravityScale * dt
     }
     this.group.position.y += this.velY * dt
     if (this.ride === 'plane' && this.group.position.y > PLANE_CEILING) {

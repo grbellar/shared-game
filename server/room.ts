@@ -48,6 +48,14 @@ interface PlayerState {
   emote: string
   hp: number // head pitch
   hy: number // head yaw, offset from the body's facing
+  hat: string
+}
+
+interface Score {
+  id: string
+  name: string
+  kills: number
+  deaths: number
 }
 
 // Head aim limits, matching src/character.ts.
@@ -97,6 +105,12 @@ export class GameRoom extends DurableObject<Env> {
   // `welcome` so late joiners see faces immediately instead of waiting up to
   // 200ms. Dropped when the player leaves or turns their camera off.
   private faces = new Map<string, string>()
+  // Kill tally for the killboard. Entries outlive the connection that earned
+  // them, so leaving doesn't wipe your record for the session.
+  private scores = new Map<string, Score>()
+  // Treasure caches already dug up (indices into the client's deterministic
+  // cache list). Replayed in `welcome` so a late joiner can't re-claim one.
+  private found: number[] = []
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
@@ -118,6 +132,8 @@ export class GameRoom extends DurableObject<Env> {
         clock: { hours: this.clockHours(), running: this.clock.running },
         faces: [...this.faces].map(([fid, d]) => ({ id: fid, d })),
         meck: [...this.meck].map(([i, m]) => [i, m.x, m.z, m.by]),
+        scores: [...this.scores.values()],
+        found: this.found,
       }),
     )
     return new Response(null, { status: 101, webSocket: client })
@@ -150,6 +166,7 @@ export class GameRoom extends DurableObject<Env> {
         emote: String(msg.emote ?? 'none').slice(0, 12),
         hp: clampLook(msg.hp, 1.2),
         hy: clampLook(msg.hy, 1.0),
+        hat: String(msg.hat ?? 'none').slice(0, 12),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -203,7 +220,46 @@ export class GameRoom extends DurableObject<Env> {
         ws,
       )
     } else if (msg.t === 'kill') {
-      this.broadcast(JSON.stringify({ t: 'kill', victim: String(msg.victim).slice(0, 16) }), ws)
+      // The victim announces their own death (see Health in CLAUDE.md), so
+      // the sender IS the victim and `by` is whoever they say finished them.
+      // Deaths to lava, sharks and gravity arrive with no `by` at all.
+      //
+      // The victim is taken from the socket, never from the payload: this is
+      // the one message that mutates stored room state (the killboard), so a
+      // stale or buggy client must not be able to announce somebody else's
+      // death or hang a kill on a player who isn't here.
+      const victim = att.id
+      if (String(msg.victim).slice(0, 16) !== victim) return
+      const by = msg.by === undefined ? '' : String(msg.by).slice(0, 16)
+      // An unknown killer id can't score — you can only be killed by someone
+      // in the room, and unbacked ids would push real players off the board.
+      const killer = this.states.has(by) ? by : ''
+      const victimName = this.states.get(victim)?.name ?? 'someone'
+      const killerName = killer ? (this.states.get(killer)?.name ?? 'someone') : ''
+      this.broadcast(
+        JSON.stringify({ t: 'kill', victim, killer, killerName, victimName }),
+        ws,
+      )
+      // The room keeps the tally so every killboard agrees. Killing yourself
+      // is a death and nothing else.
+      if (killer && killer !== victim) this.score(killer, killerName).kills++
+      this.score(victim, victimName).deaths++
+      this.broadcast(JSON.stringify({ t: 'score', scores: [...this.scores.values()] }))
+    } else if (msg.t === 'egg') {
+      const k = String(msg.k).slice(0, 12)
+      const n = Number(msg.n)
+      // 'dig' claims a treasure cache — the only egg the room remembers, so
+      // late joiners can't dig up something that's already gone.
+      if (k === 'dig') {
+        if (!Number.isInteger(n) || n < 0 || n > 63) return
+        if (this.found.includes(n)) return
+        this.found.push(n)
+      }
+      const name = this.states.get(att.id)?.name ?? 'someone'
+      this.broadcast(
+        JSON.stringify({ t: 'egg', id: att.id, name, k, n: Number.isFinite(n) ? n : undefined }),
+        ws,
+      )
     } else if (msg.t === 'arrow') {
       this.broadcast(
         JSON.stringify({
@@ -501,6 +557,23 @@ export class GameRoom extends DurableObject<Env> {
     // do exactly the same on `leave`, so nobody diverges.
     for (const m of this.meck.values()) if (m.by === att.id) m.by = ''
     this.broadcast(JSON.stringify({ t: 'leave', id: att.id }), ws)
+  }
+
+  // Fetch (or start) a player's row on the killboard, keeping the name fresh.
+  private score(id: string, name: string): Score {
+    let row = this.scores.get(id)
+    if (!row) {
+      row = { id, name, kills: 0, deaths: 0 }
+      // Cap the board so a long-lived room can't grow without bound; the
+      // oldest record falls off first.
+      if (this.scores.size >= 32) {
+        const oldest = this.scores.keys().next()
+        if (!oldest.done) this.scores.delete(oldest.value)
+      }
+      this.scores.set(id, row)
+    }
+    if (name) row.name = name
+    return row
   }
 
   private broadcast(data: string, except?: WebSocket): void {

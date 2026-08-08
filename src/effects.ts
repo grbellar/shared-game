@@ -46,6 +46,9 @@ interface SplashRing {
   t: number
 }
 
+// Neon splatter for the `paintball` chat cheat.
+const PAINT = [0xff2fa8, 0x2fe0ff, 0xa8ff2f, 0xffe22f, 0xb02fff, 0xff6a2f]
+
 // A bullet tracer or muzzle flash: something bright that fades out fast.
 interface Beam {
   mesh: THREE.Mesh
@@ -55,6 +58,8 @@ interface Beam {
 }
 
 export class Effects {
+  // Toggled by cheats.ts: every burst and fireball goes highlighter-coloured.
+  paintball = false
   onBlast: (center: THREE.Vector3) => void = () => {}
   // Fires only for the local player's own rockets. Craters hang off this so
   // exactly one client (the shooter) mints the world damage — per-client sim
@@ -333,12 +338,17 @@ export class Effects {
     }
   }
 
+  private paint(): number {
+    return PAINT[Math.floor(Math.random() * PAINT.length)]
+  }
+
   private explode(center: THREE.Vector3, ownerId: string): void {
+    const splat = this.paintball ? this.paint() : 0
     const mesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(1, 0),
       new THREE.MeshLambertMaterial({
-        color: 0x662200,
-        emissive: 0xff7a1a,
+        color: this.paintball ? splat : 0x662200,
+        emissive: this.paintball ? splat : 0xff7a1a,
         flatShading: true,
         transparent: true,
       }),
@@ -356,7 +366,10 @@ export class Effects {
     for (let i = 0; i < count; i++) {
       const cube = new THREE.Mesh(
         new THREE.BoxGeometry(0.14, 0.14, 0.14),
-        new THREE.MeshLambertMaterial({ color, flatShading: true }),
+        new THREE.MeshLambertMaterial({
+          color: this.paintball ? this.paint() : color,
+          flatShading: true,
+        }),
       )
       cube.position.copy(center)
       this.scene.add(cube)

@@ -24,11 +24,29 @@ export interface PlayerState {
   emote: string // 'none' or an id from src/emotes.ts
   hp: number // head pitch, up-positive radians
   hy: number // head yaw, offset from the body's facing
+  hat: string // 'none' or dug-up loot / the duck (see character.ts)
 }
 
 export interface Face {
   id: string
   d: string
+}
+
+export interface Score {
+  id: string
+  name: string
+  kills: number
+  deaths: number
+}
+
+// One-off world events for the easter eggs: 'dig' (treasure cache n claimed),
+// 'duck' (the duck was murdered), 'sun' (someone shot the sun), 'nessie'
+// (Nessie was hit). Only 'dig' is remembered by the room.
+export interface EggEvent {
+  id: string
+  name: string
+  k: string
+  n?: number
 }
 
 type ServerMsg =
@@ -45,6 +63,8 @@ type ServerMsg =
       faces?: Face[]
       // Where each Meckie was left: [index, x, z, carrierId].
       meck?: [number, number, number, string][]
+      scores?: Score[]
+      found?: number[]
     }
   | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
@@ -54,8 +74,10 @@ type ServerMsg =
   | { t: 'snipe'; id: string; x: number; y: number; z: number; ex: number; ey: number; ez: number }
   | { t: 'slash'; id: string }
   | { t: 'hit'; id: string; victim: string; dmg: number }
-  | { t: 'kill'; victim: string }
+  | { t: 'kill'; victim: string; killer: string; killerName: string; victimName: string }
   | { t: 'crater'; x: number; z: number; r: number; d: number }
+  | { t: 'score'; scores: Score[] }
+  | { t: 'egg'; id: string; name: string; k: string; n?: number }
   | { t: 'rtc'; from: string; data: unknown }
   | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
   | { t: 'bplace'; gx: number; gy: number; gz: number; m: number }
@@ -83,6 +105,8 @@ export class Net {
     worldDamage: WorldDamage[],
     faces: Face[],
     meck: [number, number, number, string][],
+    scores: Score[],
+    found: number[],
   ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
@@ -96,8 +120,10 @@ export class Net {
   onSlash: (id: string) => void = () => {}
   // Only fires when the hit was aimed at us — you apply your own damage.
   onHit: (attacker: string, dmg: number) => void = () => {}
-  onKill: (victim: string) => void = () => {}
+  onKill: (victim: string, killer: string, killerName: string, victimName: string) => void = () => {}
   onCrater: (c: Crater) => void = () => {}
+  onScores: (scores: Score[]) => void = () => {}
+  onEgg: (e: EggEvent) => void = () => {}
   onRtc: (from: string, data: unknown) => void = () => {}
   onArrow: (
     id: string,
@@ -152,6 +178,8 @@ export class Net {
           msg.wdmg ?? [],
           msg.faces ?? [],
           msg.meck ?? [],
+          msg.scores ?? [],
+          msg.found ?? [],
         )
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
@@ -174,7 +202,12 @@ export class Net {
       } else if (msg.t === 'hit') {
         if (msg.victim === this.id) this.onHit(msg.id, msg.dmg)
       } else if (msg.t === 'kill') {
-        this.onKill(msg.victim)
+        this.onKill(msg.victim, msg.killer, msg.killerName, msg.victimName)
+      } else if (msg.t === 'score') {
+        // Broadcast to everyone including the dead, so all boards agree.
+        this.onScores(msg.scores)
+      } else if (msg.t === 'egg') {
+        this.onEgg({ id: msg.id, name: msg.name, k: msg.k, n: msg.n })
       } else if (msg.t === 'crater') {
         // No self-echo check needed: the server never echoes to the sender.
         this.onCrater({ x: msg.x, z: msg.z, r: msg.r, d: msg.d })
@@ -281,9 +314,17 @@ export class Net {
     this.ws!.send(JSON.stringify({ t: 'hit', victim, dmg }))
   }
 
-  sendKill(victim: string): void {
+  // You announce your own death. `by` is whoever last hurt you, so the room
+  // can credit the kill — the victim is the only one who knows for sure,
+  // since the victim is the only one who runs their own health.
+  sendKill(victim: string, by?: string): void {
     if (!this.connected) return
-    this.ws!.send(JSON.stringify({ t: 'kill', victim }))
+    this.ws!.send(JSON.stringify({ t: 'kill', victim, by }))
+  }
+
+  sendEgg(k: string, n?: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'egg', k, n }))
   }
 
   sendCrater(c: Crater): void {

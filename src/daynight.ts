@@ -42,6 +42,24 @@ const SHADOW_FOG_FAR = 195
 const ISLAND_FOG_NEAR = 40
 const ISLAND_FOG_FAR = 150
 
+// Shoot the sun and it takes it personally: the sky goes hostile for
+// ANGRY_TIME seconds and the sun scowls. Rockets expire long before they
+// could reach it, so a hit is judged on aim alone (main.ts compares the
+// firing direction against sunDirection()) — which means only first person
+// can line it up, and only while the sun is actually up.
+// How closely you have to be aiming at the sun to hit it: dot(aim, sunDir).
+// About 5.7 degrees — you have to actually put the crosshair on it.
+export const SUN_AIM_DOT = 0.995
+const ANGRY_TIME = 45
+const ANGRY_ATTACK = 0.6 // seconds to slam into the sulk
+const ANGRY_RELEASE = 6 // seconds to ease back out of it
+const ANGRY_SKY = new THREE.Color(0xd9622e)
+const ANGRY_HEMI_SKY = new THREE.Color(0xffae72)
+const ANGRY_HEMI_GROUND = new THREE.Color(0x5a2f22)
+const ANGRY_LIGHT = new THREE.Color(0xff7a2a)
+const ANGRY_DISC = new THREE.Color(0xff3a12)
+const WHITE = new THREE.Color(0xffffff)
+
 function mix(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
@@ -81,6 +99,14 @@ export class DayNight {
   private anchorHours: number | null = null
   private anchorMs = 0
   private running = true
+  // Both are absolute timestamps rather than per-frame accumulators, for the
+  // same reason the clock is an anchor: a throttled background tab must not
+  // be able to drift them.
+  private angryUntil = 0
+  private flashUntil = 0
+  private face = new THREE.Group()
+  private brows = new THREE.Group()
+  private mouth: THREE.Mesh
 
   constructor(private scene: THREE.Scene) {
     // world.ts creates and names these; we take over driving them.
@@ -126,8 +152,57 @@ export class DayNight {
     }
     this.starDome.add(makeStars(200, 1), makeStars(50, 2))
 
+    // The sun has a face. It is normally pleased with itself; see strike().
+    // The face group is re-aimed at the camera every frame, because the sun
+    // crosses the whole sky and a flat face would edge-on vanish.
+    const ink = new THREE.MeshBasicMaterial({ color: 0x8a3a08, fog: false })
+    const eyeGeo = new THREE.BoxGeometry(2.6, 4, 0.6)
+    const eyeL = new THREE.Mesh(eyeGeo, ink)
+    const eyeR = new THREE.Mesh(eyeGeo, ink)
+    eyeL.position.set(-5, 3.5, 15)
+    eyeR.position.set(5, 3.5, 15)
+    this.mouth = new THREE.Mesh(new THREE.BoxGeometry(9, 2, 0.6), ink)
+    this.mouth.position.set(0, -5, 15)
+    for (const side of [-1, 1]) {
+      const brow = new THREE.Mesh(new THREE.BoxGeometry(6, 1.7, 0.6), ink)
+      brow.position.set(side * 5, 8, 15)
+      brow.rotation.z = side * -0.45
+      this.brows.add(brow)
+    }
+    this.brows.visible = false
+    this.face.add(eyeL, eyeR, this.mouth, this.brows)
+    this.sun.add(this.face)
+
     this.group.add(this.sun, this.moon, this.starDome)
     scene.add(this.group)
+  }
+
+  // Direction from the island to the sun, for the aim check in main.ts. The
+  // sky group rides the camera, so the sun's local position IS the direction.
+  sunDirection(out: THREE.Vector3): THREE.Vector3 {
+    return out.copy(this.sun.position).normalize()
+  }
+
+  // You can only shoot a sun that's in the sky.
+  get sunUp(): boolean {
+    return this.sun.visible
+  }
+
+  get isAngry(): boolean {
+    return performance.now() < this.angryUntil
+  }
+
+  strike(): void {
+    this.angryUntil = performance.now() + ANGRY_TIME * 1000
+    this.flashUntil = performance.now() + 600
+  }
+
+  // 0..1 sulk level, derived purely from the timestamp so it survives tab
+  // throttling: fast attack in, slow release out.
+  private angryLevel(): number {
+    const remain = (this.angryUntil - performance.now()) / 1000
+    if (remain <= 0) return 0
+    return clamp01(Math.min((ANGRY_TIME - remain) / ANGRY_ATTACK, remain / ANGRY_RELEASE, 1))
   }
 
   // Re-anchor the clock: local scrubs/toggles and network 'clock' messages
@@ -215,7 +290,31 @@ export class DayNight {
     this.starMats[0].opacity = starA * 0.85
     this.starMats[1].opacity = starA
 
+    // Somebody shot the sun. Blended in last, over whatever the clock and
+    // the realm had already decided — a sulking sun overrules the hour.
+    // Not out in the shadow realm, where there is no sun to shoot.
+    const angry = this.angryLevel() * (1 - shadow)
+    if (angry > 0) {
+      this.sky.lerp(ANGRY_SKY, angry)
+      ;(this.scene.background as THREE.Color).copy(this.sky)
+      fog.color.copy(this.sky)
+      this.hemi.color.lerp(ANGRY_HEMI_SKY, angry)
+      this.hemi.groundColor.lerp(ANGRY_HEMI_GROUND, angry)
+      this.dirLight.color.lerp(ANGRY_LIGHT, angry)
+      this.sunMat.color.lerp(ANGRY_DISC, angry)
+    }
+    const flash = clamp01((this.flashUntil - performance.now()) / 600)
+    if (flash > 0) this.sunMat.color.lerp(WHITE, flash)
+    this.sun.scale.setScalar(1 + 0.45 * flash + 0.1 * angry)
+    // Cheerful sun has a wide grin; angry sun has a flat line and eyebrows.
+    this.mouth.scale.set(1 - 0.45 * angry, 1 + 0.7 * angry, 1)
+    this.mouth.position.y = -5 + 1.8 * angry
+    this.brows.visible = angry > 0.35
+
     // The sky is glued to the camera so it reads as infinitely far away.
     this.group.position.copy(camPos)
+    // Then swing the face round to whichever side of the sun we're on — it
+    // crosses the whole sky, and a flat face would go edge-on and vanish.
+    this.face.lookAt(camPos)
   }
 }
