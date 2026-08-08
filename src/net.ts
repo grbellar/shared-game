@@ -14,11 +14,16 @@ export interface PlayerState {
   y: number
   z: number
   ry: number
+  // Pitch and roll. Zero for anything on its feet — they exist for the
+  // X-wing (see xwing.ts), which banks and dives, and a fighter that stays
+  // bolt upright on everyone else's screen doesn't look like it's flying.
+  rx: number
+  rz: number
   color: string
   name: string
   pose: Pose
   weapon: string // 'none' | 'gun' | 'sniper' | 'sword' | 'shovel' | 'firework'
-  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'plane'
+  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing'
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
   emote: string // 'none' or an id from src/emotes.ts
@@ -80,6 +85,7 @@ type ServerMsg =
   | { t: 'egg'; id: string; name: string; k: string; n?: number }
   | { t: 'rtc'; from: string; data: unknown }
   | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
+  | { t: 'laser'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
   | { t: 'bplace'; gx: number; gy: number; gz: number; m: number }
   | { t: 'bhit'; gx: number; gy: number; gz: number; dmg: number }
   | { t: 'pet'; id: string; cat: number }
@@ -131,6 +137,10 @@ export class Net {
     dir: [number, number, number],
     power: number,
   ) => void = () => {}
+  // A pair of X-wing cannon bolts. Everyone simulates them; only the shooter
+  // works out what they hit (see lasers.ts).
+  onLaser: (id: string, origin: [number, number, number], dir: [number, number, number]) => void =
+    () => {}
   onClock: (hours: number, running: boolean) => void = () => {}
   onBlockPlace: (gx: number, gy: number, gz: number, m: number) => void = () => {}
   onBlockHit: (gx: number, gy: number, gz: number, dmg: number) => void = () => {}
@@ -217,6 +227,8 @@ export class Net {
       } else if (msg.t === 'arrow') {
         if (msg.id !== this.id)
           this.onArrow(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz], msg.p)
+      } else if (msg.t === 'laser') {
+        if (msg.id !== this.id) this.onLaser(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz])
       } else if (msg.t === 'bplace') {
         this.onBlockPlace(msg.gx, msg.gy, msg.gz, msg.m)
       } else if (msg.t === 'bhit') {
@@ -291,6 +303,19 @@ export class Net {
     if (!this.connected) return
     this.ws!.send(
       JSON.stringify({ t: 'fire', x: origin.x, y: origin.y, z: origin.z, dx: dir.x, dy: dir.y, dz: dir.z }),
+    )
+  }
+
+  // One trigger pull of the X-wing's cannons. The four bolts are fanned out
+  // from this single origin/direction by lasers.ts on every client, so a
+  // burst costs one message rather than four.
+  sendLaser(
+    origin: { x: number; y: number; z: number },
+    dir: { x: number; y: number; z: number },
+  ): void {
+    if (!this.connected) return
+    this.ws!.send(
+      JSON.stringify({ t: 'laser', x: origin.x, y: origin.y, z: origin.z, dx: dir.x, dy: dir.y, dz: dir.z }),
     )
   }
 

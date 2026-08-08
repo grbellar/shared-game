@@ -223,6 +223,40 @@ class Sfx {
   }
 
   // The "oof" of taking a rider's full weight on your back.
+  // --- x-wing ---
+
+  // Four engines lighting: an igniter crack, then a rising whine that hands
+  // over to the cruising note.
+  xwingStart(): void {
+    this.noise('highpass', 500, 2400, 0.1, 0.32)
+    this.tone('sawtooth', 90, 420, 0.85, 0.16)
+    this.tone('square', 180, 840, 0.8, 0.06, 0.04)
+    this.noise('bandpass', 300, 1400, 1, 0.22, 0.05, 8000)
+  }
+
+  // The cruising note. Called on a short repeat from xwing.ts with 0..1
+  // throttle, which pitches and thickens it — one call per beat rather than a
+  // held oscillator, so it can't outlive the flight if something goes wrong.
+  xwingEngine(throttle: number): void {
+    const t = Math.max(0, Math.min(1, throttle))
+    const f = 96 + 150 * t
+    this.tone('sawtooth', f, f * 1.02, 0.2, 0.05 + 0.07 * t)
+    this.noise('bandpass', 420 + 900 * t, 380 + 800 * t, 0.2, 0.06 + 0.09 * t)
+  }
+
+  // Skids on dirt. Loud version for a bounced landing.
+  xwingDown(vol = 1): void {
+    this.noise('lowpass', 900, 120, 0.28, 0.3 * vol)
+    this.tone('triangle', 110, 40, 0.22, 0.18 * vol)
+  }
+
+  // Cannon fire: the whole point of the pew is the pitch falling off a cliff.
+  laser(vol = 1): void {
+    this.tone('square', 1500, 130, 0.14, 0.16 * vol)
+    this.tone('sawtooth', 900, 90, 0.11, 0.09 * vol)
+    this.noise('bandpass', 2600, 500, 0.07, 0.09 * vol)
+  }
+
   ramseyMount(): void {
     this.voice(180, 75, 520, 0.25, 1.5, 0.12)
     this.noise('bandpass', 1000, 600, 0.09, 0.15, 0.12)

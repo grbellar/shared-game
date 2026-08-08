@@ -20,6 +20,10 @@ const FOLLOW_RATE = 4
 // chases it with a short lag — that filter, plus a smoothed pivot instead
 // of a smoothed camera, is what keeps flicks fluid instead of jittery.
 export class GameCamera {
+  // Extra boom length, eased in. An X-wing is seven units of ship; at the
+  // walking distance the camera sits inside its own engines.
+  private boom = 0
+  private targetBoom = 0
   private camYaw = 0
   private camPitch = PITCH_DEFAULT
   private targetYaw = 0
@@ -43,6 +47,12 @@ export class GameCamera {
     this.targetYaw += delta
   }
 
+  // Pull the camera back for something bigger than a person. Eased, so
+  // taking off and setting down are one continuous move.
+  pullBack(extra: number): void {
+    this.targetBoom = extra
+  }
+
   // Pointer-locked mouse movement; main.ts routes it here in third person.
   // Mouse right pans the view right, mouse up looks up (camera dips).
   addLook(dx: number, dy: number): void {
@@ -59,16 +69,15 @@ export class GameCamera {
     this.camYaw = this.targetYaw = player.group.rotation.y + Math.PI
     this.pivot.copy(player.group.position)
     this.started = true
+    this.boom = this.targetBoom
     const cp = Math.cos(this.camPitch)
-    this.offset.set(
-      Math.sin(this.camYaw) * DISTANCE * cp,
-      Math.sin(this.camPitch) * DISTANCE,
-      Math.cos(this.camYaw) * DISTANCE * cp,
-    )
+    const d = DISTANCE + this.boom
+    this.offset.set(Math.sin(this.camYaw) * d * cp, Math.sin(this.camPitch) * d, Math.cos(this.camYaw) * d * cp)
     this.camera.position.copy(this.pivot).add(this.offset)
   }
 
   update(dt: number, player: Player, settings: Settings, fp: FirstPersonAim): void {
+    this.boom += (this.targetBoom - this.boom) * Math.min(1, 2.5 * dt)
     if (fp.isActive) {
       // Rigid eye camera: at the head, looking along the crosshair. Follows
       // the crouch squat via the animation blend so ducking actually ducks.
@@ -107,11 +116,8 @@ export class GameCamera {
     }
 
     const cp = Math.cos(this.camPitch)
-    this.offset.set(
-      Math.sin(this.camYaw) * DISTANCE * cp,
-      Math.sin(this.camPitch) * DISTANCE,
-      Math.cos(this.camYaw) * DISTANCE * cp,
-    )
+    const d = DISTANCE + this.boom
+    this.offset.set(Math.sin(this.camYaw) * d * cp, Math.sin(this.camPitch) * d, Math.cos(this.camYaw) * d * cp)
     this.camera.position.copy(this.pivot).add(this.offset)
     // Never sink under the island — low pitches can run the boom into a hill.
     const ground = Math.max(heightAt(this.camera.position.x, this.camera.position.z), 0) + 0.4

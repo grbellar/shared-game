@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { applyEmote, clearEmotePose } from './emotes'
+import { buildXWing, poseXWing } from './xwing'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
 
@@ -73,7 +74,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
   group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
-  group.userData.anim = { crouch: 0, swim: 0, mouth: 0 }
+  group.userData.anim = { crouch: 0, swim: 0, mouth: 0, foils: 0 }
   group.userData.look = { pitch: 0, yaw: 0, tPitch: 0, tYaw: 0 }
   group.userData.baseColor = color // skins.ts resets to this when undressing
   registry.add(group)
@@ -131,9 +132,15 @@ export function animateCharacter(
   pose: Pose = 'stand',
 ): void {
   const rig = group.userData.rig as Rig
-  const anim = group.userData.anim as { crouch: number; swim: number; mouth: number }
+  const anim = group.userData.anim as {
+    crouch: number
+    swim: number
+    mouth: number
+    foils: number
+  }
   const ride = group.userData.ride as string | undefined
-  const riding = ride === 'wheelchair' || ride === 'ramsey' || ride === 'plane'
+  const riding =
+    ride === 'wheelchair' || ride === 'ramsey' || ride === 'plane' || ride === 'xwing'
   const k = Math.min(1, 10 * dt)
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
   anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
@@ -204,6 +211,27 @@ export function animateCharacter(
       limbs.hindL.rotation.x = -bound
       limbs.hindR.rotation.x = -bound
     }
+  } else if (ride === 'xwing') {
+    // Down in the cockpit: knees up under the console, hands on the stick.
+    rig.legL.rotation.x = -1.5
+    rig.legR.rotation.x = -1.5
+    rig.legL.rotation.z = 0.12
+    rig.legR.rotation.z = -0.12
+    rig.armL.rotation.x = -1.35
+    rig.armR.rotation.x = -1.35
+    rig.armL.rotation.z = 0.2
+    rig.armR.rotation.z = -0.2
+    // S-foils and exhausts. `airborne` is set by whoever owns this character
+    // — main.ts for us, remotes.ts for everyone else, both working it out
+    // from the ground under the ship rather than from a message. The ease is
+    // what makes the wings *unfold* instead of snapping open.
+    const ship = group.userData.rideShip as THREE.Group | undefined
+    const up = (group.userData.airborne as boolean | undefined) ? 1 : 0
+    anim.foils += (up - anim.foils) * Math.min(1, 2.6 * dt)
+    if (ship) {
+      const heat = (group.userData.throttle as number | undefined) ?? (up ? 0.5 : 0)
+      poseXWing(ship, anim.foils, anim.foils * (0.25 + 0.75 * heat))
+    }
   } else {
     // Legs: stride on land (shorter while crouched), flutter kick in water.
     const kick = Math.sin(walkPhase * 2.6) * (0.35 + 0.25 * moving)
@@ -271,6 +299,11 @@ export function animateCharacter(
   }
 
   // Emotes pose last so they win over the walk cycle and the weapon arm.
+  // They tilt the whole group forward, so clearEmotePose zeroes the group's
+  // pitch — which is also where a flying X-wing keeps its nose attitude.
+  // Hold onto it and put it back below, or a remote fighter's dive is wiped
+  // every frame, one line after remotes.ts interpolated it in.
+  const flightPitch = ride === 'xwing' ? group.rotation.x : 0
   clearEmotePose(group, rig)
   const emote = group.userData.emote as string | undefined
   if (emote) {
@@ -284,6 +317,7 @@ export function animateCharacter(
     rig.head.rotation.y = look.yaw
     rig.head.position.y += 0.07 * Math.abs(look.pitch)
   }
+  if (ride === 'xwing') group.rotation.x = flightPitch
 }
 
 // Start (or clear, with 'none') an emote on a character. Synced via the
@@ -518,9 +552,9 @@ function buildHat(hat: Hat): THREE.Group | null {
   return group
 }
 
-// Mount or dismount a ride: 'wheelchair', 'ramsey' (a guy you ride like
-// a horse), or 'plane'. Synced via the `ride` field in PlayerState. The
-// character sits on it (see animateCharacter).
+// Mount or dismount a ride: 'wheelchair', 'ramsey' (a guy you ride like a
+// horse), 'plane' or 'xwing'. Synced via the `ride` field in PlayerState.
+// The character sits on (or in) it — see animateCharacter.
 export function setRide(group: THREE.Group, ride: string): void {
   const existing = group.getObjectByName('ride')
   if (existing) existing.parent!.remove(existing)
@@ -528,6 +562,7 @@ export function setRide(group: THREE.Group, ride: string): void {
   delete group.userData.rideWheels
   delete group.userData.rideLimbs
   delete group.userData.rideProp
+  delete group.userData.rideShip
   if (ride === 'wheelchair') {
     const chair = buildWheelchair()
     group.add(chair)
@@ -541,7 +576,12 @@ export function setRide(group: THREE.Group, ride: string): void {
     group.add(plane)
     group.userData.rideWheels = plane.userData.wheels
     group.userData.rideProp = plane.userData.prop
+  } else if (ride === 'xwing') {
+    const ship = buildXWing()
+    group.add(ship)
+    group.userData.rideShip = ship
   }
+  liftNameTag(group)
 }
 
 // Cherry-red open-cockpit prop plane, built around the seated rider (who
@@ -1056,4 +1096,14 @@ export function setName(group: THREE.Group, name: string): void {
     group.remove(old)
   }
   group.add(makeNameTag(name))
+  liftNameTag(group)
+}
+
+// The tag floats above a person's head. An X-wing is a good deal taller than
+// a person, and the sprite draws with depthTest off, so at head height it
+// paints straight over the canopy. Lift it clear of the whole ship. Called
+// from both setName and setRide, since either can happen first.
+function liftNameTag(group: THREE.Group): void {
+  const tag = group.getObjectByName('nametag')
+  if (tag) tag.position.y = group.userData.ride === 'xwing' ? 3.7 : 2.8
 }

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { heightAt, propInPath } from './world'
+import { spawnPhysicsDebris, attachPhysicsBody } from './physics'
 
 // Transient physical stuff: rockets, explosions, smoke, popped heads, debris.
 // Every client simulates the same fire events, so everyone sees the same show;
@@ -176,14 +177,19 @@ export class Effects {
     )
     head.position.copy(pos)
     this.scene.add(head)
-    this.puffs.push({
-      mesh: head,
-      t: 0,
-      lifetime: 2.4,
-      vel: new THREE.Vector3((Math.random() - 0.5) * 5, 7 + Math.random() * 2, (Math.random() - 0.5) * 5),
-      spin: new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4),
-      bounce: true,
-    })
+    const vel = new THREE.Vector3((Math.random() - 0.5) * 5, 7 + Math.random() * 2, (Math.random() - 0.5) * 5)
+    // A real rigid body when the engine is up — the head tumbles downhill
+    // and rolls to rest; the old fake bounce when it isn't.
+    if (!attachPhysicsBody(head, 0.6, vel, 4, (m) => discard(this.scene, m as THREE.Mesh))) {
+      this.puffs.push({
+        mesh: head,
+        t: 0,
+        lifetime: 2.4,
+        vel,
+        spin: new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4),
+        bounce: true,
+      })
+    }
     this.burst(pos, 0xb02020, 9, 5)
   }
 
@@ -373,15 +379,17 @@ export class Effects {
     if (ownerId === 'me') this.onOwnExplosion(center)
   }
 
-  // A handful of flying cubes: debris, blood, whatever the occasion calls for.
+  // A handful of flying cubes: debris, blood, whatever the occasion calls
+  // for. Real rigid bodies when the physics engine is up (they tumble,
+  // stack and roll downhill); the old hand-animated puffs as the fallback
+  // while the WASM is still loading.
   private burst(center: THREE.Vector3, color: number, count: number, power: number): void {
     for (let i = 0; i < count; i++) {
+      const c = this.paintball ? this.paint() : color
+      if (spawnPhysicsDebris(center, c, power)) continue
       const cube = new THREE.Mesh(
         new THREE.BoxGeometry(0.14, 0.14, 0.14),
-        new THREE.MeshLambertMaterial({
-          color: this.paintball ? this.paint() : color,
-          flatShading: true,
-        }),
+        new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
       )
       cube.position.copy(center)
       this.scene.add(cube)

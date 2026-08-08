@@ -16,12 +16,13 @@ import {
 } from './character'
 import { applySkin } from './skins'
 import { emoteById } from './emotes'
+import { airborneAt } from './xwing'
 import type { PlayerState } from './net'
 import type { Effects } from './effects'
 
 interface Remote {
   group: THREE.Group
-  target: { x: number; y: number; z: number; ry: number }
+  target: { x: number; y: number; z: number; ry: number; rx: number; rz: number }
   walkPhase: number
   pose: Pose
   weapon: string
@@ -60,7 +61,7 @@ export class Remotes {
       this.scene.add(group)
       remote = {
         group,
-        target: { x: p.x, y: p.y, z: p.z, ry: p.ry },
+        target: { x: p.x, y: p.y, z: p.z, ry: p.ry, rx: 0, rz: 0 },
         walkPhase: 0,
         pose: 'stand',
         weapon: 'none',
@@ -75,7 +76,8 @@ export class Remotes {
       const face = this.faces.get(p.id)
       if (face) setFace(group, face)
     }
-    remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
+    // Older clients don't send rx/rz at all, so absence means level.
+    remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry, rx: p.rx ?? 0, rz: p.rz ?? 0 }
     remote.color = p.color
     const pose = p.pose ?? 'stand'
     // Splash on the transition into water — but not for players who were
@@ -99,7 +101,9 @@ export class Remotes {
       setWeapon(remote.group, weapon)
     }
     const ride =
-      p.ride === 'wheelchair' || p.ride === 'ramsey' || p.ride === 'plane' ? p.ride : 'none'
+      p.ride === 'wheelchair' || p.ride === 'ramsey' || p.ride === 'plane' || p.ride === 'xwing'
+        ? p.ride
+        : 'none'
     if (remote.ride !== ride) {
       remote.ride = ride
       setRide(remote.group, ride)
@@ -196,9 +200,15 @@ export class Remotes {
     }))
   }
 
-  // Positions rockets can collide with.
-  targets(): { id: string; pos: THREE.Vector3 }[] {
-    return [...this.players.entries()].map(([id, r]) => ({ id, pos: r.group.position }))
+  // Positions rockets and laser bolts can collide with. `r` overrides the
+  // caller's default hit radius — an X-wing is seven units of wingspan, and
+  // at person-sized tolerances nobody could ever hit one.
+  targets(): { id: string; pos: THREE.Vector3; r?: number }[] {
+    return [...this.players.entries()].map(([id, r]) => ({
+      id,
+      pos: r.group.position,
+      r: r.ride === 'xwing' ? 4.4 : undefined,
+    }))
   }
 
   // Groups arrows can stick into.
@@ -232,8 +242,20 @@ export class Remotes {
         Math.cos(target.ry - group.rotation.y),
       )
       group.rotation.y += delta * k
+      // Pitch and roll never wrap (the flight model clamps them well inside
+      // a half-turn), so they just chase their target.
+      group.rotation.x += (target.rx - group.rotation.x) * k
+      group.rotation.z += (target.rz - group.rotation.z) * k
       const speed = group.position.distanceTo(before) / Math.max(dt, 1e-6)
       const moving = Math.min(1, speed / 3)
+      // Whether their S-foils are open and their engines are lit is worked
+      // out here rather than sent: the terrain under them is deterministic,
+      // so every client agrees on who's off the ground. Same for the glow,
+      // which just tracks how fast they're actually going.
+      if (remote.ride === 'xwing') {
+        group.userData.airborne = airborneAt(group.position.x, group.position.y, group.position.z)
+        group.userData.throttle = Math.min(1, speed / 70)
+      }
       // Swimmers keep paddling even when idle, matching the local player.
       remote.walkPhase += dt * (remote.pose === 'swim' ? 2.8 + 4.2 * moving : 11 * moving)
       animateCharacter(group, dt, remote.walkPhase, moving, remote.pose)
