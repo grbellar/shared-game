@@ -20,6 +20,7 @@ interface PlayerState {
   pose: 'stand' | 'crouch' | 'swim'
   weapon: string
   ride: string
+  talk: number
 }
 
 // Dumb relay: clients send their own state, the room broadcasts it to
@@ -69,6 +70,7 @@ export class GameRoom extends DurableObject<Env> {
         pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
         weapon: String(msg.weapon).slice(0, 8),
         ride: String(msg.ride).slice(0, 12),
+        talk: Math.max(0, Math.min(1, Number(msg.talk) || 0)),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -113,6 +115,20 @@ export class GameRoom extends DurableObject<Env> {
       // late joiners lose them. Fine between friends.
       if (this.craters.length > 500) this.craters.shift()
       this.broadcast(JSON.stringify({ t: 'crater', ...c }), ws)
+    } else if (msg.t === 'rtc') {
+      // Voice-chat signaling: relay to exactly one peer, tagged with the
+      // sender's id. Payload passes through untouched (SDP blobs).
+      const to = String(msg.to)
+      for (const peer of this.ctx.getWebSockets()) {
+        const pa = peer.deserializeAttachment() as { id: string } | null
+        if (pa?.id !== to) continue
+        try {
+          peer.send(JSON.stringify({ t: 'rtc', from: att.id, data: msg.data }))
+        } catch {
+          // Socket already dead; close events will clean it up.
+        }
+        break
+      }
     }
   }
 

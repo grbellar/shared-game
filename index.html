@@ -104,6 +104,12 @@
         font-size: 22px;
         opacity: 0.8;
       }
+      #mic-open {
+        position: fixed;
+        top: calc(env(safe-area-inset-top) + 48px);
+        right: calc(env(safe-area-inset-right) + 12px);
+        font-size: 22px;
+      }
       #touch-jump, #touch-fire {
         position: fixed;
         right: calc(env(safe-area-inset-right) + 24px);
@@ -128,7 +134,7 @@
   </head>
   <body>
     <div id="status"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; G bazooka &middot; H katana &middot; F shovel &middot; R wheelchair &middot; click attack</div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; V voice &middot; G bazooka &middot; H katana &middot; F shovel &middot; R wheelchair &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

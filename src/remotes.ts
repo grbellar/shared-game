@@ -49,6 +49,7 @@ export class Remotes {
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
     remote.pose = p.pose ?? 'stand'
+    remote.group.userData.talk = p.talk ?? 0 // animateCharacter opens the mouth
     const weapon =
       p.weapon === 'gun' || p.weapon === 'sword' || p.weapon === 'shovel' ? p.weapon : 'none'
     if (remote.weapon !== weapon) {

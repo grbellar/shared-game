@@ -23,7 +23,15 @@ export function createCharacter(color: string, name: string): THREE.Group {
   const eyeR = new THREE.Mesh(eyeGeo, eyeMat)
   eyeL.position.set(-0.14, 0.05, 0.31)
   eyeR.position.set(0.14, 0.05, 0.31)
-  head.add(eyeL, eyeR)
+  // Mouth: a dark slot that animateCharacter scales open while the player
+  // talks (voice level synced in state) or jabbers out a chat message.
+  const mouth = new THREE.Mesh(
+    new THREE.BoxGeometry(0.26, 0.14, 0.05),
+    new THREE.MeshLambertMaterial({ color: 0x5a1f1f }),
+  )
+  mouth.position.set(0, -0.16, 0.3)
+  mouth.scale.y = 0.22
+  head.add(eyeL, eyeR, mouth)
 
   const legGeo = new THREE.BoxGeometry(0.3, 0.6, 0.3)
   legGeo.translate(0, -0.3, 0) // pivot at the hip
@@ -41,8 +49,8 @@ export function createCharacter(color: string, name: string): THREE.Group {
 
   group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
-  group.userData.rig = { body, head, legL, legR, armL, armR }
-  group.userData.anim = { crouch: 0, swim: 0 }
+  group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
+  group.userData.anim = { crouch: 0, swim: 0, mouth: 0 }
   return group
 }
 
@@ -53,6 +61,7 @@ interface Rig {
   legR: THREE.Mesh
   armL: THREE.Mesh
   armR: THREE.Mesh
+  mouth: THREE.Mesh
 }
 
 export function animateCharacter(
@@ -63,7 +72,7 @@ export function animateCharacter(
   pose: Pose = 'stand',
 ): void {
   const rig = group.userData.rig as Rig
-  const anim = group.userData.anim as { crouch: number; swim: number }
+  const anim = group.userData.anim as { crouch: number; swim: number; mouth: number }
   const riding = group.userData.ride === 'wheelchair'
   const k = Math.min(1, 10 * dt)
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
@@ -104,6 +113,20 @@ export function animateCharacter(
     rig.armR.rotation.z = 0.4 * crouch + 0.25 * swim
   }
 
+  // Mouth: opens with the synced voice level (userData.talk) and flaps
+  // through the tail of a text chat message (userData.jabberUntil). Fast
+  // attack, so a shout lands on the right frame; closed is a thin line.
+  const now = performance.now()
+  let open = (group.userData.talk as number | undefined) ?? 0
+  const jabberUntil = (group.userData.jabberUntil as number | undefined) ?? 0
+  if (now < jabberUntil) {
+    const fade = Math.min(1, (jabberUntil - now) / 600)
+    open = Math.max(open, (0.3 + 0.7 * Math.abs(Math.sin(now / 70))) * fade)
+  }
+  anim.mouth += (Math.min(1, open) - anim.mouth) * Math.min(1, 20 * dt)
+  rig.mouth.scale.y = 0.22 + 1.3 * anim.mouth
+  rig.mouth.position.y = -0.16 - 0.06 * anim.mouth // jaw drops as it opens
+
   // Weapon overrides for the right arm.
   const weapon = group.userData.weapon as string | undefined
   if (weapon === 'gun') {
@@ -131,6 +154,12 @@ export const SLASH_DURATION = 0.3
 
 export function startSlash(group: THREE.Group): void {
   group.userData.attackStart = performance.now()
+}
+
+// Flap the mouth for a while — used when a text chat message goes out, so
+// characters visibly "say" what lands in their speech bubble.
+export function startJabber(group: THREE.Group, durationMs = 1800): void {
+  group.userData.jabberUntil = performance.now() + durationMs
 }
 
 // Hide the head for the death window and return where it was (world space)

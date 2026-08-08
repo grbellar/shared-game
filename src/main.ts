@@ -12,8 +12,9 @@ import { Effects } from './effects'
 import { Destruction } from './destruction'
 import { DayNight } from './daynight'
 import { FirstPersonAim } from './firstperson'
-import { setWeapon, setRide, startSlash, popHead, SLASH_DURATION } from './character'
+import { setWeapon, setRide, startSlash, startJabber, popHead, SLASH_DURATION } from './character'
 import { sfx } from './audio'
+import { Voice } from './voice'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -54,15 +55,27 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 }
 
 const net = new Net()
+const voice = new Voice(net)
 net.onWelcome = (players, craters) => {
   remotes.clear()
-  players.forEach((p) => remotes.upsert(p))
+  voice.reset() // reconnects mint a new id; old voice links are orphaned
+  players.forEach((p) => {
+    remotes.upsert(p)
+    voice.peerJoined(p.id)
+  })
   // Catch up on world damage. Silent: no debris bursts, and reconnect
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
 }
-net.onState = (p) => remotes.upsert(p)
-net.onLeave = (id) => remotes.remove(id)
+net.onState = (p) => {
+  const isNew = !remotes.getGroup(p.id)
+  remotes.upsert(p)
+  if (isNew) voice.peerJoined(p.id)
+}
+net.onLeave = (id) => {
+  remotes.remove(id)
+  voice.peerLeft(id)
+}
 net.connect()
 
 let weapon: 'none' | 'gun' | 'sword' | 'shovel' = 'none'
@@ -79,6 +92,7 @@ setInterval(() => {
     pose: player.pose,
     weapon,
     ride,
+    talk: Math.round(voice.level * 100) / 100,
   })
 }, 66)
 
@@ -200,21 +214,38 @@ if (touch.active) {
     e.preventDefault()
     attack()
   })
-  document.body.append(fire)
+  const mic = document.createElement('div')
+  mic.id = 'mic-open'
+  mic.textContent = '🎤'
+  mic.style.opacity = '0.4'
+  mic.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    void voice.toggle().then((on) => {
+      mic.style.opacity = on ? '1' : '0.4'
+      sfx.equip(on)
+    })
+  })
+  document.body.append(fire, mic)
 }
 
 const chat = new Chat()
 const bubbles = new Bubbles(camera, renderer.domElement)
+// Longer messages get a longer mouth-flap while the bubble is up.
+const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
 chat.onSend = (text) => {
   sfx.chat()
   net.sendChat(text)
   bubbles.show(player.group, text)
+  startJabber(player.group, jabberFor(text))
   chat.addMessage(name, text)
 }
 net.onChat = (id, senderName, text) => {
   sfx.chat()
   const group = remotes.getGroup(id)
-  if (group) bubbles.show(group, text)
+  if (group) {
+    bubbles.show(group, text)
+    startJabber(group, jabberFor(text))
+  }
   chat.addMessage(senderName, text)
 }
 
@@ -222,9 +253,10 @@ const status = document.getElementById('status')!
 setInterval(() => {
   const others = remotes.count
   const mute = sfx.muted ? ' · 🔇 (M)' : ''
+  const mic = voice.enabled ? ' · 🎤 live (V)' : ''
   status.textContent = net.connected
-    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here${mute}`
-    : `${name} · connecting...${mute}`
+    ? `${name} · ${others} other ${others === 1 ? 'player' : 'players'} here${mute}${mic}`
+    : `${name} · connecting...${mute}${mic}`
 }, 500)
 
 const keys = new Set<string>()
@@ -256,6 +288,7 @@ window.addEventListener('keydown', (e) => {
     sfx.equip(ride !== 'none')
   }
   if (e.code === 'KeyM') sfx.toggleMute()
+  if (e.code === 'KeyV' && !e.repeat) void voice.toggle().then((on) => sfx.equip(on))
 })
 window.addEventListener('keyup', (e) => keys.delete(e.code))
 
@@ -265,7 +298,7 @@ const daynight = new DayNight(scene)
 
 // Debug handle so agents (and curious friends) can poke the game from the
 // console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight }
+;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice }
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -287,6 +320,9 @@ renderer.setAnimationLoop(() => {
     },
     gameCamera.yaw,
   )
+  voice.update(dt)
+  player.group.userData.talk = voice.level // our own mouth flaps too
+  voice.updateVolumes(player.group.position, (id) => remotes.getGroup(id)?.position)
   bubbles.update()
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   remotes.update(dt)

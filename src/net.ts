@@ -14,6 +14,7 @@ export interface PlayerState {
   pose: Pose
   weapon: string // 'none' | 'gun' | 'sword' | 'shovel'
   ride: string // 'none' | 'wheelchair'
+  talk: number // 0..1 mic level, drives the mouth on remote screens
 }
 
 type ServerMsg =
@@ -25,6 +26,7 @@ type ServerMsg =
   | { t: 'slash'; id: string }
   | { t: 'kill'; victim: string }
   | { t: 'crater'; x: number; z: number; r: number; d: number }
+  | { t: 'rtc'; from: string; data: unknown }
 
 export class Net {
   id: string | null = null
@@ -37,6 +39,7 @@ export class Net {
   onSlash: (id: string) => void = () => {}
   onKill: (victim: string) => void = () => {}
   onCrater: (c: Crater) => void = () => {}
+  onRtc: (from: string, data: unknown) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -68,6 +71,9 @@ export class Net {
       } else if (msg.t === 'crater') {
         // No self-echo check needed: the server never echoes to the sender.
         this.onCrater({ x: msg.x, z: msg.z, r: msg.r, d: msg.d })
+      } else if (msg.t === 'rtc') {
+        // Voice-chat signaling, already targeted at us by the server.
+        this.onRtc(msg.from, msg.data)
       }
     }
     ws.onclose = () => {
@@ -110,5 +116,11 @@ export class Net {
   sendCrater(c: Crater): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'crater', x: c.x, z: c.z, r: c.r, d: c.d }))
+  }
+
+  // Voice-chat signaling (offer/answer/ICE), relayed to one target peer.
+  sendRtc(to: string, data: unknown): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'rtc', to, data }))
   }
 }
