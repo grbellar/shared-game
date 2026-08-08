@@ -19,22 +19,27 @@ export class Player {
     scene.add(this.group)
   }
 
-  update(dt: number, keys: Set<string>, camYaw: number): void {
-    const fwd = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0)
-    const strafe = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0)
+  update(dt: number, input: { f: number; s: number; jump: boolean }, camYaw: number): void {
+    let { f, s } = input
+    const mag = Math.hypot(f, s)
 
     let moving = 0
-    if (fwd !== 0 || strafe !== 0) {
+    if (mag > 0.15) {
+      if (mag > 1) {
+        f /= mag
+        s /= mag
+      }
       // Camera sits behind the player at +camYaw, so forward is -camYaw.
       const fx = -Math.sin(camYaw)
       const fz = -Math.cos(camYaw)
-      let dx = fx * fwd - fz * strafe
-      let dz = fz * fwd + fx * strafe
+      let dx = fx * f - fz * s
+      let dz = fz * f + fx * s
       const len = Math.hypot(dx, dz)
       dx /= len
       dz /= len
-      this.group.position.x += dx * SPEED * dt
-      this.group.position.z += dz * SPEED * dt
+      const speed = Math.min(mag, 1)
+      this.group.position.x += dx * SPEED * speed * dt
+      this.group.position.z += dz * SPEED * speed * dt
       // Face the direction of travel, taking the short way around.
       const target = Math.atan2(dx, dz)
       const delta = Math.atan2(
@@ -42,8 +47,8 @@ export class Player {
         Math.cos(target - this.group.rotation.y),
       )
       this.group.rotation.y += delta * Math.min(1, 12 * dt)
-      moving = 1
-      this.walkPhase += dt * 11
+      moving = speed
+      this.walkPhase += dt * 11 * speed
     }
 
     // Gravity and ground (or water surface) collision.
@@ -57,7 +62,7 @@ export class Player {
     } else {
       this.onGround = false
     }
-    if (keys.has('Space') && this.onGround) {
+    if (input.jump && this.onGround) {
       this.velY = JUMP_VELOCITY
       this.onGround = false
     }

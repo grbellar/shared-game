@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <title>shared game</title>
     <style>
       html, body {
@@ -13,6 +16,10 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        overscroll-behavior: none;
       }
       canvas {
         image-rendering: pixelated;
@@ -30,11 +37,45 @@
       }
       #status {
         position: fixed;
-        top: 12px;
-        left: 12px;
+        top: calc(env(safe-area-inset-top) + 12px);
+        left: calc(env(safe-area-inset-left) + 12px);
         color: rgba(255, 255, 255, 0.75);
         font: 12px monospace;
         pointer-events: none;
+      }
+      #touch-stick-base, #touch-stick-knob {
+        position: fixed;
+        display: none;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        pointer-events: none;
+      }
+      #touch-stick-base {
+        width: 100px;
+        height: 100px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      #touch-stick-knob {
+        width: 44px;
+        height: 44px;
+        background: rgba(255, 255, 255, 0.35);
+      }
+      #touch-jump {
+        position: fixed;
+        right: calc(env(safe-area-inset-right) + 24px);
+        bottom: calc(env(safe-area-inset-bottom) + 32px);
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        background: rgba(255, 255, 255, 0.15);
+        color: rgba(255, 255, 255, 0.85);
+        font: bold 24px monospace;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        touch-action: none;
+        -webkit-tap-highlight-color: transparent;
       }
     </style>
   </head>

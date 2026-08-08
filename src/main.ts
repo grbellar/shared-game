@@ -3,6 +3,7 @@ import { createWorld } from './world'
 import { Player } from './player'
 import { Net } from './net'
 import { Remotes } from './remotes'
+import { TouchControls } from './touch'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -64,6 +65,7 @@ setInterval(() => {
 const keys = new Set<string>()
 window.addEventListener('keydown', (e) => keys.add(e.code))
 window.addEventListener('keyup', (e) => keys.delete(e.code))
+const touch = new TouchControls()
 
 let camYaw = 0
 const CAM_OFFSET = new THREE.Vector3()
@@ -76,8 +78,17 @@ renderer.setAnimationLoop(() => {
 
   if (keys.has('KeyQ')) camYaw += 2.2 * dt
   if (keys.has('KeyE')) camYaw -= 2.2 * dt
+  camYaw += touch.consumeYaw()
 
-  player.update(dt, keys, camYaw)
+  player.update(
+    dt,
+    {
+      f: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF,
+      s: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS,
+      jump: keys.has('Space') || touch.jumpHeld,
+    },
+    camYaw,
+  )
   remotes.update(dt)
 
   CAM_OFFSET.set(Math.sin(camYaw) * 9, 6, Math.cos(camYaw) * 9)
