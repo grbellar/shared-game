@@ -245,14 +245,14 @@ export function setRide(group: THREE.Group, ride: string): void {
 }
 
 // Ramsey: a loyal guy on all fours you ride like a horse. Dark gray tee,
-// black pants, and his signature flat-top army cap. His back lines up with
+// jeans, and his signature black flat-top army cap. His back lines up with
 // the rider's seat; limbs pivot at the shoulder/hip so he can bound (see
 // animateCharacter).
 function buildRamsey(): THREE.Group {
   const ramsey = new THREE.Group()
   ramsey.name = 'ride'
   const tee = new THREE.MeshLambertMaterial({ color: 0x4a4a50 })
-  const jeans = new THREE.MeshLambertMaterial({ color: 0x1a1a1e })
+  const jeans = new THREE.MeshLambertMaterial({ color: 0x3d4f73 })
   const skin = new THREE.MeshLambertMaterial({ color: 0xe0b088 })
 
   // Horizontal torso, back at seat height (the rider's hips sit at 0.6).
@@ -291,11 +291,11 @@ function buildRamsey(): THREE.Group {
   return ramsey
 }
 
-// Ramsey's brown flat-top army cap: oval crown, stubby brim, and a tiny
+// Ramsey's black flat-top army cap: oval crown, stubby brim, and a tiny
 // canvas-drawn KANGOL label on the front. Built in head-local space.
 function buildArmyCap(): THREE.Group {
   const cap = new THREE.Group()
-  const cloth = new THREE.MeshLambertMaterial({ color: 0x6b5747, flatShading: true })
+  const cloth = new THREE.MeshLambertMaterial({ color: 0x1e1e22, flatShading: true })
   // Crown flares slightly outward toward the flat top, military-cadet style.
   const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.36, 0.24, 10), cloth)
   crown.position.y = 0.38
