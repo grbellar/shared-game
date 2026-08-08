@@ -24,6 +24,11 @@ export class GameCamera {
     return this.camYaw
   }
 
+  // Direct yaw steering from outside the keyboard path (touch drag).
+  addYaw(delta: number): void {
+    this.camYaw += delta
+  }
+
   update(dt: number, keys: Set<string>, player: Player, settings: Settings): void {
     if (keys.has('KeyQ')) this.camYaw += ORBIT_SPEED * dt
     if (keys.has('KeyE')) this.camYaw -= ORBIT_SPEED * dt
