@@ -80,6 +80,61 @@ export function hitscan(
   }
 }
 
+// How you raise the scope, kept apart from what the scope looks like.
+//
+// Right mouse is tap-OR-hold, not hold-only: a Magic Mouse has one physical
+// button, so while a right-click is held a left-click is impossible and you
+// could never fire while zoomed. A quick tap latches the scope up so both
+// clicks are free again; press-and-hold still behaves the usual way on a
+// two-button mouse. `toggle` is the same thing from the keyboard, for
+// trackpads and for anyone with secondary click switched off.
+//
+// Times come in from the caller so this stays testable (and so it can't be
+// caught out by a throttled tab's clock).
+const TAP_MS = 250
+
+export class ScopeInput {
+  private up = false
+  private latched = false // held up by a tap, so a release must not drop it
+  private pressedAt = -1 // when the button went down, -1 if it isn't down
+
+  get isUp(): boolean {
+    return this.up
+  }
+
+  press(now: number): void {
+    // A tap while it's latched is the "put it away" tap.
+    if (this.up && this.latched) {
+      this.stow()
+      return
+    }
+    this.up = true
+    this.latched = false
+    this.pressedAt = now
+  }
+
+  release(now: number): void {
+    if (this.pressedAt < 0) return
+    // Short press: they tapped, so leave it up until the next tap.
+    if (now - this.pressedAt < TAP_MS) this.latched = true
+    else this.up = false
+    this.pressedAt = -1
+  }
+
+  toggle(): void {
+    this.up = !this.up
+    this.latched = this.up
+    this.pressedAt = -1
+  }
+
+  // Weapon swap, death, lost focus: down it goes, latched or not.
+  stow(): void {
+    this.up = false
+    this.latched = false
+    this.pressedAt = -1
+  }
+}
+
 // Hold-to-scope: narrows the camera FOV, drops a chunky duplex reticle over
 // the screen, and adds a slow breathing sway that the aim actually follows
 // (main.ts feeds swayX/swayY into FirstPersonAim, so the shot goes where the

@@ -24,7 +24,7 @@ import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
-import { Scope, hitscan } from './sniper'
+import { Scope, ScopeInput, hitscan } from './sniper'
 import { Minimap } from './minimap'
 import { Health } from './health'
 import { Shark, SHARK_TARGET_ID } from './shark'
@@ -316,6 +316,8 @@ setBuildUi(weapon === 'builder')
 function equipWeapon(next: Weapon): void {
   weapon = next
   bowDrawStart = -1
+  // Putting the rifle away puts the scope away with it, latched or not.
+  if (weapon !== 'sniper') scopeStow()
   setWeapon(player.group, weapon)
   sfx.equip(weapon !== 'none')
   setBuildUi(weapon === 'builder')
@@ -616,6 +618,8 @@ function dieLocally(): void {
   if (headPos) effects.spawnHeadPop(headPos)
   sfx.pop()
   sfx.death()
+  // Otherwise a latched scope springs back up the moment you respawn.
+  scopeStow()
   player.die()
 }
 net.onKill = (victim, _killer, killerName, victimName) => {
@@ -886,10 +890,11 @@ function breakBlock(): void {
   }
 }
 
-// Hold right mouse with the rifle out to bring the scope up. Works straight
-// from third person — the game drops into first person for as long as you're
-// looking through it (the render loop reads this).
-let scopeHeld = false
+// Raising the scope: right mouse (tap or hold) and Z both go through here.
+// See ScopeInput for why a tap has to latch it. Works straight from third
+// person — the game drops into first person for as long as it's up.
+const scopeInput = new ScopeInput()
+const scopeStow = (): void => scopeInput.stow()
 
 // Light every firework we've planted. They also self-launch when the fuse
 // burns down, so touch players (no keyboard) still get the show.
@@ -916,7 +921,7 @@ window.addEventListener('mousedown', (e) => {
   // nobody meant to do.
   if (e.button !== 0) {
     if (e.button === 2 && weapon === 'builder') breakBlock()
-    if (e.button === 2 && weapon === 'sniper') scopeHeld = true
+    if (e.button === 2 && weapon === 'sniper') scopeInput.press(performance.now())
     return
   }
   if (weapon === 'bow') {
@@ -927,12 +932,12 @@ window.addEventListener('mousedown', (e) => {
   attack()
 })
 window.addEventListener('mouseup', (e) => {
-  if (e.button === 2) scopeHeld = false
+  if (e.button === 2) scopeInput.release(performance.now())
   if (weapon === 'bow') releaseBow()
   else bowDrawStart = -1
 })
 // Lost focus mid-hold (alt-tab, dev tools) — don't get stuck scoped.
-window.addEventListener('blur', () => (scopeHeld = false))
+window.addEventListener('blur', scopeStow)
 // Third-person mouse look: locked mouse movement orbits the camera — unless
 // first person owns it (it turns the player instead) or a wheel is sweeping.
 window.addEventListener('mousemove', (e) => {
@@ -1073,6 +1078,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
   if (e.code === 'KeyN') equipWeapon(weapon === 'sniper' ? 'none' : 'sniper')
+  if (e.code === 'KeyZ' && !e.repeat && weapon === 'sniper') scopeInput.toggle()
   if (e.code === 'KeyH') equipWeapon(weapon === 'sword' ? 'none' : 'sword')
   if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
   if (e.code === 'KeyB') equipWeapon(weapon === 'bow' ? 'none' : 'bow')
@@ -1221,7 +1227,7 @@ renderer.setAnimationLoop(() => {
   // The scope only comes up when you're actually holding the rifle, on your
   // feet, and nothing else owns the mouse.
   scope.setActive(
-    scopeHeld && weapon === 'sniper' && !touch.active && !rocket.active && !player.dead && !fp.paused,
+    scopeInput.isUp && weapon === 'sniper' && !touch.active && !rocket.active && !player.dead && !fp.paused,
   )
   scope.update(dt)
   // No aiming down a scope while the rocket flies you; the chase cam sells it.
