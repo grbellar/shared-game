@@ -24,6 +24,7 @@ import { Shark } from './shark'
 import { Cats } from './cats'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
+import { ItemWheel } from './itemwheel'
 import {
   setWeapon,
   setRide,
@@ -243,6 +244,56 @@ building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
 buildHud.setMaterial(material)
 buildHud.setVisible(weapon === 'builder')
+
+// Everything equip goes through these two, whether it came from a hotkey or
+// a wheel wedge — so the sound, the build HUD, and the saved loadout can
+// never drift apart.
+function equipWeapon(next: Weapon): void {
+  weapon = next
+  bowDrawStart = -1
+  setWeapon(player.group, weapon)
+  sfx.equip(weapon !== 'none')
+  buildHud.setVisible(weapon === 'builder')
+  saveLoadout()
+}
+function equipRide(next: Ride): void {
+  ride = next
+  setRide(player.group, ride)
+  player.ride = ride
+  sfx.equip(ride !== 'none')
+  if (ride === 'ramsey') sfx.ramseyMount()
+  saveLoadout()
+}
+
+// Item wheels: hold E and sweep for what's in your hand, hold Q for how you
+// get around. Tap instead to pin the wheel open and click. The single-key
+// toggles below still work for muscle memory.
+new ItemWheel(
+  'KeyE',
+  'hand',
+  [
+    { id: 'none', icon: '✋', label: 'empty' },
+    { id: 'gun', icon: '🚀', label: 'G bazooka' },
+    { id: 'sword', icon: '🗡️', label: 'H katana' },
+    { id: 'shovel', icon: '⛏️', label: 'F shovel' },
+    { id: 'bow', icon: '🏹', label: 'B bow' },
+    { id: 'builder', icon: '🧱', label: 'T builder' },
+    { id: 'firework', icon: '🎆', label: 'K firework' },
+  ],
+  () => weapon,
+  (id) => equipWeapon(id as Weapon),
+)
+new ItemWheel(
+  'KeyQ',
+  'ride',
+  [
+    { id: 'none', icon: '🚶', label: 'on foot' },
+    { id: 'wheelchair', icon: '🦽', label: 'R wheelchair' },
+    { id: 'ramsey', icon: '🧍', label: 'Y ramsey' },
+  ],
+  () => ride,
+  (id) => equipRide(id as Ride),
+)
 player.onSplash = (x, z) => effects.spawnSplash(x, z)
 remotes.onSplash = (x, z) => {
   effects.spawnSplash(x, z)
@@ -597,70 +648,20 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault()
     chat.open()
   }
-  if (e.code === 'KeyG') {
-    weapon = weapon === 'gun' ? 'none' : 'gun'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyH') {
-    weapon = weapon === 'sword' ? 'none' : 'sword'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyF') {
-    weapon = weapon === 'shovel' ? 'none' : 'shovel'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyB') {
-    weapon = weapon === 'bow' ? 'none' : 'bow'
-    bowDrawStart = -1
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
-  if (e.code === 'KeyT') {
-    weapon = weapon === 'builder' ? 'none' : 'builder'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(weapon === 'builder')
-    saveLoadout()
-  }
+  if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
+  if (e.code === 'KeyH') equipWeapon(weapon === 'sword' ? 'none' : 'sword')
+  if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
+  if (e.code === 'KeyB') equipWeapon(weapon === 'bow' ? 'none' : 'bow')
+  if (e.code === 'KeyT') equipWeapon(weapon === 'builder' ? 'none' : 'builder')
   if (weapon === 'builder' && /^Digit[1-4]$/.test(e.code)) {
     material = Number(e.code.slice(5)) - 1
     buildHud.setMaterial(material)
     saveLoadout()
   }
-  if (e.code === 'KeyK') {
-    weapon = weapon === 'firework' ? 'none' : 'firework'
-    setWeapon(player.group, weapon)
-    sfx.equip(weapon !== 'none')
-    buildHud.setVisible(false)
-    saveLoadout()
-  }
+  if (e.code === 'KeyK') equipWeapon(weapon === 'firework' ? 'none' : 'firework')
   if (e.code === 'KeyL') launchFireworks()
-  if (e.code === 'KeyR') {
-    ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
-    setRide(player.group, ride)
-    player.ride = ride
-    sfx.equip(ride !== 'none')
-    saveLoadout()
-  }
-  if (e.code === 'KeyY') {
-    ride = ride === 'ramsey' ? 'none' : 'ramsey'
-    setRide(player.group, ride)
-    player.ride = ride
-    sfx.equip(ride !== 'none')
-    if (ride === 'ramsey') sfx.ramseyMount()
-    saveLoadout()
-  }
+  if (e.code === 'KeyR') equipRide(ride === 'wheelchair' ? 'none' : 'wheelchair')
+  if (e.code === 'KeyY') equipRide(ride === 'ramsey' ? 'none' : 'ramsey')
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
   if (e.code === 'KeyV' && !e.repeat)

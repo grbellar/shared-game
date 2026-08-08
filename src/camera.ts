@@ -10,7 +10,8 @@ const LOOK_HEIGHT = 2
 const POSITION_LERP = 8
 const FOLLOW_RATE = 4
 
-// Third-person orbit camera, steered with Q/E.
+// Third-person orbit camera, steered with the left/right arrow keys
+// (Q and E belong to the item wheels).
 export class GameCamera {
   private camYaw = 0
   private readonly offset = new THREE.Vector3()
@@ -45,8 +46,8 @@ export class GameCamera {
       return
     }
 
-    if (keys.has('KeyQ')) this.camYaw += ORBIT_SPEED * dt
-    if (keys.has('KeyE')) this.camYaw -= ORBIT_SPEED * dt
+    if (keys.has('ArrowLeft')) this.camYaw += ORBIT_SPEED * dt
+    if (keys.has('ArrowRight')) this.camYaw -= ORBIT_SPEED * dt
 
     // Follow cam: while the player moves, ease in behind the character
     // (their yaw + π), taking the short way around. Q/E peeks still work —
