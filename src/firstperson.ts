@@ -1,6 +1,15 @@
 import * as THREE from 'three'
 import { heightAt } from './world'
-import { buildBazooka, buildKatana, buildShovel, SLASH_DURATION } from './character'
+import {
+  buildBazooka,
+  buildBow,
+  buildBuilder,
+  buildFirework,
+  buildKatana,
+  buildShovel,
+  SLASH_DURATION,
+} from './character'
+import { buildArrow } from './arrows'
 import type { Player } from './player'
 
 // First-person aiming: pointer-lock mouse look with a chunky crosshair.
@@ -16,28 +25,45 @@ const DIG_REACH = 8
 const KICK_TIME = 0.25 // bazooka recoil, seconds
 
 // View-model pose per weapon, in camera space (camera looks down -Z).
-// The bazooka is built pointing +Z so it flips around; the katana and
-// shovel are built blade-down (-Y) so a positive X tilt raises the
-// business end up-forward into a ready stance.
-const VIEW_POSES: Record<string, { pos: [number, number, number]; rot: [number, number, number] }> = {
+// The bazooka is built pointing +Z so it flips around; the katana, shovel
+// and firework are built business-end-down (-Y) so a positive X tilt raises
+// that end up-forward into a ready stance. `hand` is where the handle
+// ends up after that rotation — the fist and sleeve anchor there.
+const VIEW_POSES: Record<
+  string,
+  { pos: [number, number, number]; rot: [number, number, number]; hand?: [number, number, number] }
+> = {
   gun: { pos: [0.5, -0.4, -0.9], rot: [0, Math.PI, 0] },
-  sword: { pos: [0.42, -0.5, -0.8], rot: [1.9, 0, 0.15] },
-  shovel: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12] },
+  sword: { pos: [0.42, -0.5, -0.8], rot: [1.9, 0, 0.15], hand: [0.05, 0.12, -0.36] },
+  shovel: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12], hand: [0.05, 0, -0.4] },
+  // The bow is built facing -Z already; held right of center, canted like
+  // a proper FPS bow so the limbs stay clear of the crosshair.
+  bow: { pos: [0.38, -0.34, -0.9], rot: [0, 0, 0.3], hand: [0, -0.02, 0] },
+  builder: { pos: [0.42, -0.38, -0.6], rot: [1.55, 0, 0.12], hand: [0.05, 0, -0.4] },
+  firework: { pos: [0.44, -0.34, -0.6], rot: [1.5, 0, 0.12], hand: [0.05, 0, -0.4] },
 }
+const BOW_VIEW_SCALE = 0.85
 
 export class FirstPersonAim {
   pitch = 0
+  // Set while a menu owns the mouse (the emote wheel), so sweeping the
+  // wheel doesn't also spin the player around.
+  paused = false
   private active = false
   private readonly crosshair: HTMLDivElement
   private viewModel: THREE.Group | null = null
   private viewWeapon = 'none'
   private swingT = -1 // 0..1 while a chop plays, -1 idle
   private kickT = -1 // 0..1 while recoil plays, -1 idle
+  private drawP = 0 // bow draw progress, 0..1; main feeds this each frame
+  private viewBow: THREE.Group | null = null
+  private nockedArrow: THREE.Group | null = null
 
   constructor(
     private readonly player: Player,
     private readonly canvas: HTMLCanvasElement,
     private readonly camera: THREE.PerspectiveCamera,
+    private readonly color: string,
   ) {
     const style = document.createElement('style')
     style.textContent = `
@@ -67,7 +93,9 @@ export class FirstPersonAim {
     document.body.append(this.crosshair)
 
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked) return
+      // The pointer stays locked in third person too (the orbit camera uses
+      // it); only steer the player while first person is actually on.
+      if (!this.active || !this.locked || this.paused) return
       // Mouse right turns right: facing is (sin ry, cos ry), and with the
       // camera looking along it screen-right is -X, so yaw decreases.
       this.player.group.rotation.y -= e.movementX * SENSITIVITY
@@ -96,13 +124,8 @@ export class FirstPersonAim {
       this.viewWeapon = want
       this.swingT = this.kickT = -1
       if (want !== 'none') {
-        const model =
-          want === 'gun' ? buildBazooka() : want === 'sword' ? buildKatana() : buildShovel()
-        const pose = VIEW_POSES[want]
-        model.position.set(...pose.pos) // overrides the shoulder-mount offset baked into buildBazooka
-        model.rotation.set(...pose.rot)
-        this.viewModel = model
-        this.camera.add(model)
+        this.viewModel = this.buildHeld(want)
+        this.camera.add(this.viewModel)
       }
     }
 
@@ -112,15 +135,78 @@ export class FirstPersonAim {
     // Hide our own model so we're not staring at the inside of our head.
     // Local-only: remote clients render this character normally.
     this.player.group.visible = !active
-    if (!active) {
-      this.pitch = 0
-      if (this.locked) document.exitPointerLock()
+    // Keep the pointer lock on the way out — the third-person camera mouse
+    // look takes over seamlessly. Esc is how you actually let go.
+    if (!active) this.pitch = 0
+  }
+
+  // Wrapper pinned at the grip point, in camera space: the weapon (posed)
+  // plus, for handheld tools, a blocky arm. Swings rotate the wrapper, so
+  // arm and weapon chop together around the hand.
+  private buildHeld(weapon: string): THREE.Group {
+    const held = new THREE.Group()
+    const pose = VIEW_POSES[weapon]
+    held.position.set(...pose.pos)
+    const model =
+      weapon === 'gun'
+        ? buildBazooka()
+        : weapon === 'sword'
+          ? buildKatana()
+          : weapon === 'shovel'
+            ? buildShovel()
+            : weapon === 'builder'
+              ? buildBuilder()
+              : weapon === 'firework'
+                ? buildFirework()
+                : buildBow()
+    model.position.set(0, 0, 0) // strip the shoulder-mount offset baked into buildBazooka
+    model.rotation.set(...pose.rot)
+    held.add(model)
+    this.viewBow = null
+    this.nockedArrow = null
+    if (weapon === 'bow') {
+      this.viewBow = model
+      model.scale.setScalar(BOW_VIEW_SCALE)
+      // An arrow riding the string, visible only while drawing.
+      const arrow = buildArrow()
+      arrow.rotation.y = Math.PI // built along +Z, must point -Z with the bow
+      arrow.visible = false
+      model.add(arrow)
+      this.nockedArrow = arrow
     }
+    // The bazooka rests on the shoulder; the katana and shovel get a fist
+    // on the handle and a sleeve reaching down toward off-screen.
+    if (pose.hand) {
+      const arm = this.buildArm()
+      arm.position.set(...pose.hand)
+      held.add(arm)
+    }
+    return held
+  }
+
+  private buildArm(): THREE.Group {
+    const arm = new THREE.Group()
+    const fist = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.2, 0.22),
+      new THREE.MeshLambertMaterial({ color: 0xe0b088 }),
+    )
+    const sleeveGeo = new THREE.BoxGeometry(0.22, 0.7, 0.22)
+    sleeveGeo.translate(0, -0.35, 0) // pivot at the wrist, like the character's shoulder pivot
+    const sleeve = new THREE.Mesh(sleeveGeo, new THREE.MeshLambertMaterial({ color: this.color }))
+    // Reach back down-right toward the bottom corner of the screen.
+    sleeve.rotation.set(-0.55, 0, 0.35)
+    arm.add(fist, sleeve)
+    return arm
   }
 
   // Chop arc for the katana/shovel view model; call on attack.
   swing(): void {
     if (this.active) this.swingT = 0
+  }
+
+  // Bow draw progress (0 = rest, 1 = full pull); main sets it every frame.
+  setDraw(p: number): void {
+    this.drawP = Math.max(0, Math.min(1, p))
   }
 
   // Bazooka recoil; call on fire.
@@ -129,10 +215,11 @@ export class FirstPersonAim {
   }
 
   // Per-frame view-model animation: everything eases back to the idle pose.
+  // Offsets go on the wrapper (weapon pose rotations live on its child).
   update(dt: number): void {
     if (!this.viewModel) return
     const pose = VIEW_POSES[this.viewWeapon]
-    let rx = pose.rot[0]
+    let rx = 0
     let z = pose.pos[2]
     if (this.swingT >= 0) {
       this.swingT += dt / SLASH_DURATION
@@ -151,6 +238,24 @@ export class FirstPersonAim {
     }
     this.viewModel.rotation.x = rx
     this.viewModel.position.z = z
+
+    // Bow: slide the string's nock point (and the arrow riding it) back
+    // with the draw, and lean the whole bow in slightly at full pull.
+    if (this.viewBow) {
+      const stringPos = this.viewBow.userData.stringPos as THREE.BufferAttribute
+      const rest = this.viewBow.userData.nockRestZ as number
+      const pull = this.viewBow.userData.nockPullZ as number
+      const nockZ = rest + (pull - rest) * this.drawP
+      stringPos.setZ(1, nockZ)
+      stringPos.needsUpdate = true
+      if (this.nockedArrow) {
+        this.nockedArrow.visible = this.drawP > 0
+        // Arrow is Y-flipped, so its tail sits at +0.35 local; park the
+        // tail on the nock.
+        this.nockedArrow.position.z = nockZ - 0.35
+      }
+      this.viewModel.rotation.y = -0.12 * this.drawP
+    }
   }
 
   // First click in first person grabs the pointer instead of attacking.

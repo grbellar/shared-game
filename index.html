@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>shared game</title>
+    <title>Wheelchair Warriors</title>
     <style>
       html, body {
         margin: 0;
@@ -34,6 +34,20 @@
         color: rgba(255, 255, 255, 0.55);
         font: 12px monospace;
         pointer-events: none;
+      }
+      #pet-hint {
+        position: fixed;
+        /* Above the build HUD and the chat input, which both sit at 34-36px. */
+        bottom: 66px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        color: #ffd9e2;
+        font: 12px monospace;
+        padding: 5px 10px;
+        -webkit-tap-highlight-color: transparent;
       }
       #status {
         position: fixed;
@@ -104,7 +118,13 @@
         font-size: 22px;
         opacity: 0.8;
       }
-      #touch-jump, #touch-fire {
+      #mic-open {
+        position: fixed;
+        top: calc(env(safe-area-inset-top) + 48px);
+        right: calc(env(safe-area-inset-right) + 12px);
+        font-size: 22px;
+      }
+      #touch-jump, #touch-fire, #touch-break {
         position: fixed;
         right: calc(env(safe-area-inset-right) + 24px);
         bottom: calc(env(safe-area-inset-bottom) + 32px);
@@ -124,6 +144,72 @@
       #touch-fire {
         bottom: calc(env(safe-area-inset-bottom) + 120px);
       }
+      /* The builder's eraser: stacked above fire, and only shown while the
+         builder is equipped (main.ts toggles it). */
+      #touch-break {
+        display: none;
+        bottom: calc(env(safe-area-inset-bottom) + 208px);
+        border-color: rgba(255, 156, 42, 0.7);
+        color: #ff9c2a;
+      }
+      #welcome {
+        position: fixed;
+        top: 22%;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: #ffdf3a;
+        font: bold 34px monospace;
+        text-shadow: 3px 3px 0 #000;
+        letter-spacing: 2px;
+        pointer-events: none;
+        animation: welcome-fade 5s ease forwards;
+      }
+      #welcome small {
+        display: block;
+        font-size: 16px;
+        color: #fff;
+        margin-top: 8px;
+        letter-spacing: 1px;
+      }
+      @keyframes welcome-fade {
+        0%, 70% { opacity: 1; }
+        100% { opacity: 0; visibility: hidden; }
+      }
+      /* Portal transit: a violet blink that covers the teleport, and the
+         name of wherever you just landed. Neither declares its animation
+         here — main.ts assigns it, so they stay quiet on page load and can
+         be retriggered on every crossing. */
+      #flash {
+        position: fixed;
+        inset: 0;
+        background: #d9a3ff;
+        opacity: 0;
+        pointer-events: none;
+      }
+      @keyframes portal-flash {
+        0% { opacity: 0.95; background: #fff; }
+        30% { opacity: 0.7; background: #d9a3ff; }
+        100% { opacity: 0; }
+      }
+      #realm-banner {
+        position: fixed;
+        top: 30%;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: #e6c2ff;
+        font: bold 28px monospace;
+        text-shadow: 3px 3px 0 #1b0630;
+        letter-spacing: 3px;
+        opacity: 0;
+        pointer-events: none;
+      }
+      @keyframes realm-banner {
+        0% { opacity: 0; letter-spacing: 14px; }
+        18%, 65% { opacity: 1; letter-spacing: 3px; }
+        100% { opacity: 0; letter-spacing: 3px; }
+      }
       #banner {
         position: fixed;
         top: 22%;
@@ -137,18 +223,20 @@
         text-shadow: 3px 3px 0 #000;
         pointer-events: none;
       }
+      /* Under the hp meter, which sits at top+32. */
       #feed {
         position: fixed;
-        top: calc(env(safe-area-inset-top) + 34px);
+        top: calc(env(safe-area-inset-top) + 56px);
         left: calc(env(safe-area-inset-left) + 12px);
         color: #ffd54a;
         font: 12px monospace;
         text-shadow: 0 1px 2px #000;
         pointer-events: none;
       }
+      /* Above the chat input and build HUD, which live at 34-36px. */
       #detector {
         position: fixed;
-        bottom: 32px;
+        bottom: 88px;
         left: 0;
         right: 0;
         display: none;
@@ -199,8 +287,11 @@
     </style>
   </head>
   <body>
+    <div id="welcome">WELCOME TO<br />WHEELCHAIR WARRIORS<small>walk into the purple beam</small></div>
     <div id="status"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; Q/E camera &middot; Enter chat &middot; G bazooka &middot; H katana &middot; F shovel &middot; R wheelchair &middot; Tab scores &middot; click attack</div>
+    <div id="flash"></div>
+    <div id="realm-banner"></div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; mouse aim (click grabs, Esc frees) &middot; E items &middot; Q ride &middot; X emotes &middot; Tab map (click a friend to rocket to them) &middot; J next place &middot; N scores &middot; Enter chat &middot; V voice &middot; P pet cat &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

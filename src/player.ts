@@ -1,13 +1,15 @@
 import * as THREE from 'three'
 import { createCharacter, animateCharacter, type Pose } from './character'
 import { heightAt } from './world'
+import { blockFloorAt, wallAt } from './blocks'
 import { sfx } from './audio'
 
 const SPEED = 9
 const RIDE_SPEED = 16 // wheelchair beats walking
+const RAMSEY_SPEED = 19 // and four limbs beat two wheels
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
-const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
+export const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating
 
 // Turned down by the `moonjump` chat cheat (see cheats.ts). Local only —
@@ -16,6 +18,19 @@ let gravityScale = 1
 
 export function setGravityScale(scale: number): void {
   gravityScale = scale
+}
+
+// A random dry-land spot so players don't stack on one point. Rejection
+// sampling against heightAt (crater-aware, so nobody wakes up at the bottom
+// of a freshly dug pond); center of the island as a last resort.
+function randomSpawn(): { x: number; y: number; z: number } {
+  for (let i = 0; i < 40; i++) {
+    const x = (Math.random() - 0.5) * 100
+    const z = (Math.random() - 0.5) * 100
+    const h = heightAt(x, z)
+    if (h > 1.5) return { x, y: h, z }
+  }
+  return { x: 0, y: heightAt(0, 0), z: 0 }
 }
 
 export interface PlayerInput {
@@ -34,7 +49,18 @@ export class Player {
   moving = false // movement input this frame? The follow cam only recenters while true.
   pose: Pose = 'stand'
   dead = false
-  riding = false
+  ride: 'none' | 'wheelchair' | 'ramsey' = 'none'
+  // Something has hold of you (the shark) — input is ignored and whatever
+  // grabbed you owns your position until it lets go.
+  grabbed = false
+  // Under rocket power (rocket.ts): same deal, but flying an arc instead of
+  // being dragged out to sea. Gravity, input and collision are all suspended
+  // — rocket.ts writes the position every frame until you land.
+  flying = false
+  // Called when the respawn timer puts you back on the island.
+  onRespawn: () => void = () => {}
+  // Fired when we hit water hard enough to splash (main.ts spawns the effect).
+  onSplash: (x: number, z: number) => void = () => {}
   private velY = 0
   private velX = 0
   private velZ = 0
@@ -45,8 +71,20 @@ export class Player {
 
   constructor(scene: THREE.Scene, color: string, name: string) {
     this.group = createCharacter(color, name)
-    this.group.position.set(0, heightAt(0, 0), 0)
+    const spawn = randomSpawn()
+    this.group.position.set(spawn.x, spawn.y, spawn.z)
+    this.group.rotation.y = Math.random() * Math.PI * 2
     scene.add(this.group)
+  }
+
+  // Put the player somewhere else outright, dead still. Portals use this;
+  // impulses must not survive a trip across the map.
+  teleport(x: number, y: number, z: number, ry: number): void {
+    this.group.position.set(x, y, z)
+    this.group.rotation.y = ry
+    this.velX = this.velY = this.velZ = 0
+    this.onGround = false
+    this.wasFloating = false
   }
 
   // Shove from an explosion (or whatever else wants to throw the player).
@@ -57,22 +95,55 @@ export class Player {
     if (y > 0) this.onGround = false
   }
 
-  // Headless pause, then respawn near the island center.
+  // Horizontal move with per-axis wall checks against built blocks: a
+  // single block auto-steps (the floor resolve pops you up), anything
+  // taller stops that axis. Terrain itself never blocks — only blocks do.
+  private tryMove(mx: number, mz: number): void {
+    const p = this.group.position
+    const R = 0.35 // leading edge of the blocky torso
+    if (mx !== 0 && !wallAt(p.x + mx + Math.sign(mx) * R, p.z, p.y)) p.x += mx
+    if (mz !== 0 && !wallAt(p.x, p.z + mz + Math.sign(mz) * R, p.y)) p.z += mz
+  }
+
+  // Headless pause, then respawn somewhere fresh on the island.
   die(): void {
     if (this.dead) return
     this.dead = true
+    this.grabbed = false
     setTimeout(() => {
-      const x = (Math.random() - 0.5) * 10
-      const z = (Math.random() - 0.5) * 10
-      this.group.position.set(x, heightAt(x, z), z)
+      const spawn = randomSpawn()
+      this.group.position.set(spawn.x, spawn.y, spawn.z)
       this.velX = this.velY = this.velZ = 0
       this.dead = false
+      this.onRespawn()
     }, 2500)
   }
 
   update(dt: number, input: PlayerInput, camYaw: number): void {
+    // Riding a rocket: rocket.ts has already written where we are this frame,
+    // so just keep the rig ticking over (the flight pose is an emote, and the
+    // wheelchair's wheels should absolutely still be spinning up there).
+    if (this.flying && !this.dead) {
+      this.velX = this.velY = this.velZ = 0
+      this.moving = false
+      this.pose = 'stand'
+      this.walkPhase += dt * 3
+      animateCharacter(this.group, dt, this.walkPhase, 0, 'stand')
+      return
+    }
+
+    // Clamped in a shark's mouth: it drives the position, you just flail.
+    if (this.grabbed && !this.dead) {
+      this.velX = this.velY = this.velZ = 0
+      this.moving = false
+      this.pose = 'swim'
+      this.walkPhase += dt * 22
+      animateCharacter(this.group, dt, this.walkPhase, 1, 'swim')
+      return
+    }
+
     const swimming = this.pose === 'swim'
-    const crouching = !swimming && !this.riding && input.crouch
+    const crouching = !swimming && this.ride === 'none' && input.crouch
     const sprinting = !crouching && input.sprint
     let speedMul = swimming ? 0.6 : crouching ? 0.45 : 1
     if (sprinting) speedMul *= 1.6
@@ -100,9 +171,9 @@ export class Player {
       dx /= len
       dz /= len
       const analog = Math.min(mag, 1)
-      const moveSpeed = this.riding ? RIDE_SPEED : SPEED
-      this.group.position.x += dx * moveSpeed * speedMul * analog * dt
-      this.group.position.z += dz * moveSpeed * speedMul * analog * dt
+      const moveSpeed =
+        this.ride === 'ramsey' ? RAMSEY_SPEED : this.ride === 'wheelchair' ? RIDE_SPEED : SPEED
+      this.tryMove(dx * moveSpeed * speedMul * analog * dt, dz * moveSpeed * speedMul * analog * dt)
       // Face the direction of travel, taking the short way around —
       // unless the mouse owns the facing (first-person strafe).
       if (!input.strafe) {
@@ -122,17 +193,19 @@ export class Player {
     }
 
     // Knockback impulses decay with heavy friction.
-    this.group.position.x += this.velX * dt
-    this.group.position.z += this.velZ * dt
+    this.tryMove(this.velX * dt, this.velZ * dt)
     const friction = Math.pow(0.03, dt)
     this.velX *= friction
     this.velZ *= friction
 
-    // Gravity, then ground or water-surface collision.
+    // Gravity, then ground, block-top, or water-surface collision.
     this.velY -= GRAVITY * gravityScale * dt
     this.group.position.y += this.velY * dt
     const ground = heightAt(this.group.position.x, this.group.position.z)
-    const overDeepWater = ground < WATER_LEVEL - 0.01
+    // Highest built block we could stand on here. A block breaching the
+    // surface turns deep water into a dock; a deeply sunk one stays swimmable.
+    const blockTop = blockFloorAt(this.group.position.x, this.group.position.z, this.group.position.y)
+    const overDeepWater = ground < WATER_LEVEL - 0.01 && blockTop < WATER_LEVEL - 0.01
     let floating = false
     if (
       overDeepWater &&
@@ -140,16 +213,25 @@ export class Player {
       this.group.position.y <= WATER_LEVEL + FLOAT_BAND
     ) {
       // Stick to the water surface with a gentle bob.
-      if (!this.wasFloating) sfx.splash()
+      if (!this.wasFloating) {
+        sfx.splash()
+        this.onSplash(this.group.position.x, this.group.position.z)
+      }
       this.bobPhase += dt * 2.5
       this.group.position.y = WATER_LEVEL + Math.sin(this.bobPhase) * 0.07
       this.velY = 0
       this.onGround = true
       floating = true
     } else {
-      const floor = Math.max(ground, WATER_LEVEL)
+      const floor = Math.max(ground, WATER_LEVEL, blockTop)
       if (this.group.position.y <= floor) {
-        if (!this.onGround && this.velY < -7) sfx.land(-this.velY / 25)
+        if (!this.onGround && this.velY < -5 && floor < -0.05) {
+          // Landing feet-underwater in the shallows: splash, not thud.
+          sfx.splash()
+          this.onSplash(this.group.position.x, this.group.position.z)
+        } else if (!this.onGround && this.velY < -7) {
+          sfx.land(-this.velY / 25)
+        }
         this.group.position.y = floor
         this.velY = 0
         this.onGround = true
@@ -165,10 +247,15 @@ export class Player {
 
     this.moving = moving > 0
 
-    // One footstep (or squeak, or paddle stroke) per half walk cycle.
-    if (Math.floor(this.walkPhase / Math.PI) !== prevStep && moving > 0.15 && !this.dead) {
-      if (floating) sfx.paddle()
-      else if (this.onGround) this.riding ? sfx.squeak() : sfx.step()
+    // One footstep (or squeak, or paddle stroke) per half walk cycle. While
+    // treading water in place the cycle still ticks, as quiet lapping.
+    if (Math.floor(this.walkPhase / Math.PI) !== prevStep && !this.dead) {
+      if (floating) moving > 0.15 ? sfx.paddle() : sfx.lap()
+      else if (moving > 0.15 && this.onGround) {
+        if (this.ride === 'wheelchair') sfx.squeak()
+        else if (this.ride === 'ramsey') sfx.gallop()
+        else sfx.step()
+      }
     }
     this.wasFloating = floating
 

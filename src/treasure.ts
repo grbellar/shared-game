@@ -14,6 +14,9 @@ import type { Hat } from './character'
 
 const TREASURE_SEED = 777
 const CACHE_COUNT = 6
+// Home island only — the far rock and the shadow realm are somebody else's
+// problem. baseHeightAt takes the tallest island at a point, so sampling
+// inside this radius only ever describes home.
 const ISLAND_REACH = 78
 const DIG_RANGE = 2.4 // how close a scoop has to land
 const DETECT_RANGE = 15 // how far the detector reaches

@@ -29,9 +29,19 @@ interface Puff {
   vel: THREE.Vector3
   spin: THREE.Vector3
   bounce: boolean
+  // Swell over the puff's life, as a multiple of its starting size. Dust
+  // billows; debris and smoke keep the size they were born at.
+  grow?: number
 }
 
 interface Explosion {
+  mesh: THREE.Mesh
+  t: number
+}
+
+const SPLASH_RING_TIME = 0.7
+
+interface SplashRing {
   mesh: THREE.Mesh
   t: number
 }
@@ -47,9 +57,13 @@ export class Effects {
   // exactly one client (the shooter) mints the world damage — per-client sim
   // divergence must never fork the terrain.
   onOwnExplosion: (center: THREE.Vector3) => void = () => {}
+  // Extra rocket-stopping solids beyond terrain and props (built blocks).
+  // A callback so effects stays ignorant of the blocks module; main.ts wires it.
+  solidAt: (p: THREE.Vector3) => boolean = () => false
   private rockets: Rocket[] = []
   private puffs: Puff[] = []
   private explosions: Explosion[] = []
+  private splashRings: SplashRing[] = []
   private tmp = new THREE.Vector3()
 
   constructor(private scene: THREE.Scene) {}
@@ -72,6 +86,26 @@ export class Effects {
       life: ROCKET_LIFE,
       smokeT: 0,
     })
+  }
+
+  // Someone hit the water: foam droplets flying up plus a ring spreading on
+  // the surface. Purely cosmetic, so each client spawns its own.
+  spawnSplash(x: number, z: number): void {
+    const surface = new THREE.Vector3(x, 0.15, z)
+    this.burst(surface, 0xffffff, 6, 5)
+    this.burst(surface, 0xa8d4ef, 8, 6)
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.5, 0.75, 12).rotateX(-Math.PI / 2),
+      new THREE.MeshLambertMaterial({
+        color: 0xdff2ff,
+        emissive: 0x86aec7,
+        transparent: true,
+        opacity: 0.85,
+      }),
+    )
+    ring.position.set(x, 0.03, z)
+    this.scene.add(ring)
+    this.splashRings.push({ mesh: ring, t: 0 })
   }
 
   spawnHeadPop(pos: THREE.Vector3): void {
@@ -108,7 +142,7 @@ export class Effects {
       const hitPlayer = targets.some(
         (t) => t.id !== r.ownerId && this.tmp.set(t.pos.x, t.pos.y + 1.2, t.pos.z).distanceTo(p) < 1.5,
       )
-      if (hitGround || hitPlayer || propInPath(p) || r.life <= 0) {
+      if (hitGround || hitPlayer || propInPath(p) || this.solidAt(p) || r.life <= 0) {
         this.explode(p.clone(), r.ownerId)
         this.scene.remove(r.mesh)
         this.rockets.splice(i, 1)
@@ -128,6 +162,19 @@ export class Effects {
       mat.opacity = 0.95 * (1 - e.t)
     }
 
+    for (let i = this.splashRings.length - 1; i >= 0; i--) {
+      const r = this.splashRings[i]
+      r.t += dt / SPLASH_RING_TIME
+      if (r.t >= 1) {
+        this.scene.remove(r.mesh)
+        this.splashRings.splice(i, 1)
+        continue
+      }
+      r.mesh.scale.setScalar(1 + 3.2 * r.t)
+      const mat = r.mesh.material as THREE.MeshLambertMaterial
+      mat.opacity = 0.85 * (1 - r.t)
+    }
+
     for (let i = this.puffs.length - 1; i >= 0; i--) {
       const s = this.puffs[i]
       s.t += dt
@@ -141,6 +188,14 @@ export class Effects {
       s.mesh.rotation.x += s.spin.x * dt
       s.mesh.rotation.y += s.spin.y * dt
       s.mesh.rotation.z += s.spin.z * dt
+      if (s.grow) {
+        s.mesh.scale.setScalar(1 + s.grow * (s.t / s.lifetime))
+        // Dust punches outward and stalls in a ring, instead of sailing off
+        // across the water at its launch speed.
+        const drag = Math.pow(0.08, dt)
+        s.vel.x *= drag
+        s.vel.z *= drag
+      }
       if (s.bounce) {
         const floor = Math.max(heightAt(s.mesh.position.x, s.mesh.position.z), 0) + 0.3
         if (s.mesh.position.y < floor && s.vel.y < 0) {
@@ -158,6 +213,67 @@ export class Effects {
   // Chunks of whatever just got destroyed, flying everywhere.
   spawnDebris(center: THREE.Vector3, color: number, count: number, power: number): void {
     this.burst(center, color, count, power)
+  }
+
+  // A single smoke puff — the exhaust trail behind someone under rocket power
+  // (rocket.ts for the local player, remotes for everyone else).
+  spawnTrail(pos: THREE.Vector3): void {
+    this.smoke(pos)
+  }
+
+  // Rocket travel touching down (rocket.ts). Deliberately NOT `explode`: it
+  // fires no onBlast, because the traveller walks away from their own landing
+  // and everybody else shoves themselves in main.ts — the same self-applied
+  // rule blast knockback has always followed.
+  spawnImpact(center: THREE.Vector3): void {
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1, 0),
+      new THREE.MeshLambertMaterial({
+        color: 0x662200,
+        emissive: 0xff7a1a,
+        flatShading: true,
+        transparent: true,
+      }),
+    )
+    mesh.position.copy(center)
+    this.scene.add(mesh)
+    this.explosions.push({ mesh, t: 0 })
+    this.burst(center, 0x6b4526, 14, 11) // dirt
+    this.burst(center, 0x333338, 8, 8) // scorch
+    this.dustCloud(center, 16)
+  }
+
+  // The billow a landing kicks up: fat pale cubes thrown out along the ground
+  // that swell and thin as they go. Much bigger and slower than rocket smoke,
+  // because the whole job of this cloud is to hang around long enough that the
+  // hero pose reads as a silhouette through it.
+  private dustCloud(center: THREE.Vector3, count: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.6
+      const speed = 3.5 + Math.random() * 4
+      const size = 0.5 + Math.random() * 0.7
+      const puff = new THREE.Mesh(
+        new THREE.BoxGeometry(size, size, size),
+        new THREE.MeshLambertMaterial({
+          color: 0xbfae8c,
+          transparent: true,
+          opacity: 0.75,
+          flatShading: true,
+        }),
+      )
+      puff.position.copy(center)
+      puff.position.y += 0.25
+      this.scene.add(puff)
+      this.puffs.push({
+        mesh: puff,
+        t: 0,
+        lifetime: 1.8 + Math.random() * 0.9,
+        vel: new THREE.Vector3(Math.sin(a) * speed, 1.2 + Math.random() * 1.6, Math.cos(a) * speed),
+        spin: new THREE.Vector3(0.6, 0.9, 0.4),
+        bounce: false,
+        grow: 1.6,
+      })
+    }
   }
 
   private paint(): number {

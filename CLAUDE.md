@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-shared-game is a silly multiplayer 3D game built entirely by LLM agents, iterated
-on by a group of friends. Anything goes, as long as it stays fun and stays in the
-art style.
+**Wheelchair Warriors** (repo/worker name: shared-game) is a silly multiplayer
+3D game built entirely by LLM agents, iterated on by a group of friends.
+Anything goes, as long as it stays fun and stays in the art style.
 
 ## Jam mode (currently ON)
 
@@ -50,18 +50,32 @@ build) is the only gate.
     modules.
   - `world.ts` — terrain, trees, props. `heightAt(x, z)` is the ground truth
     for ground height — use it for anything that stands on the terrain.
+    `addRegion()` hands a stretch of the map to a second landmass (see the
+    shadow realm below) and enrols its mesh for crater carving.
+  - `realm.ts` / `castle.ts` / `portal.ts` — the shadow realm, the castle in
+    it, and the two gates between there and the island. See below.
   - `character.ts` — the shared blocky character used for local and remote
     players.
   - `player.ts` — local movement, physics, input.
   - `net.ts` — websocket client and message types.
+  - `profile.ts` — persistent per-character identity in localStorage: a secret
+    save token (never broadcast it — it's the key for future server-side
+    saves), plus name, color, and equipped loadout. Settings persist
+    separately in `settings.ts`.
   - `remotes.ts` — rendering/interpolation of other players.
-  - `sky.ts` — sky colour, fog, lights, and the sun (which is shootable).
-  - `critters.ts` — the duck and Nessie. Both ride the wall clock rather than
-    a synced tick; a second of drift is invisible on wildlife.
-  - `treasure.ts` — buried caches and the shovel's detector.
+  - `rocket.ts` — rocket travel: the arc that throws you to another island or
+    onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
+    overlay that aims it — the islands drawn straight out of `baseHeightAt`,
+    with a clickable pin per player.
+  - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
+    island out past the fog. Both ride the wall clock rather than a synced
+    tick; a second of drift between clients is invisible on wildlife.
+  - `treasure.ts` — buried caches and the shovel's detector. Placed by their
+    own seed, so digging can never shift where the trees are.
   - `cheats.ts` — chat cheat codes. They ride the existing chat relay, so
     both ends parse the text and toggle together — no new message type.
-  - `hud.ts` / `killboard.ts` — overlay text and the Tab scoreboard.
+  - `hud.ts` / `killboard.ts` — the banner, the event ticker, and the N-key
+    scoreboard (Tab is the map).
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
   `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
@@ -79,7 +93,18 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 `server/room.ts` — **keep them in sync when you add messages**:
 
 - server→client `welcome`: your id + everyone's last known state
-- client→server `state`: your position/rotation/color/name/weapon/ride (~15x/sec)
+- client→server `state`: your position/rotation/color/name/weapon/ride/skin/
+  talk/emote/hat/head aim (~15x/sec). `hat` is buried-treasure loot (or the
+  duck, if you killed it), built in `character.ts` and parented to the head
+  so it crouches and decapitates along with it. `emote` is the radial-menu pose you're
+  playing (see `emotes.ts`); it rides in `state` rather than being its own
+  message, so late joiners see a dance already in progress. Each client
+  animates it off its own clock. Two poses aren't on the wheel at all:
+  `rocketfly` and `hero` are played by `rocket.ts`, and because they ride this
+  same field, remotes replay a whole rocket flight and superhero landing with
+  no new message — the pose animates off the flight timings in `emotes.ts`,
+  each client on its own clock. Head aim is `hp` (pitch) and `hy` (yaw offset
+  from the body's facing); an emote's head pose overrides it.
 - server→client `state`: another player's state (relayed)
 - server→client `leave`: a player disconnected
 - client→server `chat`: a chat message; server relays it to everyone else as
@@ -88,8 +113,30 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   id. Every client simulates the rocket; each client applies blast knockback
   to itself only (see `effects.ts`).
 - client→server `slash`: katana swing (relayed for the animation). The
-  attacker detects hits and sends `kill` with the victim's id; the server
-  relays it to everyone, and each client plays the decapitation locally.
+  attacker detects hits and sends `hit` `{victim, dmg}`; the server relays it
+  with the attacker's id, and only the named victim acts on it.
+- client→server `kill`: you announce your own death (see Health below), with
+  an optional `by` — whoever last hurt you inside a 10s window. You are the
+  only one who can name your killer, since you are the only one running your
+  own health; deaths to lava, sharks and gravity carry no `by` at all. The
+  server relays it to everyone (adding `killer` and both names) and each
+  client plays the decapitation.
+- client→server `arrow`: a bow shot — origin, direction, and draw power;
+  relayed with the archer's id. Every client simulates the same ballistic
+  arc (`arrows.ts`); hits are cosmetic (arrows embed in terrain, props, and
+  players) and each client applies arrow knockback to itself only.
+- client→server `clock`: a scrub or pause of the shared day/night clock,
+  `{hours, running}`. The server re-anchors its room clock (replayed to late
+  joiners in `welcome`) and relays it to everyone else; each client re-anchors
+  its local clock on receipt (see `daynight.ts`).
+- client→server `fw`: plant a firework at `{x, z, c}` (`c` = shell palette
+  index); relayed with the planter's id. Ground height is resolved per-client
+  from `heightAt`, and the ascent is deterministic (fixed rise time, lean
+  hashed from the plant spot), so everyone sees the shell open in the same
+  patch of sky. Not stored for late joiners — fuses burn down in seconds.
+- client→server `fwgo`: light every firework this player has planted; relayed
+  with the sender's id so a whole battery goes up in sync. Unlit tubes launch
+  themselves after a 5s fuse. See `fireworks.ts`.
 - client→server `crater`: a bowl carved out of the terrain (rocket blast or
   shovel dig), `{x, z, r, d}`. Only the rocket's owner mints its crater (so
   per-client sim divergence can't fork the world). The server stores a capped
@@ -107,15 +154,141 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   replays them in `welcome`, so nobody digs up a chest that's already gone.
   Everything else is fire-and-forget. Add new eggs as new `k` values rather
   than new message types.
+- client→server `shark`: the shark's `{x, z, ry, hp, st, grab}`, ~10x/sec.
+  Only ONE client sends it — the lowest player id in the room hosts the sim
+  and everyone else interpolates the stream (see `shark.ts`). It can't be
+  deterministic like the terrain, because it chases player positions that
+  arrive at different times on every client. A client that hears nothing for
+  2s assumes the elected host is running a build without the shark and falls
+  back to simulating privately (without broadcasting) — otherwise one stale
+  tab holding the lowest id makes the shark invisible for the whole room.
+- client→server `sharkhit`: damage dealt to the shark, relayed so the host can
+  apply it. Only the attacker sends — for rockets that means the owner only,
+  the same rule as craters, or one blast counts once per client in the room.
 
-`state` also carries `hat` — buried-treasure loot, so everyone can see what
-you dug up. Hats are built in `character.ts` and parented to the head.
+What the shark does *to you* (bites, being dragged, the theme music) is
+decided locally on your own client and goes through `health.damage`, the same
+split as blast knockback.
+- client→server `bplace`: a built block, `{gx, gy, gz, m}` (grid cell +
+  material). The server stores blocks in a Map keyed by cell (first placement
+  wins, capped — over the cap it evicts the oldest by broadcasting a killing
+  `bhit` to everyone) and replays them in `welcome` with remaining hp.
+- client→server `bhit`: block damage, `{gx, gy, gz, dmg}`. The attacker mints
+  damage (katana 1, shovel 2, rocket blast 3 from the rocket's owner); hp is
+  a commutative sum of relayed dmg, so clients converge regardless of hit
+  order, and hits on missing blocks are no-ops. See `building.ts`/`blocks.ts`.
+  Hits on cells the server has no block for are relayed anyway and their
+  damage accumulates in a separate map — that's how the castle stays broken
+  (see The shadow realm). Relaying is safe precisely because a hit on nothing
+  is a no-op.
+  The builder's right-click is the one exception to chewing through hp: it
+  sends the block's whole remaining hp as one `bhit`, so the tool that builds
+  also unbuilds in a click. `building.aim()` is the single source of truth for
+  what's targeted — the ghost preview (`blockghost.ts`) and both clicks all go
+  through it, so what you see outlined is exactly what the click acts on.
+- `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
+  world-generated blocks. Replayed onto a freshly regenerated castle.
+- client→server `land`: a rocket trip touching down, `{x, y, z}`; relayed with
+  the traveller's id. The *flight* sends nothing at all — your position already
+  streams ~15x/sec and the pose rides in `state.emote` (see above) — but the
+  impact needs to land on the same frame everywhere, so the touchdown gets its
+  own message. Everyone plays the blast; each client applies the shove and
+  damage to itself only (never the traveller, who is busy sticking the
+  landing), and the traveller alone mints the crater, the same rule rockets
+  follow. See `rocket.ts`.
+- client→server `pet`: someone petted a cat, `{cat: index}`; relayed with the
+  petter's id so everyone sees the heart. Cats themselves are never synced —
+  see `cats.ts`, where position is a closed-form function of the clock. That's
+  why petting is purely cosmetic: it must never move a cat.
+
+- client→server `face`: a 64x64 JPEG data URL from the player's webcam
+  (`{d}`), sent ~5x/sec while the gear-panel toggle is on; `''` means the
+  camera went off. The server validates the prefix and size, keeps the last
+  frame per player for `welcome` replay, and relays it with the sender's id.
+  Clients paint it on the front face of that character's head, and optionally
+  in a strip of squares along the top (`facebar.ts`, a second renderer over the
+  same frames — no extra traffic). The camera is opt-in every session: that
+  setting is deliberately never restored from localStorage, while the
+  display-only strip toggle is. See `webcam.ts` and `setFace` in
+  `character.ts`.
 
 The world is deterministic (seeded PRNG, analytic terrain), so it is never sent
-over the network — every client computes the same island. If you add world
+over the network — every client computes the same islands. If you add world
 content, keep it deterministic or sync it through the room. Terrain damage is
 the one synced mutation: craters live in `welcome` replay, and placement code
 must keep using `baseHeightAt` so the prop PRNG streams never shift.
+
+## Islands
+
+`ISLANDS` in `world.ts` lists them: home at the origin, and the far rock out
+east at x=280, past the fog wall. `baseHeightAt` takes the *tallest* island at
+a point, so each one keeps exactly the shape it had when it was alone — which
+is why adding the second one didn't move a single tree on the first. Adding a
+third means touching four things together:
+
+- `ISLANDS`, plus a terrain tile for it in `createWorld`. One mesh per island,
+  tiled edge to edge in x with matching segment size (3⅓ units) — two meshes
+  over the same ground z-fight, and mismatched segments crack the seam.
+- Its own PRNG seed in the `scatterProps` call, never a shared stream.
+- Check it fits inside `GRID_XZ_MAX` (`blocks.ts` *and* `server/room.ts`) and
+  `WORLD_XZ_MAX` (`server/room.ts`). Both are currently sized for the shadow
+  realm at x≈1800, so there's plenty of room — but a landmass outside them
+  gets its blocks rejected and its craters silently clamped somewhere else,
+  which forks everyone's terrain.
+
+The shark is leashed to home (`ROAM_R` in `shark.ts`), the cats never leave it,
+and `randomSpawn` always puts you back there — so dying abroad sends you home.
+That's deliberate: home is the hub, the far rock is somewhere you travel to.
+Rocket travel goes everywhere, the castle included — `DESTINATIONS` in
+`rocket.ts` is the list, and the map builds its buttons straight off it, so
+anything added there is immediately travellable. Each entry says how to tell
+whether you're standing on it and where to set down; the realm brings its own
+pad, because it's a region rather than an island. The gate is still the scenic
+route. Trips scale their apex with distance — 1800 units at a fixed height is
+a flat skim through the fog instead of an arc over it.
+
+## The shadow realm
+
+A second place, reached through the purple gate on the island's central hill.
+It is **not** a second scene and there is no realm field in the protocol — it
+is simply 1800 units east in the same world. The fog wall (150 units) and the
+camera's far plane (500) mean the island and the realm can never see each
+other, so blocks, craters, rockets, arrows, chat and remote players all keep
+working out there with no new machinery. Which world you are in is derived
+from your own position (`inRealm()`), so gate crossings, respawns and
+reconnects can't disagree about it.
+
+- `realm.ts` owns the basalt plateau (flat at `REALM_GROUND`, a whole number
+  of BLOCKs so the castle sits flush), the lava sea, and the skyline. The lava
+  reuses the island's water trick: `player.ts` floats you at `WATER_LEVEL`
+  over anything deeper, and `main.ts` burns you for it. Dying there respawns
+  you on the island, which is the only way back out other than the gate.
+- `castle.ts` generates ~3,900 ordinary building blocks into the shared grid.
+  It is **world state, not synced state**: every client runs the same function
+  and gets the same castle, so it never crosses the wire. That means *no
+  randomness in castle.ts, ever* — one `Math.random` would fork the world.
+  Only the damage syncs, through the ordinary `bhit` message.
+- `blocks.ts` renders through four `InstancedMesh`es, one per material — a few
+  thousand individual meshes would spend the whole frame on scene-graph
+  traversal. `resetBlocks()` is the welcome path: wipe everything, regenerate
+  the castle pristine, replay `wdmg` onto it, then place the player blocks.
+- Two rules the castle geometry has to respect, both learned the hard way:
+  steps rise exactly one course (1.5, just under the 1.55 auto-step), and
+  **nothing may sit in the cell directly above a step** — the head-height
+  check in `wallAt` will refuse the climb. That's why the keep's four flights
+  spiral around different inner walls instead of stacking, and why the
+  rampart's inner lane skips the stair footprints.
+
+## Health
+
+Your hit points are yours alone (`src/health.ts`), the same rule blast
+knockback follows: every client tracks its own health and nobody else's.
+Attackers only ever send damage — the victim subtracts it, and when it reaches
+zero the victim sends `kill` naming itself. That's why no head ever pops from
+somebody else's laggy simulation. Blast damage is self-applied in
+`effects.onBlast`, own rockets included, so rocket jumps cost you. Health
+regenerates after five quiet seconds and refills on respawn. New weapons
+should send `hit`, never `kill`.
 
 ## Art direction: N64
 

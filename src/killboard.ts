@@ -1,9 +1,11 @@
-// Kills and deaths for the room, held Tab to view.
+// Kills and deaths for the room, held N to view (Tab is the map).
 //
 // The room owns the tally (server/room.ts counts `kill` messages and
 // broadcasts a `score` list) so every board agrees and late joiners see the
 // damage already done. Entries outlive the player who earned them — leaving
-// does not wipe your record.
+// does not wipe your record. Kill credit rides on the victim's own `kill`
+// message, since under health.ts the victim is the only one who knows what
+// finished them.
 
 export interface Score {
   id: string
