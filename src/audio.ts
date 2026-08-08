@@ -512,6 +512,24 @@ class Sfx {
     this.tone('sawtooth', 300, 140, 0.18, 0.16 * vol)
   }
 
+  // Bear roar: a falling growl with a noisy throat.
+  roar(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 170, 65, 0.5, 0.28 * v)
+    this.tone('square', 95, 52, 0.5, 0.16 * v)
+    this.noise('lowpass', 750, 240, 0.45, 0.24 * v)
+  }
+
+  // Gary has spotted you. Gary is coming.
+  scream(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 590, 920, 0.3, 0.15 * v)
+    this.tone('sawtooth', 660, 310, 0.35, 0.13 * v, 0.28)
+    this.tone('square', 880, 1180, 0.12, 0.08 * v, 0.1)
+  }
+
   // Big dumb death groan, then bubbles.
   sharkDie(vol = 1): void {
     this.tone('sawtooth', 200, 38, 0.8, 0.24 * vol)

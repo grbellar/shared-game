@@ -7,6 +7,7 @@ import {
   setName,
   setFace,
   setEmote,
+  setLook,
   startSlash,
   popHead,
   type Pose,
@@ -78,6 +79,7 @@ export class Remotes {
     if (pose === 'swim' && remote.pose !== 'swim' && !isNew) this.onSplash(p.x, p.z)
     remote.pose = pose
     remote.group.userData.talk = p.talk ?? 0 // animateCharacter opens the mouth
+    setLook(remote.group, p.hp ?? 0, p.hy ?? 0)
     const weapon =
       p.weapon === 'gun' ||
       p.weapon === 'sword' ||

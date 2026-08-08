@@ -3,7 +3,7 @@ import { type Bubbles } from './bubbles'
 import { animateCharacter, createCharacter, makeNameTag, startJabber, type Rig } from './character'
 import { heightAt } from './world'
 
-// Scandalous Sandy is intentionally local-only. She is a harmless cosmetic
+// Destiny is intentionally local-only. She is a harmless cosmetic
 // NPC, and each client lets her trail whichever player is nearest on screen.
 // That keeps her responsive without adding another multiplayer authority.
 
@@ -25,7 +25,7 @@ export class Stripper {
     scene: THREE.Scene,
     private bubbles: Bubbles,
   ) {
-    this.group = buildSandy()
+    this.group = buildDestiny()
     this.group.position.set(8, heightAt(8, 6), 6)
     scene.add(this.group)
   }
@@ -49,7 +49,7 @@ export class Stripper {
         const nx = this.group.position.x + this.delta.x * step
         const nz = this.group.position.z + this.delta.z * step
         const ground = heightAt(nx, nz)
-        // Sandy wears heels, not flippers. She waits at the shoreline.
+        // Destiny wears heels, not flippers. She waits at the shoreline.
         if (ground > -0.75) {
           this.group.position.set(nx, ground, nz)
           this.group.rotation.y = Math.atan2(this.delta.x, this.delta.z)
@@ -88,8 +88,8 @@ export class Stripper {
   }
 }
 
-function buildSandy(): THREE.Group {
-  const group = createCharacter('#f5a0bd', 'Scandalous Sandy')
+function buildDestiny(): THREE.Group {
+  const group = createCharacter('#f5a0bd', 'Destiny')
   const rig = group.userData.rig as Rig
   const skin = new THREE.MeshLambertMaterial({ color: 0xd99a78, flatShading: true })
   const pink = new THREE.MeshLambertMaterial({ color: 0xff218c, flatShading: true })
@@ -144,10 +144,10 @@ function buildSandy(): THREE.Group {
   // Replace the ordinary tag with a wider one so the full stage name fits.
   const oldTag = group.getObjectByName('nametag')
   if (oldTag) group.remove(oldTag)
-  const tag = makeNameTag('Scandalous Sandy')
+  const tag = makeNameTag('Destiny')
   tag.scale.x = 4.6
   group.add(top, bustL, bustR, skirt, belt, hairBack, fringe, pony, tag)
-  group.userData.sandy = { skirt }
+  group.userData.destiny = { skirt }
   return group
 }
 

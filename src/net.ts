@@ -4,6 +4,7 @@ import type { Pose } from './character'
 import type { Crater } from './world'
 import type { BlockSpec, WorldDamage } from './blocks'
 import type { SharkNetState } from './shark'
+import type { MobNetState } from './mobs'
 
 export interface PlayerState {
   id: string
@@ -19,6 +20,8 @@ export interface PlayerState {
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
   emote: string // 'none' or an id from src/emotes.ts
+  hp: number // head pitch, up-positive radians
+  hy: number // head yaw, offset from the body's facing
 }
 
 export interface Face {
@@ -59,6 +62,8 @@ type ServerMsg =
   | { t: 'shark'; x: number; z: number; ry: number; hp: number; st: string; grab: string }
   | { t: 'sharkhit'; dmg: number }
   | { t: 'land'; id: string; x: number; y: number; z: number }
+  | { t: 'mob'; i: number; x: number; z: number; ry: number; hp: number; st: string }
+  | { t: 'mobhit'; i: number; dmg: number }
 
 export class Net {
   id: string | null = null
@@ -97,6 +102,8 @@ export class Net {
   onSharkHit: (dmg: number) => void = () => {}
   // Somebody's rocket trip touching down near us.
   onLand: (id: string, pos: [number, number, number]) => void = () => {}
+  onMob: (s: MobNetState) => void = () => {}
+  onMobHit: (i: number, dmg: number) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -167,13 +174,25 @@ export class Net {
           z: msg.z,
           ry: msg.ry,
           hp: msg.hp,
-          st: st === 'hunt' || st === 'grab' || st === 'dead' ? st : 'patrol',
+          st: st === 'hunt' || st === 'grab' || st === 'dead' || st === 'land' ? st : 'patrol',
           grab: msg.grab,
         })
       } else if (msg.t === 'sharkhit') {
         this.onSharkHit(msg.dmg)
       } else if (msg.t === 'land') {
         if (msg.id !== this.id) this.onLand(msg.id, [msg.x, msg.y, msg.z])
+      } else if (msg.t === 'mob') {
+        const st = msg.st
+        this.onMob({
+          i: msg.i,
+          x: msg.x,
+          z: msg.z,
+          ry: msg.ry,
+          hp: msg.hp,
+          st: st === 'chase' || st === 'dead' ? st : 'wander',
+        })
+      } else if (msg.t === 'mobhit') {
+        this.onMobHit(msg.i, msg.dmg)
       }
     }
     ws.onclose = () => {
@@ -240,6 +259,17 @@ export class Net {
   sendLand(pos: { x: number; y: number; z: number }): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'land', x: pos.x, y: pos.y, z: pos.z }))
+  }
+
+  // Only the mob host client sends this (see mobs.ts).
+  sendMob(s: MobNetState): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'mob', ...s }))
+  }
+
+  sendMobHit(i: number, dmg: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'mobhit', i, dmg }))
   }
 
   // Voice-chat signaling (offer/answer/ICE), relayed to one target peer.

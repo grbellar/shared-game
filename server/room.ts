@@ -43,6 +43,15 @@ interface PlayerState {
   skin: string
   talk: number
   emote: string
+  hp: number // head pitch
+  hy: number // head yaw, offset from the body's facing
+}
+
+// Head aim limits, matching src/character.ts.
+function clampLook(v: unknown, limit: number): number {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(-limit, Math.min(limit, n))
 }
 
 // Real seconds per full in-game day. Keep in sync with src/daynight.ts.
@@ -130,6 +139,8 @@ export class GameRoom extends DurableObject<Env> {
         skin: String(msg.skin ?? 'none').slice(0, 12),
         talk: Math.max(0, Math.min(1, Number(msg.talk) || 0)),
         emote: String(msg.emote ?? 'none').slice(0, 12),
+        hp: clampLook(msg.hp, 1.2),
+        hy: clampLook(msg.hy, 1.0),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -359,6 +370,40 @@ export class GameRoom extends DurableObject<Env> {
           x: Number(msg.x) || 0,
           y: Number(msg.y) || 0,
           z: Number(msg.z) || 0,
+        }),
+        ws,
+      )
+    } else if (msg.t === 'mob') {
+      // Land mobs (bear, gary): same host-streamed relay as the shark, one
+      // message per mob index. Nothing stored — late joiners catch the next
+      // tick.
+      const i = Number(msg.i)
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      const ry = Number(msg.ry)
+      const hp = Number(msg.hp)
+      if (![i, x, z, ry, hp].every(Number.isFinite)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'mob',
+          i: Math.max(0, Math.min(7, Math.floor(i))),
+          x,
+          z,
+          ry,
+          hp,
+          st: String(msg.st).slice(0, 8),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'mobhit') {
+      const i = Number(msg.i)
+      const dmg = Number(msg.dmg)
+      if (!Number.isFinite(i) || !Number.isFinite(dmg)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'mobhit',
+          i: Math.max(0, Math.min(7, Math.floor(i))),
+          dmg: Math.max(0, Math.min(200, dmg)),
         }),
         ws,
       )

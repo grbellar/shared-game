@@ -18,6 +18,7 @@ export function createCharacter(color: string, name: string): THREE.Group {
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), skinMat)
   head.name = 'head'
   head.position.y = 1.95
+  head.rotation.order = 'YXZ' // turn, then tilt — a head, not a gimbal
   const eyeGeo = new THREE.BoxGeometry(0.09, 0.12, 0.05)
   const eyeMat = new THREE.MeshLambertMaterial({ color: 0x111111 })
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat)
@@ -56,8 +57,42 @@ export function createCharacter(color: string, name: string): THREE.Group {
   group.add(makeNameTag(name))
   group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
   group.userData.anim = { crouch: 0, swim: 0, mouth: 0 }
+  group.userData.look = { pitch: 0, yaw: 0, tPitch: 0, tYaw: 0 }
   group.userData.baseColor = color // skins.ts resets to this when undressing
   return group
+}
+
+// How far the head can crane before the body has to do the work.
+const HEAD_PITCH_LIMIT = 1.2
+const HEAD_YAW_LIMIT = 1.0
+
+interface Look {
+  pitch: number
+  yaw: number
+  tPitch: number
+  tYaw: number
+}
+
+// Aim the head where the player is looking. `pitch` is up-positive radians;
+// `yaw` is an offset from the body's facing (the body handles big turns, the
+// head covers the rest). Clamped here, so values off the wire are safe.
+export function setLook(group: THREE.Group, pitch: number, yaw: number): void {
+  const look = group.userData.look as Look | undefined
+  if (!look) return
+  look.tPitch = clampAngle(pitch, HEAD_PITCH_LIMIT)
+  // Wrap first: a yaw offset of 350° is really -10°.
+  look.tYaw = clampAngle(Math.atan2(Math.sin(yaw), Math.cos(yaw)), HEAD_YAW_LIMIT)
+}
+
+// Current (eased) head aim — main.ts puts this on the wire.
+export function getLook(group: THREE.Group): { pitch: number; yaw: number } {
+  const look = group.userData.look as Look | undefined
+  return { pitch: look?.pitch ?? 0, yaw: look?.yaw ?? 0 }
+}
+
+function clampAngle(v: number, limit: number): number {
+  if (!Number.isFinite(v)) return 0
+  return Math.max(-limit, Math.min(limit, v))
 }
 
 export interface Rig {
@@ -85,6 +120,14 @@ export function animateCharacter(
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
   anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
   const { crouch, swim } = anim
+
+  // Ease the head toward where the player is looking (see setLook) so network
+  // jitter and mouse flicks don't snap the neck. The pose itself is applied
+  // below, after the emote block — clearEmotePose wipes head rotation.
+  const look = group.userData.look as Look
+  const lk = Math.min(1, 14 * dt)
+  look.pitch += (look.tPitch - look.pitch) * lk
+  look.yaw += (look.tYaw - look.yaw) * lk
 
   // Squat: body and head drop, legs squash so the feet stay planted.
   rig.body.position.y = 1.1 - 0.3 * crouch
@@ -192,6 +235,13 @@ export function animateCharacter(
   if (emote) {
     const t = (performance.now() - ((group.userData.emoteStart as number) ?? 0)) / 1000
     applyEmote(group, rig, emote, t, riding)
+  } else {
+    // Head aim goes on after clearEmotePose so it isn't wiped, and yields to
+    // an emote's canned head pose while one is playing. The lift keeps the
+    // tilted cube's bottom corner out of the shoulders.
+    rig.head.rotation.x = -look.pitch // front is +Z, so negative X tips the face up
+    rig.head.rotation.y = look.yaw
+    rig.head.position.y += 0.07 * Math.abs(look.pitch)
   }
 }
 

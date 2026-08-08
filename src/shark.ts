@@ -22,7 +22,7 @@ import { sfx } from './audio'
 // the shark does to *its* player. Damage *to* the shark is relayed as
 // 'sharkhit' so the host can apply it, and only the attacker sends it.
 
-export type SharkState = 'patrol' | 'hunt' | 'grab' | 'dead'
+export type SharkState = 'patrol' | 'hunt' | 'grab' | 'dead' | 'land'
 
 export interface SharkNetState {
   x: number
@@ -56,6 +56,10 @@ const DRAG_SPEED = 9
 const GRAB_TIME = 4
 const GRAB_COOLDOWN = 5 // breathing room after it lets go
 const RESPAWN_TIME = 22
+// Every so often it forgets it's a fish and flops up the beach after someone.
+const LAND_TIME = 14 // how long a raid lasts before it heads back to sea
+const LAND_SPEED = 8.5 // walking (9) barely escapes; any ride does
+const LAND_RANGE = 58 // it'll chase anyone on the island proper
 const STALE_HOST = 2 // seconds of silence before we assume the host can't sim
 const BITE_DAMAGE = 16
 const CHOMP_DAMAGE = 22 // the initial grab
@@ -215,6 +219,8 @@ export class Shark {
   private flash = 0
   private sendT = 0
   private biteCd = 0
+  private landCd = 40 + Math.random() * 50 // countdown to the next land raid
+  private landT = 0
   private wasGrabbingMe = false
   private netTarget = { x: 0, z: PATROL_R, ry: Math.PI / 2 }
   private mouth = new THREE.Vector3()
@@ -340,6 +346,8 @@ export class Shark {
       this.sinkY = 0
       this.rig.body.rotation.z = 0
     }
+    // The beaching announces itself — one big thrash as it hits the sand.
+    if (next === 'land') sfx.thrash(1)
     this.st = next
   }
 
@@ -362,9 +370,64 @@ export class Shark {
       return
     }
     if (this.grabCd > 0) this.grabCd -= dt
+    if (this.st !== 'grab') this.landCd -= dt
 
     // Only people actually in the water are on the menu.
     const candidates = [{ id: localId, pos: player.group.position }, ...this.remotes.targets()]
+
+    // Land raid: flop up the beach after whoever's closest, then drag
+    // yourself home. Bites still land (see affectPlayer); no grabbing on
+    // land — being towed across a meadow would be a step too far even here.
+    if (this.st === 'land') {
+      // The raid clock only runs ashore — however far the swim in was, you
+      // get the same amount of shark on your lawn.
+      const ashore = heightAt(this.pos.x, this.pos.y) > DEEP
+      if (ashore) this.landT -= dt
+      let prey: THREE.Vector3 | null = null
+      let preyD = Infinity
+      for (const c of candidates) {
+        if (inRealm(c.pos.x, c.pos.z)) continue
+        if (Math.hypot(c.pos.x, c.pos.z) > LAND_RANGE) continue
+        const d = Math.hypot(c.pos.x - this.pos.x, c.pos.z - this.pos.y)
+        if (d < preyD) {
+          preyD = d
+          prey = c.pos
+        }
+      }
+      if (this.landT > 0 && prey) {
+        // Full cruise while still swimming in; ashore, ease off up close, or
+        // the turn radius outruns the bite range and it orbits its lunch.
+        const speed = !ashore
+          ? CRUISE_SPEED
+          : preyD < 7
+            ? Math.max(3.5, (LAND_SPEED * preyD) / 7)
+            : LAND_SPEED
+        this.flop(Math.atan2(prey.x - this.pos.x, prey.z - this.pos.y), speed, dt)
+      } else {
+        // Time's up: straight back out to sea, radially — the shortest wet.
+        this.flop(Math.atan2(this.pos.x, this.pos.y), LAND_SPEED, dt)
+        if (heightAt(this.pos.x, this.pos.y) <= DEEP) {
+          this.setState('patrol')
+          this.landCd = 50 + Math.random() * 60
+        }
+      }
+      return
+    }
+    if (this.landCd <= 0 && this.st !== 'grab') {
+      // Anyone strolling the island? Ruin their picnic.
+      const someone = candidates.some(
+        (c) =>
+          !inRealm(c.pos.x, c.pos.z) &&
+          Math.hypot(c.pos.x, c.pos.z) < LAND_RANGE &&
+          heightAt(c.pos.x, c.pos.z) > 0.5,
+      )
+      if (someone) {
+        this.setState('land')
+        this.landT = LAND_TIME
+        return
+      }
+      this.landCd = 15 // nobody ashore — try again in a bit
+    }
     let prey: { id: string; pos: THREE.Vector3 } | null = null
     let preyD = AGGRO_R
     for (const c of candidates) {
@@ -447,6 +510,15 @@ export class Shark {
     return this.coastCache
   }
 
+  // Land movement: no depth rules, no leash — just lurching surges timed to
+  // the tail thrash. It's a fish. It is not built for this. That's the bit.
+  private flop(desired: number, speed: number, dt: number): void {
+    this.yaw += Math.max(-2.2 * dt, Math.min(2.2 * dt, wrapAngle(desired - this.yaw)))
+    const surge = 0.3 + Math.abs(Math.sin(this.swimPhase * 1.9)) * 1.4
+    this.pos.x += Math.sin(this.yaw) * speed * surge * dt
+    this.pos.y += Math.cos(this.yaw) * speed * surge * dt
+  }
+
   private steer(desired: number, speed: number, dt: number, turnRate: number): void {
     // Never beach itself, never leave the leash: shallow water ahead turns it
     // seaward, and the far edge turns it back toward the island.
@@ -508,7 +580,8 @@ export class Shark {
 
   private pose(dt: number): void {
     const dead = this.st === 'dead'
-    const speed = dead ? 0 : this.st === 'patrol' ? 1 : this.st === 'grab' ? 2.4 : 2
+    const land = this.st === 'land'
+    const speed = dead ? 0 : this.st === 'patrol' ? 1 : this.st === 'grab' ? 2.4 : land ? 2.8 : 2
     this.swimPhase += dt * (3 + speed * 2.5)
 
     if (dead) {
@@ -524,14 +597,21 @@ export class Shark {
       return
     }
 
-    this.group.position.set(this.pos.x, SWIM_Y + Math.sin(this.swimPhase * 0.7) * 0.06, this.pos.y)
+    // Ashore: ride the terrain, hopping with each thrash of the tail.
+    // Everyone computes the same y from the same synced ground, so this
+    // never needs to cross the wire.
+    const y = land
+      ? Math.max(heightAt(this.pos.x, this.pos.y), 0) + 0.75 + Math.abs(Math.sin(this.swimPhase * 1.9)) * 0.5
+      : SWIM_Y + Math.sin(this.swimPhase * 0.7) * 0.06
+    this.group.position.set(this.pos.x, y, this.pos.y)
     this.group.rotation.y = this.yaw
     // Tail swings, body rolls a little into the turn — cheap "alive" tell.
+    // On land the roll goes wild: it's throwing its whole body at the ground.
     this.rig.tail.rotation.y = Math.sin(this.swimPhase * 2) * (0.25 + speed * 0.12)
-    this.rig.body.rotation.z = Math.sin(this.swimPhase) * 0.07
+    this.rig.body.rotation.z = land ? Math.sin(this.swimPhase * 1.9) * 0.45 : Math.sin(this.swimPhase) * 0.07
     this.rig.body.rotation.x = Math.sin(this.swimPhase * 1.3) * 0.03
     // Gapes when it means business.
-    const gape = this.st === 'grab' ? 0.35 : this.st === 'hunt' ? 0.45 : 0.06
+    const gape = this.st === 'grab' ? 0.35 : this.st === 'hunt' ? 0.45 : land ? 0.55 : 0.06
     this.rig.jaw.rotation.x += (gape - this.rig.jaw.rotation.x) * Math.min(1, 8 * dt)
 
     if (this.flash > 0) {
@@ -588,7 +668,8 @@ export class Shark {
       if (this.biteCd > 0) this.biteCd -= dt
       const inWater =
         player.group.position.y <= WATER_LEVEL + 0.4 && heightAt(player.group.position.x, player.group.position.z) <= -1.15
-      if (this.st !== 'dead' && !down && inWater && flat < BITE_R && this.biteCd <= 0) {
+      // On land its teeth work anywhere it can flop to — that's the raid.
+      if (this.st !== 'dead' && !down && (inWater || this.st === 'land') && flat < BITE_R && this.biteCd <= 0) {
         this.biteCd = 1.5
         sfx.chomp()
         this.effects.spawnDebris(this.mouth, 0x8a1f1f, 8, 5)

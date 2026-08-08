@@ -85,14 +85,15 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 
 - server→client `welcome`: your id + everyone's last known state
 - client→server `state`: your position/rotation/color/name/weapon/ride/skin/
-  talk/emote (~15x/sec). `emote` is the radial-menu pose you're playing (see
-  `emotes.ts`); it rides in `state` rather than being its own message, so
-  late joiners see a dance already in progress. Each client animates it off
-  its own clock. Two poses aren't on the wheel at all: `rocketfly` and `hero`
-  are played by `rocket.ts`, and because they ride this same field, remotes
-  replay a whole rocket flight and superhero landing with no new message —
-  the pose animates off the flight timings in `emotes.ts`, each client on its
-  own clock.
+  talk/emote/head aim (~15x/sec). `emote` is the radial-menu pose you're
+  playing (see `emotes.ts`); it rides in `state` rather than being its own
+  message, so late joiners see a dance already in progress. Each client
+  animates it off its own clock. Two poses aren't on the wheel at all:
+  `rocketfly` and `hero` are played by `rocket.ts`, and because they ride this
+  same field, remotes replay a whole rocket flight and superhero landing with
+  no new message — the pose animates off the flight timings in `emotes.ts`,
+  each client on its own clock. Head aim is `hp` (pitch) and `hy` (yaw offset
+  from the body's facing); an emote's head pose overrides it.
 - server→client `state`: another player's state (relayed)
 - server→client `leave`: a player disconnected
 - client→server `chat`: a chat message; server relays it to everyone else as
