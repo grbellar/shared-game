@@ -374,6 +374,41 @@ class Sfx {
     lfo.stop(t0 + 1.15)
   }
 
+  // --- fireworks ---
+
+  // Jamming a tube into the dirt: a thunk, then the fuse catching.
+  plant(): void {
+    this.tone('triangle', 160, 70, 0.13, 0.16)
+    this.noise('highpass', 2800, 6000, 0.6, 0.05)
+  }
+
+  // Ascent: a whistle sliding up over the hiss of burning fuel.
+  whistle(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sine', 360, 1600, 1.5, 0.16 * v)
+    this.noise('highpass', 1800, 5200, 1.2, 0.09 * v)
+  }
+
+  // Shell opening: a crack, a deep thump, and a tail of crackling stars.
+  burst(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('highpass', 3000, 5200, 0.05, 0.35 * v)
+    this.noise('lowpass', 2200, 55, 0.8, 0.6 * v, 0, 8000)
+    this.tone('sine', 130, 38, 0.5, 0.32 * v)
+    for (let i = 0; i < 8; i++) {
+      this.noise(
+        'bandpass',
+        2400 + Math.random() * 2600,
+        1200,
+        0.05,
+        0.09 * v,
+        0.12 + Math.random() * 0.8,
+      )
+    }
+  }
+
   // --- ui ---
 
   chat(): void {

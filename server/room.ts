@@ -252,6 +252,25 @@ export class GameRoom extends DurableObject<Env> {
       const cat = Math.floor(Number(msg.cat))
       if (!Number.isFinite(cat) || cat < 0 || cat > 15) return
       this.broadcast(JSON.stringify({ t: 'pet', id: att.id, cat }), ws)
+    } else if (msg.t === 'fw') {
+      // A planted firework. Not replayed to late joiners: fuses burn down in
+      // seconds, so there'd be nothing left to show them.
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      const c = Math.floor(Number(msg.c))
+      if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(c)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'fw',
+          id: att.id,
+          x: Math.max(-170, Math.min(170, x)),
+          z: Math.max(-170, Math.min(170, z)),
+          c: Math.max(0, Math.min(15, c)),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'fwgo') {
+      this.broadcast(JSON.stringify({ t: 'fwgo', id: att.id }), ws)
     }
   }
 

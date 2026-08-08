@@ -21,7 +21,7 @@ const STORAGE_KEY = 'shared-game.profile'
 const NAMES = ['Goober', 'Turnip', 'Moose', 'Bandit', 'Noodle', 'Crouton', 'Gremlin', 'Pebble', 'Sprout', 'Wizard']
 const COLORS = ['#e23b3b', '#3b6fe2', '#2fa84f', '#e2a53b', '#9b4fd4', '#e26fb0', '#33c2c2', '#c2e23b']
 
-const WEAPONS = ['none', 'gun', 'sword', 'shovel', 'bow', 'builder']
+const WEAPONS = ['none', 'gun', 'sword', 'shovel', 'bow', 'builder', 'firework']
 const RIDES = ['none', 'wheelchair', 'ramsey']
 
 function mint(): Profile {

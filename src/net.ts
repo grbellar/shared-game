@@ -13,7 +13,7 @@ export interface PlayerState {
   color: string
   name: string
   pose: Pose
-  weapon: string // 'none' | 'gun' | 'sword' | 'shovel'
+  weapon: string // 'none' | 'gun' | 'sword' | 'shovel' | 'firework'
   ride: string // 'none' | 'wheelchair' | 'ramsey'
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
@@ -42,6 +42,8 @@ type ServerMsg =
   | { t: 'bplace'; gx: number; gy: number; gz: number; m: number }
   | { t: 'bhit'; gx: number; gy: number; gz: number; dmg: number }
   | { t: 'pet'; id: string; cat: number }
+  | { t: 'fw'; id: string; x: number; z: number; c: number }
+  | { t: 'fwgo'; id: string }
 
 export class Net {
   id: string | null = null
@@ -67,6 +69,8 @@ export class Net {
   onBlockPlace: (gx: number, gy: number, gz: number, m: number) => void = () => {}
   onBlockHit: (gx: number, gy: number, gz: number, dmg: number) => void = () => {}
   onPet: (cat: number) => void = () => {}
+  onFirework: (id: string, x: number, z: number, c: number) => void = () => {}
+  onFireworkLaunch: (id: string) => void = () => {}
   private ws: WebSocket | null = null
 
   connect(): void {
@@ -118,6 +122,10 @@ export class Net {
         this.onBlockHit(msg.gx, msg.gy, msg.gz, msg.dmg)
       } else if (msg.t === 'pet') {
         if (msg.id !== this.id) this.onPet(msg.cat)
+      } else if (msg.t === 'fw') {
+        this.onFirework(msg.id, msg.x, msg.z, msg.c)
+      } else if (msg.t === 'fwgo') {
+        this.onFireworkLaunch(msg.id)
       }
     }
     ws.onclose = () => {
@@ -211,5 +219,18 @@ export class Net {
   sendPet(cat: number): void {
     if (!this.connected) return
     this.ws!.send(JSON.stringify({ t: 'pet', cat }))
+  }
+
+  // Plant a firework at (x, z) with shell palette `c`. Ground height is
+  // resolved per-client, so it isn't sent.
+  sendFirework(x: number, z: number, c: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'fw', x, z, c }))
+  }
+
+  // Light every firework we have planted.
+  sendFireworkLaunch(): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'fwgo' }))
   }
 }

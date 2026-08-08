@@ -97,6 +97,14 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   `{hours, running}`. The server re-anchors its room clock (replayed to late
   joiners in `welcome`) and relays it to everyone else; each client re-anchors
   its local clock on receipt (see `daynight.ts`).
+- client→server `fw`: plant a firework at `{x, z, c}` (`c` = shell palette
+  index); relayed with the planter's id. Ground height is resolved per-client
+  from `heightAt`, and the ascent is deterministic (fixed rise time, lean
+  hashed from the plant spot), so everyone sees the shell open in the same
+  patch of sky. Not stored for late joiners — fuses burn down in seconds.
+- client→server `fwgo`: light every firework this player has planted; relayed
+  with the sender's id so a whole battery goes up in sync. Unlit tubes launch
+  themselves after a 5s fuse. See `fireworks.ts`.
 - client→server `crater`: a bowl carved out of the terrain (rocket blast or
   shovel dig), `{x, z, r, d}`. Only the rocket's owner mints its crater (so
   per-client sim divergence can't fork the world). The server stores a capped

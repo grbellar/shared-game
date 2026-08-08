@@ -15,6 +15,7 @@ import { DayNight } from './daynight'
 import { Building } from './building'
 import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
+import { Fireworks, SHELLS } from './fireworks'
 import { FirstPersonAim } from './firstperson'
 import { Health } from './health'
 import { Cats } from './cats'
@@ -121,7 +122,7 @@ net.onLeave = (id) => {
 }
 net.connect()
 
-type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder'
+type Weapon = 'none' | 'gun' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
 type Ride = 'none' | 'wheelchair' | 'ramsey'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
@@ -182,6 +183,13 @@ effects.onOwnExplosion = (center) => {
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
+
+const fireworks = new Fireworks(scene)
+// Fireworks are loud and high up, so they carry much further than gunfire.
+fireworks.onLaunch = (pos) => sfx.whistle(distVol(pos, 110))
+fireworks.onBurst = (pos) => sfx.burst(distVol(pos, 200))
+net.onFirework = (id, x, z, c) => fireworks.plant(id, x, z, c)
+net.onFireworkLaunch = (id) => fireworks.launchAll(id)
 net.onCrater = (c) => {
   // Dig-sized craters get a scoop sound; rocket craters already boomed.
   if (c.r < 3) sfx.dig(distVol(new THREE.Vector3(c.x, player.group.position.y, c.z), 50))
@@ -364,7 +372,31 @@ function attack(): void {
     // column just ahead; either way the column stacks upward.
     const aimed = fp.isActive ? fp.aimedDigPoint() : null
     building.place(player.group.position, player.group.rotation.y, material, aimed)
+  } else if (weapon === 'firework' && now - lastAttack > 450) {
+    lastAttack = now
+    sfx.plant()
+    fp.swing()
+    startSlash(player.group)
+    net.sendSlash()
+    // Plant at the bottom of the swing, same reach rules as the shovel.
+    setTimeout(() => {
+      const aimed = fp.isActive ? fp.aimedDigPoint() : null
+      const ry = player.group.rotation.y
+      const x = aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 1.6
+      const z = aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 1.6
+      const shell = Math.floor(Math.random() * SHELLS.length)
+      fireworks.plant('me', x, z, shell)
+      net.sendFirework(x, z, shell)
+    }, SLASH_DURATION * 500)
   }
+}
+
+// Light every firework we've planted. They also self-launch when the fuse
+// burns down, so touch players (no keyboard) still get the show.
+function launchFireworks(): void {
+  if (!fireworks.hasPlanted('me')) return
+  fireworks.launchAll('me')
+  net.sendFireworkLaunch()
 }
 window.addEventListener('mousedown', (e) => {
   const target = e.target as HTMLElement
@@ -489,6 +521,14 @@ window.addEventListener('keydown', (e) => {
     buildHud.setMaterial(material)
     saveLoadout()
   }
+  if (e.code === 'KeyK') {
+    weapon = weapon === 'firework' ? 'none' : 'firework'
+    setWeapon(player.group, weapon)
+    sfx.equip(weapon !== 'none')
+    buildHud.setVisible(false)
+    saveLoadout()
+  }
+  if (e.code === 'KeyL') launchFireworks()
   if (e.code === 'KeyR') {
     ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
     setRide(player.group, ride)
@@ -530,8 +570,28 @@ settings.onClockChange = (fromToggle) => {
 }
 
 // Debug handle so agents (and curious friends) can poke the game from the
-// console: game.player, game.remotes, game.net.
-;(window as unknown as Record<string, unknown>).game = { player, remotes, net, fp, settings, daynight, voice, arrows, health, effects, music, building, cats }
+// console: game.player, game.remotes, game.net. `draw()` forces a frame,
+// which is the only way to see anything in a background tab (Chrome throttles
+// requestAnimationFrame to 0fps there, so the canvas just goes stale).
+;(window as unknown as Record<string, unknown>).game = {
+  player,
+  remotes,
+  net,
+  fp,
+  settings,
+  daynight,
+  voice,
+  arrows,
+  health,
+  effects,
+  music,
+  building,
+  cats,
+  fireworks,
+  scene,
+  camera,
+  draw: () => renderer.render(scene, camera),
+}
 
 const clock = new THREE.Clock()
 renderer.setAnimationLoop(() => {
@@ -566,6 +626,7 @@ renderer.setAnimationLoop(() => {
   bubbles.update()
   effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
   arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
+  fireworks.update(dt)
   remotes.update(dt)
   cats.update(dt, player.group.position)
   gameCamera.update(dt, keys, player, settings, fp)

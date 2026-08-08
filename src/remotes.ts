@@ -68,7 +68,8 @@ export class Remotes {
       p.weapon === 'sword' ||
       p.weapon === 'shovel' ||
       p.weapon === 'bow' ||
-      p.weapon === 'builder'
+      p.weapon === 'builder' ||
+      p.weapon === 'firework'
         ? p.weapon
         : 'none'
     if (remote.weapon !== weapon) {

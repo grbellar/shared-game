@@ -163,11 +163,16 @@ export function animateCharacter(
     if (held) held.position.y = (weapon === 'gun' ? 1.8 : 1.5) - 0.3 * crouch
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
-  } else if (weapon === 'sword' || weapon === 'shovel' || weapon === 'builder') {
+  } else if (
+    weapon === 'sword' ||
+    weapon === 'shovel' ||
+    weapon === 'builder' ||
+    weapon === 'firework'
+  ) {
     const t = (performance.now() - ((group.userData.attackStart as number) ?? 0)) / 1000
     if (t < SLASH_DURATION) {
       // Overhead chop: wind up behind the head, slice down past the knees.
-      // Doubles as the shovel's dig scoop.
+      // Doubles as the shovel's dig scoop and the firework's plant.
       rig.armR.rotation.x = -2.8 + (t / SLASH_DURATION) * 3.6
       rig.armR.rotation.z = 0
     } else if (!riding) {
@@ -200,8 +205,8 @@ export function popHead(group: THREE.Group): THREE.Vector3 | null {
 }
 
 // Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand),
-// 'shovel' or 'builder' (also right hand), or 'none'. Synced over the
-// network via the `weapon` field in PlayerState.
+// 'shovel', 'builder' or 'firework' (also right hand), or 'none'. Synced over
+// the network via the `weapon` field in PlayerState.
 export function setWeapon(group: THREE.Group, weapon: string): void {
   const existing = group.getObjectByName('weapon')
   if (existing) existing.parent!.remove(existing)
@@ -222,6 +227,8 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
     group.add(bow)
   } else if (weapon === 'builder') {
     armR.add(buildBuilder())
+  } else if (weapon === 'firework') {
+    armR.add(buildFirework())
   }
 }
 
@@ -498,6 +505,33 @@ export function buildBuilder(): THREE.Group {
   head.position.y = -1.55
   mallet.add(shaft, band, head)
   return mallet
+}
+
+// An unlit firework carried by its stick, tube-end down past the fist
+// (local -Y) like the shovel — so the same overhead chop reads as jamming it
+// into the dirt.
+export function buildFirework(): THREE.Group {
+  const rocket = new THREE.Group()
+  rocket.name = 'weapon'
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8a5a2b, flatShading: true })
+  const paper = new THREE.MeshLambertMaterial({ color: 0xd93b3b, flatShading: true })
+  const gold = new THREE.MeshLambertMaterial({ color: 0xffc93b, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x2a2016, flatShading: true })
+
+  const stick = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.0, 0.05), wood)
+  stick.position.y = -0.85
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.62, 6), paper)
+  tube.position.y = -1.62
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.175, 0.11, 6), gold)
+  band.position.y = -1.45
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.3, 6).rotateX(Math.PI), gold)
+  nose.position.y = -2.08
+  const fuse = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.2, 0.045), dark)
+  fuse.position.set(0.16, -1.34, 0)
+  fuse.rotation.z = 0.5
+
+  rocket.add(stick, tube, band, nose, fuse)
+  return rocket
 }
 
 // Exported for cats.ts, which hangs a smaller one over each cat.
