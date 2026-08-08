@@ -1,18 +1,25 @@
-# shared-game
+# CLAUDE.md
 
-A silly multiplayer 3D game built entirely by LLM agents, iterated on by a group
-of friends. Anything goes, as long as it stays fun and stays in the art style.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+shared-game is a silly multiplayer 3D game built entirely by LLM agents, iterated
+on by a group of friends. Anything goes, as long as it stays fun and stays in the
+art style.
 
 ## Commands
 
 - `npm run dev` — local dev. Opens the client on http://localhost:5173 (hot
   reload) and the multiplayer server via `wrangler dev` on :8787. The `/ws`
   websocket is proxied from vite to wrangler, so multiplayer works locally —
-  open two browser tabs to test it.
+  open two browser tabs to test it. Always test on :5173 — :8787 serves the
+  `dist/` snapshot built when dev started, not your live changes.
 - `npm run build` — typechecks client and server, then builds to `dist/`.
   Always run this before committing.
 - `npm run deploy` — build + deploy to Cloudflare Workers (game + server in
   one). Pushing to `main` also deploys via GitHub Actions.
+
+There are no tests and no linter. `npm run build` (both typechecks + the vite
+build) is the only gate.
 
 ## Architecture
 
@@ -26,9 +33,16 @@ of friends. Anything goes, as long as it stays fun and stays in the art style.
   - `player.ts` — local movement, physics, input.
   - `net.ts` — websocket client and message types.
   - `remotes.ts` — rendering/interpolation of other players.
-- `server/` — Cloudflare Worker. `room.ts` is a Durable Object (`GameRoom`)
-  that relays player state between everyone in the room. It is a dumb relay
-  with no game authority; clients are trusted (it's a game between friends).
+- `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
+  Durable Object per room (default `"main"`); everything else is served from
+  `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
+  relays player state between everyone in the room. It is a dumb relay with no
+  game authority; clients are trusted (it's a game between friends). Room state
+  is in-memory only — fine, because clients re-send their state ~15x/sec.
+- Client and server are separate TypeScript projects (`tsconfig.json` covers
+  `src/` with DOM types; `server/tsconfig.json` uses Workers types). Nothing is
+  imported across that boundary, which is why the protocol types exist in both
+  places and are kept in sync by hand.
 
 ## Multiplayer protocol
 
