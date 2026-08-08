@@ -7,7 +7,9 @@ import { sfx } from './audio'
 const SPEED = 9
 const RIDE_SPEED = 16 // wheelchair beats walking
 const RAMSEY_SPEED = 19 // and four limbs beat two wheels
-const GRAVITY = 30
+// Exported because anything that flies the player itself (trebuchet.ts) has to
+// fall at the same rate the ground physics does.
+export const GRAVITY = 30
 const JUMP_VELOCITY = 11
 export const WATER_LEVEL = -1.1 // deep water floats you chest-deep instead of sinking forever
 const FLOAT_BAND = 0.15 // how close to the surface still counts as floating

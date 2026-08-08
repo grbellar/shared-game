@@ -49,6 +49,21 @@
         padding: 5px 10px;
         -webkit-tap-highlight-color: transparent;
       }
+      #treb-hint {
+        position: fixed;
+        /* Sits above the pet hint's line so the two can't collide. */
+        bottom: 96px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        color: #ffe6b8;
+        font: 12px monospace;
+        padding: 5px 10px;
+        white-space: nowrap;
+        -webkit-tap-highlight-color: transparent;
+      }
       #status {
         position: fixed;
         top: calc(env(safe-area-inset-top) + 12px);
@@ -217,7 +232,7 @@
     <div id="status"></div>
     <div id="flash"></div>
     <div id="realm-banner"></div>
-    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; mouse aim (click grabs, Esc frees) &middot; E items &middot; Q ride &middot; X emotes &middot; Tab map (click a friend to rocket to them) &middot; J next place &middot; Enter chat &middot; V voice &middot; P pet cat &middot; click attack</div>
+    <div id="hint">WASD move &middot; Shift sprint &middot; C crouch &middot; Space jump &middot; mouse aim (click grabs, Esc frees) &middot; E items &middot; Q ride &middot; X emotes &middot; Tab map (click a friend to rocket to them) &middot; J next place &middot; walk into the trebuchet &middot; Enter chat &middot; V voice &middot; P pet cat &middot; click attack</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

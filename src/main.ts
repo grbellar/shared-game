@@ -36,6 +36,7 @@ import { EmoteWheel } from './emotewheel'
 import { ItemWheel } from './itemwheel'
 import { GameMap } from './map'
 import { RocketRide, DESTINATIONS, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
+import { Trebuchet } from './trebuchet'
 import {
   setWeapon,
   setRide,
@@ -235,10 +236,8 @@ emotes.onChange = (id) => {
 }
 const emoteWheel = new EmoteWheel(touch.active)
 emoteWheel.onPick = (id) => emotes.play(id)
-remotes.onEmote = (id, emote) => {
-  const group = remotes.getGroup(id)
-  sfx.emote(emote, group ? distVol(group.position, 60) : 0.6)
-}
+// remotes.onEmote is wired further down, where the trebuchet exists: someone
+// else's pose flipping to 'slung' is the only signal that it just fired.
 
 setInterval(() => {
   const look = getLook(player.group)
@@ -408,18 +407,54 @@ rocket.onLaunch = () => {
 // and never sees the shot.
 const HERO_HOLD_MS = 1400
 let heroUntil = 0
-rocket.onLand = (pos) => {
+// Coming down out of the sky under your own weight, whether a rocket or a
+// counterweight put you up there. Same rule the rockets follow: the traveller
+// alone mints the world damage, so per-client divergence can never fork the
+// terrain. No self-damage — sticking the landing is the whole point.
+function touchdown(pos: THREE.Vector3): void {
   emotes.play('hero')
   heroUntil = performance.now() + HERO_HOLD_MS
   effects.spawnImpact(pos)
   sfx.impact()
   net.sendLand(pos)
-  // Same rule the rockets follow: the traveller alone mints the world damage,
-  // so per-client divergence can never fork the terrain. No self-damage —
-  // sticking the landing is the whole point.
   destruction.rocketCrater(pos)
   building.blastDamage(pos)
   shark.blast(pos)
+}
+rocket.onLand = touchdown
+// The trebuchet on the north shelf. Walk into the sling and it latches you in;
+// it aims itself off your facing, which is how every other client's copy
+// swings round with you without a single message of its own (see trebuchet.ts).
+const trebuchet = new Trebuchet(scene, effects)
+trebuchet.volumeAt = (pos) => distVol(pos, 120)
+trebuchet.remoteRider = () => remotes.slingRider()
+trebuchet.onBoard = () => {
+  emotes.stop()
+  emotes.play('slingride')
+}
+trebuchet.onThrow = () => emotes.play('slung')
+trebuchet.onExit = () => emotes.stop()
+trebuchet.onLand = (pos, water) => {
+  // Straight into the sea: the splash is enough, and cratering the seabed
+  // would be a crater nobody can see. Remotes splash for free — their copy of
+  // us flips to the swim pose on the next state.
+  if (water) {
+    // Two rings, because a person arriving at sixty metres a second makes a
+    // bigger hole in the sea than someone wading in.
+    effects.spawnSplash(pos.x, pos.z)
+    effects.spawnSplash(pos.x + 0.8, pos.z - 0.8)
+    sfx.splash()
+    emotes.stop()
+    return
+  }
+  touchdown(pos)
+}
+// Somebody else's shot. Their pose flipping to 'slung' IS the fire event, so
+// the arm starts its swing on the same state that starts their flight.
+remotes.onEmote = (id, emote) => {
+  const group = remotes.getGroup(id)
+  sfx.emote(emote, group ? distVol(group.position, 60) : 0.6)
+  if (emote === 'slung') trebuchet.remoteFire()
 }
 net.onLand = (_id, at) => {
   const pos = new THREE.Vector3(...at)
@@ -852,6 +887,16 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault()
     chat.open()
   }
+  // Strapped into the trebuchet, space is the trigger rather than a jump, and
+  // C climbs back out. Edge-triggered on purpose: walking in with space held
+  // down should not fling you before you've had a look at where you're aimed.
+  if (trebuchet.loaded) {
+    if (e.code === 'Space' && !e.repeat) {
+      e.preventDefault()
+      trebuchet.fire()
+    }
+    if (e.code === 'KeyC' && !e.repeat) trebuchet.eject(player)
+  }
   if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
   if (e.code === 'KeyH') equipWeapon(weapon === 'sword' ? 'none' : 'sword')
   if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
@@ -961,6 +1006,7 @@ function crossTo(gate: Gate): void {
   skeletons,
   faceBar,
   rocket,
+  trebuchet,
   map,
   scene,
   camera,
@@ -978,9 +1024,10 @@ renderer.setAnimationLoop(() => {
   music.setScore(shadow ? 'shadow' : 'island')
   // Any overlay borrows the mouse — the wheels and the travel map alike.
   fp.paused = emoteWheel.isOpen || handWheel.isOpen || rideWheel.isOpen || map.isOpen
-  // No aiming down a scope while the rocket flies you; the chase cam sells it.
+  // No aiming down a scope while the rocket flies you (or the trebuchet does);
+  // the chase cam sells it.
   fp.setActive(
-    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active,
+    settings.firstPerson && weapon !== 'none' && !touch.active && !rocket.active && !trebuchet.busy,
     weapon,
   )
   fp.update(dt)
@@ -1015,6 +1062,14 @@ renderer.setAnimationLoop(() => {
   // the arc writes it here, before anything else reads where we are — the
   // gates below included, so a rocket can't be teleported out mid-arc.
   rocket.update(dt, player)
+  // Same slot, same reason: while it has you, the trebuchet writes where you
+  // are — sitting in the basket, riding the arm up, or on your way across the
+  // island. A/D steers the frame instead of your feet.
+  trebuchet.update(
+    dt,
+    player,
+    (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS,
+  )
   const gate = portals.update(dt, player.group.position)
   if (gate) crossTo(gate)
   const nowShadow = inRealm(player.group.position.x, player.group.position.z)
@@ -1055,7 +1110,7 @@ renderer.setAnimationLoop(() => {
   // Moving, jumping or dying drops you out of an emote — except while the
   // rocket owns you, and for a beat after it sets you down, where the pose is
   // the payoff rather than something you idly triggered. Dying still cancels.
-  const posed = rocket.active || performance.now() < heroUntil
+  const posed = rocket.active || trebuchet.busy || performance.now() < heroUntil
   emotes.update(
     player.dead || (!posed && (player.moving || keys.has('Space') || touch.jumpHeld)),
   )

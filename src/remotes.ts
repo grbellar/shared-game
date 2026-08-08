@@ -132,15 +132,26 @@ export class Remotes {
     }))
   }
 
-  // Whoever is currently mid rocket-trip, so main.ts can smoke behind them.
-  // Derived entirely from the pose that already rides in `state` — a rocket
-  // flight costs the network nothing beyond the position stream.
+  // Whoever is currently mid-flight, so main.ts can smoke behind them: under
+  // rocket power, or out of the trebuchet. Derived entirely from the pose that
+  // already rides in `state` — neither costs the network anything beyond the
+  // position stream.
   flying(): THREE.Vector3[] {
     const out: THREE.Vector3[] = []
     for (const r of this.players.values()) {
-      if (r.emote === 'rocketfly') out.push(r.group.position)
+      if (r.emote === 'rocketfly' || r.emote === 'slung') out.push(r.group.position)
     }
     return out
+  }
+
+  // Whoever else is sitting in the trebuchet's sling. Their facing is the
+  // machine's aim (see trebuchet.ts), which is why this returns it — the frame
+  // swings round on their streamed rotation without a message of its own.
+  slingRider(): { ry: number } | undefined {
+    for (const r of this.players.values()) {
+      if (r.emote === 'slingride') return { ry: r.group.rotation.y }
+    }
+    return undefined
   }
 
   nameOf(id: string): string {

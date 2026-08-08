@@ -41,6 +41,14 @@ export const POSES: EmoteDef[] = [
   // before touchdown and drop you into a walk cycle at 90 metres up.
   { id: 'rocketfly', icon: '🚀', label: 'liftoff', seconds: ROCKET_FLIGHT_S + 0.4 },
   { id: 'hero', icon: '🦸', label: 'landing', seconds: 2.8 },
+  // The trebuchet's two. These aren't just poses: they're the whole feature's
+  // network protocol. 'slingride' tells every other client who is sitting in
+  // the basket (so their copy of the frame can aim itself off that player's
+  // facing), and the flip to 'slung' IS the fire event. See trebuchet.ts.
+  // Sitting in the sling has no timeout worth the name — you're welcome to
+  // think about it — and the flight ends on the pose the landing plays.
+  { id: 'slingride', icon: '🪨', label: 'loaded', seconds: 600 },
+  { id: 'slung', icon: '🪃', label: 'yeeted', seconds: 20 },
 ]
 
 export function emoteById(id: string): EmoteDef | undefined {
@@ -180,6 +188,47 @@ export function applyEmote(
       rig.legR.rotation.x = 0.15
       rig.legL.rotation.z = 0.04
       rig.legR.rotation.z = -0.04
+    }
+  } else if (id === 'slingride') {
+    // Folded into the sling basket with both fists on the ropes overhead and
+    // the knees up round the chin. The shake builds the longer you sit there,
+    // which is the joke — nobody has ever felt calm in this thing.
+    const nerve = Math.min(1, t / 4)
+    const shake = Math.sin(t * 27) * (0.02 + 0.05 * nerve)
+    group.rotation.x = 0.18 // tipped back, staring up the arm
+    rig.body.rotation.x = 0.22
+    rig.body.rotation.z = shake
+    rig.head.rotation.x = 0.4 + shake * 0.5
+    rig.armL.rotation.x = -2.75
+    rig.armR.rotation.x = -2.75
+    rig.armL.rotation.z = -0.32 + shake
+    rig.armR.rotation.z = 0.32 + shake
+    rig.body.position.y -= 0.18
+    rig.head.position.y -= 0.14
+    if (legs) {
+      rig.legL.rotation.x = -1.5
+      rig.legR.rotation.x = -1.5
+      rig.legL.rotation.z = -0.2
+      rig.legR.rotation.z = 0.2
+    }
+  } else if (id === 'slung') {
+    // Yeeted. A flat-out forward somersault that spins hardest off the sling
+    // and unwinds as the arc flattens — so you're roughly the right way up by
+    // the time the ground arrives. The whole thing runs off the emote clock,
+    // which is why remotes tumble in step without a byte crossing the wire.
+    group.rotation.x = -(1 - Math.exp(-t * 0.55)) * 22
+    const windmill = t * 16
+    rig.armL.rotation.x = -2.3 + Math.sin(windmill) * 1.5
+    rig.armR.rotation.x = -2.3 + Math.sin(windmill + 2.4) * 1.5
+    rig.armL.rotation.z = -0.55
+    rig.armR.rotation.z = 0.55
+    rig.body.rotation.y = Math.sin(t * 5.5) * 0.3
+    rig.head.rotation.x = -0.45
+    if (legs) {
+      rig.legL.rotation.x = -0.7 + Math.sin(windmill + 1.2) * 0.8
+      rig.legR.rotation.x = -0.7 + Math.sin(windmill + 3.6) * 0.8
+      rig.legL.rotation.z = -0.25
+      rig.legR.rotation.z = 0.25
     }
   } else if (id === 'hero') {
     // The superhero landing, held while the dust clears. Two beats: dropped

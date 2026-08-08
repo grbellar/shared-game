@@ -93,9 +93,10 @@ export class RocketRide {
   }
 
   // Returns false if you're in no state to be launched — already flying, dead,
-  // or in a shark's mouth (it would just tow you back).
+  // in a shark's mouth (it would just tow you back), or strapped into the
+  // trebuchet, which owns your position for exactly the same reason we would.
   launch(player: Player, dest: RocketDest): boolean {
-    if (this.t >= 0 || player.dead || player.grabbed) return false
+    if (this.t >= 0 || player.dead || player.grabbed || player.flying) return false
     this.from.copy(player.group.position)
     this.to.set(dest.x, dest.z)
     this.followId = dest.followId ?? null

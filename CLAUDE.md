@@ -67,6 +67,10 @@ build) is the only gate.
     onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
     overlay that aims it — the islands drawn straight out of `baseHeightAt`,
     with a clickable pin per player.
+  - `trebuchet.ts` — the siege engine on the shelf at (-15, 45). Walk into the
+    sling and it latches you in; A/D swings the frame, space fires, C climbs
+    out. It shares rocket travel's touchdown (`land`) and adds **no message of
+    its own** — see below.
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
   `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
@@ -170,6 +174,16 @@ split as blast knockback.
   damage to itself only (never the traveller, who is busy sticking the
   landing), and the traveller alone mints the crater, the same rule rockets
   follow. See `rocket.ts`.
+- **the trebuchet sends nothing at all** (`trebuchet.ts`), and that's the whole
+  design. Two poses in `state.emote` carry it: `slingride` says who is sitting
+  in the basket — every client aims its copy of the frame at that player's
+  streamed `ry`, so the machine swings round as they turn — and the flip to
+  `slung` IS the fire event, so the arm starts its swing on the very state that
+  starts the flight and the two can't disagree. Remotes start their clock at
+  the release rather than the trigger, because the state that told them about
+  it is the release. Consequence: a client joining mid-flight sees `slung` as
+  somebody's first state and plays one swing of an arm that already fired.
+  Cheaper than a message for a machine that is idle 99% of the time.
 - client→server `pet`: someone petted a cat, `{cat: index}`; relayed with the
   petter's id so everyone sees the heart. Cats themselves are never synced —
   see `cats.ts`, where position is a closed-form function of the clock. That's

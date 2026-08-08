@@ -493,6 +493,52 @@ class Sfx {
     }
   }
 
+  // --- trebuchet ---
+
+  // Climbing into the sling: rope and leather taking your weight.
+  trebLoad(): void {
+    this.noise('bandpass', 220, 620, 0.3, 0.14)
+    this.tone('triangle', 70, 52, 0.22, 0.1)
+  }
+
+  // The trigger pin coming out, and the same iron clack when the pawl catches
+  // at the top of the reload.
+  trebLatch(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('square', 900, 380, 0.05, 0.16 * v)
+    this.noise('bandpass', 2600, 900, 0.07, 0.14 * v)
+  }
+
+  // The throw: two tonnes of rock falling, timber loading up, and the air
+  // getting out of the way of the arm.
+  trebThrow(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 60, 150, 0.35, 0.2 * v)
+    this.noise('bandpass', 300, 3200, 0.32, 0.34 * v)
+    this.noise('highpass', 900, 4800, 0.22, 0.18 * v, 0.1)
+  }
+
+  // The arm hitting its stop, felt in the ground.
+  trebSlam(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sine', 110, 26, 0.7, 0.5 * v)
+    this.noise('lowpass', 1800, 70, 0.5, 0.5 * v, 0, 8000)
+    for (let i = 0; i < 3; i++) {
+      this.noise('bandpass', 1400 + i * 700, 600, 0.05, 0.09 * v, 0.09 + i * 0.06)
+    }
+  }
+
+  // One notch of the winch hauling the arm back down.
+  trebRatchet(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('square', 520, 300, 0.035, 0.09 * v)
+    this.noise('bandpass', 1900, 800, 0.045, 0.08 * v)
+  }
+
   // --- shark ---
 
   // The two-note stalking motif. Call it every frame with 0..1 closeness and
