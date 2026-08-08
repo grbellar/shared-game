@@ -22,6 +22,8 @@ export class Health {
   // Fires the moment hp reaches zero. main.ts turns it into the death show
   // and the `kill` broadcast.
   onDeath: () => void = () => {}
+  // Fired whenever we take damage, whoever caused it. The Meckies listen.
+  onHurt: () => void = () => {}
   hp = MAX_HP
   dead = false
   private sinceHurt = REGEN_DELAY
@@ -142,6 +144,10 @@ export class Health {
 
   damage(amount: number): void {
     if (this.dead || !(amount > 0)) return
+    // Anything that hurts us, from any source. Mobs and skeletons call
+    // damage() straight from their own modules rather than going through a
+    // `hit` message, so this is the only place that sees ALL of it.
+    this.onHurt()
     this.hp = Math.max(0, this.hp - amount)
     this.sinceHurt = 0
     this.flash = Math.min(1, 0.45 + amount / MAX_HP)

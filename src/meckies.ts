@@ -36,9 +36,6 @@ function homeSpot(i: number): { x: number; z: number } {
 }
 
 const PICKUP_RANGE = 3.2
-// How close a Meckie has to be to notice someone hurting you. Carried always
-// counts, however far the two of you have travelled.
-const GUARD_RANGE = 14
 const CRY_COOLDOWN = 2.6 // seconds, per resident
 const FURY_TIME = 1.6 // how long the face stays angry after a cry
 
@@ -78,6 +75,8 @@ export class Meckies {
   onMove: (i: number, x: number, z: number, by: string) => void = () => {}
   // A Meckie shouted. main.ts puts it in a speech bubble over them.
   onWarCry: (group: THREE.Group, text: string) => void = () => {}
+  // Same cry, into the chat log, so it's visible from anywhere.
+  onSay: (name: string, text: string) => void = () => {}
   // A Meckie struck back at whoever hurt their person. main.ts turns this into
   // damage on that player — through the ordinary `hit` message, so the victim
   // still decides whether it killed them and announces it themselves.
@@ -171,22 +170,36 @@ export class Meckies {
     this.onMove(i, this.live[i].x, this.live[i].z, 'me')
   }
 
-  // Somebody just hurt the person they live with. Every Meckie who is with
-  // you — in your arms, or close enough to see it — cries out and goes for
-  // the attacker. They are family; this is the whole point of them.
+  // Somebody just hurt the person they live with. EVERY Meckie answers,
+  // wherever they happen to be — there is no distance at which your family
+  // stops being your family, and gating this on proximity meant that in
+  // practice (one resident, sat in one spot) they almost never answered at
+  // all. The cry goes to the chat log as well as a bubble, so you hear it
+  // even when they're across the island.
   avenge(attackerId: string): void {
-    if (!attackerId) return
+    this.cryOut((l) => {
+      if (attackerId) this.onStrike(attackerId)
+      return l
+    })
+  }
+
+  // Hurt by something that isn't a player — a bear, a skeleton, the lava.
+  // They still shout; there's just nobody to send damage to.
+  rally(): void {
+    this.cryOut(() => {})
+  }
+
+  private cryOut(each: (l: Live) => void): void {
     this.live.forEach((l, i) => {
-      if (this.cryCd[i] > 0) return
-      const withMe = l.by === 'me' || l.group.position.distanceTo(this.playerPos) < GUARD_RANGE
-      if (!withMe) return
+      if (this.cryCd[i] > 0) return // one cry per resident per cooldown
       this.cryCd[i] = CRY_COOLDOWN
       this.fury[i] = FURY_TIME
       const cry = WAR_CRIES[Math.floor(Math.random() * WAR_CRIES.length)]
         .replaceAll('%s', this.personName().toUpperCase())
       this.onWarCry(l.group, cry)
+      this.onSay(RESIDENTS[i].name, cry)
       sfx.warCry()
-      this.onStrike(attackerId)
+      each(l)
     })
   }
 

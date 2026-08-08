@@ -168,6 +168,9 @@ if (settings.webcamFace) {
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
+// Anything that hurts us and isn't a player — a bear, a skeleton, the lava —
+// still brings the house down. Nobody to strike, but they shout about it.
+health.onHurt = () => meckies.rally()
 const cats = new Cats(scene, touch.active)
 // The Meckies: residents you can pick up and carry somewhere else.
 const meckies = new Meckies(scene, touch.active)
@@ -495,6 +498,7 @@ function rocketToNextIsland(): void {
 meckies.onMove = (i, x, z, by) => net.sendMeckie(i, x, z, by)
 meckies.personName = () => profile.name
 meckies.onWarCry = (group, text) => bubbles.show(group, text)
+meckies.onSay = (name, text) => chat.addMessage(name, text)
 // Struck through the ordinary `hit` path, so the rules still hold: attackers
 // only ever send damage, and the victim is the one who decides it was fatal
 // and announces their own death.
@@ -520,9 +524,11 @@ net.onSlash = (id) => {
   remotes.slash(id)
 }
 net.onHit = (attacker, dmg) => {
-  health.damage(dmg)
-  // Your Meckies saw that. Anyone with you cries out and goes for them.
+  // avenge BEFORE the damage lands: health.damage fires onHurt below, and
+  // whichever fires first takes the per-resident cooldown. This one knows who
+  // did it and can hit back, so it has to win.
   meckies.avenge(attacker)
+  health.damage(dmg)
 }
 // Losing the last of your health is your own announcement to make: the head
 // pops here, and everyone else hears about it through `kill`.
