@@ -27,6 +27,7 @@ import { FirstPersonAim } from './firstperson'
 import { Minimap } from './minimap'
 import { Health } from './health'
 import { Shark } from './shark'
+import { Mobs } from './mobs'
 import { Cats } from './cats'
 import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
@@ -269,6 +270,7 @@ net.onArrow = (id, origin, dir, power) => {
 }
 const destruction = new Destruction(effects, net)
 const shark = new Shark(scene, net, effects, remotes, health)
+const mobs = new Mobs(scene, net, effects, remotes, health)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
@@ -345,6 +347,7 @@ effects.onOwnExplosion = (center) => {
   // Same rule as craters: only the rocket's owner scores the hit, so one
   // blast can't be counted once per client in the room.
   shark.blast(center)
+  mobs.blast(center)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
@@ -592,6 +595,7 @@ function attack(): void {
         }
       }
       if (shark.swing(player.group.position, player.group.rotation.y, 34)) return
+      if (mobs.swing(player.group.position, player.group.rotation.y, 34)) return
       const block = meleeBlockTarget()
       if (block) building.hit(block.gx, block.gy, block.gz, 1)
     }, SLASH_DURATION * 500)
@@ -612,6 +616,7 @@ function attack(): void {
       }
       // A shovel to the nose counts too, and beats digging a hole in the sea.
       if (shark.swing(player.group.position, player.group.rotation.y, 24)) return
+      if (mobs.swing(player.group.position, player.group.rotation.y, 24)) return
       const aimed = fp.isActive ? fp.aimedDigPoint() : null
       const ry = player.group.rotation.y
       destruction.dig(
@@ -791,7 +796,10 @@ if (profile.voice) {
 
 const chat = new Chat()
 shark.onDeath = () => chat.addMessage('🦈', 'blub…')
+mobs.onDeath = (name) =>
+  chat.addMessage(name === 'bear' ? '🐻' : '😵', name === 'bear' ? 'the bear is down' : 'gary will return')
 const bubbles = new Bubbles(camera, renderer.domElement)
+mobs.onSay = (group, text) => bubbles.show(group, text)
 const stripper = new Stripper(scene, bubbles)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
@@ -933,6 +941,7 @@ function crossTo(gate: Gate): void {
   arrows,
   health,
   shark,
+  mobs,
   effects,
   music,
   building,
@@ -1060,6 +1069,7 @@ renderer.setAnimationLoop(() => {
   // After the player and remotes have moved: the shark chases current
   // positions, and when it has you it overrides where you ended up.
   shark.update(dt, player)
+  mobs.update(dt, player)
   if (!shark.draggingMe) mashCount = 0
   cats.update(dt, player.group.position)
   stripper.update(dt, [player.group.position, ...remotes.targets().map(({ pos }) => pos)])

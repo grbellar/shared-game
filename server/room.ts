@@ -373,6 +373,40 @@ export class GameRoom extends DurableObject<Env> {
         }),
         ws,
       )
+    } else if (msg.t === 'mob') {
+      // Land mobs (bear, gary): same host-streamed relay as the shark, one
+      // message per mob index. Nothing stored — late joiners catch the next
+      // tick.
+      const i = Number(msg.i)
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      const ry = Number(msg.ry)
+      const hp = Number(msg.hp)
+      if (![i, x, z, ry, hp].every(Number.isFinite)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'mob',
+          i: Math.max(0, Math.min(7, Math.floor(i))),
+          x,
+          z,
+          ry,
+          hp,
+          st: String(msg.st).slice(0, 8),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'mobhit') {
+      const i = Number(msg.i)
+      const dmg = Number(msg.dmg)
+      if (!Number.isFinite(i) || !Number.isFinite(dmg)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'mobhit',
+          i: Math.max(0, Math.min(7, Math.floor(i))),
+          dmg: Math.max(0, Math.min(200, dmg)),
+        }),
+        ws,
+      )
     }
   }
 
