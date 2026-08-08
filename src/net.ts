@@ -9,6 +9,7 @@ export interface PlayerState {
   color: string
   name: string
   weapon: string // 'none' | 'gun' | 'sword'
+  ride: string // 'none' | 'wheelchair'
 }
 
 type ServerMsg =

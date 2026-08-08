@@ -3,6 +3,7 @@ import { createCharacter, animateCharacter } from './character'
 import { heightAt } from './world'
 
 const SPEED = 9
+const RIDE_SPEED = 16 // wheelchair beats walking
 const GRAVITY = 30
 const JUMP_VELOCITY = 11
 const WATER_LEVEL = -0.6 // you float waist-deep instead of sinking forever
@@ -10,6 +11,7 @@ const WATER_LEVEL = -0.6 // you float waist-deep instead of sinking forever
 export class Player {
   group: THREE.Group
   dead = false
+  riding = false
   private velY = 0
   private velX = 0
   private velZ = 0
@@ -66,8 +68,9 @@ export class Player {
       dx /= len
       dz /= len
       const speed = Math.min(mag, 1)
-      this.group.position.x += dx * SPEED * speed * dt
-      this.group.position.z += dz * SPEED * speed * dt
+      const moveSpeed = this.riding ? RIDE_SPEED : SPEED
+      this.group.position.x += dx * moveSpeed * speed * dt
+      this.group.position.z += dz * moveSpeed * speed * dt
       // Face the direction of travel, taking the short way around.
       const target = Math.atan2(dx, dz)
       const delta = Math.atan2(

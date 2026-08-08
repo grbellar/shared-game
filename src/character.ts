@@ -48,9 +48,19 @@ export function animateCharacter(group: THREE.Group, walkPhase: number, moving: 
     armR: THREE.Mesh
   }
   const swing = Math.sin(walkPhase) * 0.8 * moving
-  limbs.legL.rotation.x = swing
-  limbs.legR.rotation.x = -swing
-  limbs.armL.rotation.x = -swing * 0.7
+  const riding = group.userData.ride === 'wheelchair'
+  if (riding) {
+    // Sitting: legs out to the footrest, hands down on the push rims.
+    limbs.legL.rotation.x = -1.35
+    limbs.legR.rotation.x = -1.35
+    limbs.armL.rotation.x = -0.6
+    const wheels = group.userData.rideWheels as THREE.Group[] | undefined
+    if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
+  } else {
+    limbs.legL.rotation.x = swing
+    limbs.legR.rotation.x = -swing
+    limbs.armL.rotation.x = -swing * 0.7
+  }
 
   const weapon = group.userData.weapon as string | undefined
   if (weapon === 'gun') {
@@ -65,7 +75,7 @@ export function animateCharacter(group: THREE.Group, walkPhase: number, moving: 
       limbs.armR.rotation.x = -0.25 + swing * 0.3
     }
   } else {
-    limbs.armR.rotation.x = swing * 0.7
+    limbs.armR.rotation.x = riding ? -0.6 : swing * 0.7
   }
 }
 
@@ -97,6 +107,72 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
     const armR = (group.userData.limbs as { armR: THREE.Mesh }).armR
     armR.add(buildKatana())
   }
+}
+
+// Mount or dismount the wheelchair. Synced via the `ride` field in
+// PlayerState. The character sits in it (see animateCharacter).
+export function setRide(group: THREE.Group, ride: string): void {
+  const existing = group.getObjectByName('ride')
+  if (existing) existing.parent!.remove(existing)
+  group.userData.ride = ride
+  delete group.userData.rideWheels
+  if (ride === 'wheelchair') {
+    const chair = buildWheelchair()
+    group.add(chair)
+    group.userData.rideWheels = chair.userData.wheels
+  }
+}
+
+// Classic chrome-frame wheelchair. Big rear wheels with box spokes so the
+// spin reads at 320x240; the whole wheel group rotates about X to roll.
+function buildWheelchair(): THREE.Group {
+  const chair = new THREE.Group()
+  chair.name = 'ride'
+  const chrome = new THREE.MeshLambertMaterial({ color: 0xb8bec8, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+  const rubber = new THREE.MeshLambertMaterial({ color: 0x3a3d44, flatShading: true })
+
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.6), dark)
+  seat.position.set(0, 0.56, 0)
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.08), dark)
+  back.position.set(0, 0.95, -0.34)
+  const footrest = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.25), chrome)
+  footrest.position.set(0, 0.16, 0.62)
+  chair.add(seat, back, footrest)
+
+  const wheels: THREE.Group[] = []
+  for (const side of [-1, 1]) {
+    const wheel = new THREE.Group()
+    const tire = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.55, 0.09, 10).rotateZ(Math.PI / 2),
+      rubber,
+    )
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.12, 0.12, 8).rotateZ(Math.PI / 2),
+      chrome,
+    )
+    const rim = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.44, 0.44, 0.04, 10).rotateZ(Math.PI / 2),
+      chrome,
+    )
+    rim.position.x = side * 0.09
+    const spokeA = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.95, 0.07), chrome)
+    const spokeB = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.07, 0.95), chrome)
+    wheel.add(tire, hub, rim, spokeA, spokeB)
+    wheel.position.set(side * 0.56, 0.55, -0.08)
+    chair.add(wheel)
+    wheels.push(wheel)
+  }
+  for (const side of [-1, 1]) {
+    const caster = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.14, 0.14, 0.08, 8).rotateZ(Math.PI / 2),
+      rubber,
+    )
+    caster.position.set(side * 0.34, 0.14, 0.5)
+    chair.add(caster)
+  }
+  chair.userData.wheels = wheels
+  return chair
 }
 
 // Big tube resting on the right shoulder, pointing forward (+Z). The raised

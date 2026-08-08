@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createCharacter, animateCharacter, setWeapon, startSlash, popHead } from './character'
+import { createCharacter, animateCharacter, setWeapon, setRide, startSlash, popHead } from './character'
 import type { PlayerState } from './net'
 import type { Effects } from './effects'
 
@@ -8,6 +8,7 @@ interface Remote {
   target: { x: number; y: number; z: number; ry: number }
   walkPhase: number
   weapon: string
+  ride: string
 }
 
 // Renders and interpolates the other players in the room.
@@ -27,7 +28,7 @@ export class Remotes {
       group.position.set(p.x, p.y, p.z)
       group.rotation.y = p.ry
       this.scene.add(group)
-      remote = { group, target: { x: p.x, y: p.y, z: p.z, ry: p.ry }, walkPhase: 0, weapon: 'none' }
+      remote = { group, target: { x: p.x, y: p.y, z: p.z, ry: p.ry }, walkPhase: 0, weapon: 'none', ride: 'none' }
       this.players.set(p.id, remote)
     }
     remote.target = { x: p.x, y: p.y, z: p.z, ry: p.ry }
@@ -35,6 +36,11 @@ export class Remotes {
     if (remote.weapon !== weapon) {
       remote.weapon = weapon
       setWeapon(remote.group, weapon)
+    }
+    const ride = p.ride === 'wheelchair' ? p.ride : 'none'
+    if (remote.ride !== ride) {
+      remote.ride = ride
+      setRide(remote.group, ride)
     }
   }
 

@@ -7,7 +7,7 @@ import { TouchControls } from './touch'
 import { Chat } from './chat'
 import { Bubbles } from './bubbles'
 import { Effects } from './effects'
-import { setWeapon, startSlash, popHead, SLASH_DURATION } from './character'
+import { setWeapon, setRide, startSlash, popHead, SLASH_DURATION } from './character'
 
 // Render at N64-ish resolution, then upscale with nearest-neighbor (CSS).
 const VIEW_W = 320
@@ -49,6 +49,7 @@ net.onLeave = (id) => remotes.remove(id)
 net.connect()
 
 let weapon: 'none' | 'gun' | 'sword' = 'none'
+let ride: 'none' | 'wheelchair' = 'none'
 
 setInterval(() => {
   net.sendState({
@@ -59,6 +60,7 @@ setInterval(() => {
     color,
     name,
     weapon,
+    ride,
   })
 }, 66)
 
@@ -178,6 +180,11 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyH') {
     weapon = weapon === 'sword' ? 'none' : 'sword'
     setWeapon(player.group, weapon)
+  }
+  if (e.code === 'KeyR') {
+    ride = ride === 'wheelchair' ? 'none' : 'wheelchair'
+    setRide(player.group, ride)
+    player.riding = ride === 'wheelchair'
   }
 })
 window.addEventListener('keyup', (e) => keys.delete(e.code))
