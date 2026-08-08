@@ -1069,8 +1069,20 @@ renderer.setAnimationLoop(() => {
     remoteTrailT = 0.04
     for (const pos of remotes.flying()) effects.spawnTrail(pos)
   }
-  effects.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
-  arrows.update(dt, [...remotes.stickTargets(), { id: 'me', group: player.group }])
+  // Anything a rocket should burst against on contact. Enemies belong in here
+  // as much as players do — left out, a rocket flies straight through a
+  // skeleton and only kills it by cratering the floor underneath.
+  effects.update(dt, [
+    ...remotes.targets(),
+    { id: 'me', pos: player.group.position },
+    ...skeletons.targets(),
+    ...mobs.targets(),
+  ])
+  arrows.update(dt, [
+    ...remotes.stickTargets(),
+    { id: 'me', group: player.group },
+    ...skeletons.stickTargets(),
+  ])
   fireworks.update(dt)
   remotes.update(dt)
   // After the player and remotes have moved: the shark chases current

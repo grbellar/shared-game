@@ -250,17 +250,6 @@ export class Skeletons {
     }
   }
 
-  // An arrow found a ribcage.
-  arrowHit(at: THREE.Vector3, dmg: number): boolean {
-    for (const s of this.list) {
-      if (s.st === 'dead') continue
-      if (this.tmp.set(s.x, s.y + 1.1, s.z).distanceTo(at) > 1.3) continue
-      this.hit(s, dmg)
-      return true
-    }
-    return false
-  }
-
   private hit(s: Skel, dmg: number): void {
     this.applyDamage(s, dmg, true)
     this.net.sendSkeletonHit(this.list.indexOf(s), dmg)
@@ -300,6 +289,12 @@ export class Skeletons {
     }
 
     for (const s of this.list) {
+      // Tick the wind-up here, not inside simulate(), because followers need
+      // it too: the swing that lands on you has to finish on YOUR client (you
+      // apply your own damage, same rule as blast knockback), and the strike
+      // animation has to play. Ticking it only on the host meant everyone but
+      // the host stood in front of a skeleton frozen mid-swing, unhurt.
+      if (s.timer > 0) s.timer -= dt
       if (simulate) this.simulate(dt, s, targets)
       else this.follow(dt, s)
       this.applyToMe(s, player)
@@ -328,7 +323,6 @@ export class Skeletons {
 
   private simulate(dt: number, s: Skel, targets: { pos: THREE.Vector3 }[]): void {
     if (s.st === 'dead') {
-      s.timer -= dt
       if (s.timer <= 0) {
         s.hp = MAX_HP
         s.x = s.post.x
@@ -353,7 +347,6 @@ export class Skeletons {
     }
 
     if (s.st === 'strike') {
-      s.timer -= dt
       if (s.timer <= 0) this.setState(s, prey ? 'chase' : 'idle')
       if (prey) s.yaw += wrapAngle(Math.atan2(prey.x - s.x, prey.z - s.z) - s.yaw) * Math.min(1, 6 * dt)
       this.fall(dt, s)
@@ -497,6 +490,30 @@ export class Skeletons {
     for (const s of this.list) {
       if (s.st === 'dead') continue
       yield { x: s.x, z: s.z, hunting: s.st !== 'idle' }
+    }
+  }
+
+  // Something a rocket should burst against, in the shape effects.ts wants.
+  // Without this a rocket sails straight through a skeleton and only kills it
+  // if it happens to hit the floor nearby. The ids can't collide with a
+  // shooter's (server ids are uuid slices, ours is 'me'), so a rocket is never
+  // stopped by its own owner check. `group.position` is the live one — render()
+  // writes it every frame — so this allocates nothing.
+  *targets(): Generator<{ id: string; pos: THREE.Vector3 }> {
+    for (let i = 0; i < this.list.length; i++) {
+      const s = this.list[i]
+      if (s.st === 'dead') continue
+      yield { id: `skel:${i}`, pos: s.group.position }
+    }
+  }
+
+  // ...and the shape arrows.ts wants, so they stick in the ribcage. Cosmetic
+  // only, exactly as arrows are against players.
+  *stickTargets(): Generator<{ id: string; group: THREE.Group }> {
+    for (let i = 0; i < this.list.length; i++) {
+      const s = this.list[i]
+      if (s.st === 'dead') continue
+      yield { id: `skel:${i}`, group: s.group }
     }
   }
 
