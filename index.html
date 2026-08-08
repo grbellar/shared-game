@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>shared game</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      canvas {
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+      #hint {
+        position: fixed;
+        bottom: 12px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.55);
+        font: 12px monospace;
+        pointer-events: none;
+      }
+      #status {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        color: rgba(255, 255, 255, 0.75);
+        font: 12px monospace;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status"></div>
+    <div id="hint">WASD move &middot; Space jump &middot; Q/E rotate camera</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
