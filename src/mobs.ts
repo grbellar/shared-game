@@ -569,6 +569,9 @@ export class Mobs {
     if (inRealm(p.x, p.z)) return
     const flat = Math.hypot(p.x - m.pos.x, p.z - m.pos.y)
     if (flat > m.def.hitR || m.hitCd > 0) return
+    // No swiping at the sky: someone above head height (flying, jumping off a
+    // block, mid-rocket-arc) is out of reach. Same rule skeletons follow.
+    if (p.y - m.group.position.y > 2.6) return
     m.hitCd = m.def.hitCd
     if (m.kind === 'bear') sfx.crunch(1)
     else sfx.slash(0.8)
