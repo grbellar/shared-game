@@ -16,9 +16,32 @@ export function characterCount(): number {
   return registry.size
 }
 
-// Drop a character from the registry when it leaves the scene.
+// Free everything a subtree holds on the GPU: geometries, materials (arrays
+// included), and any texture in material.map. Disposing a resource something
+// else still shares is safe in three.js — it just re-uploads on next use.
+export function disposeSubtree(obj: THREE.Object3D): void {
+  obj.traverse((child) => {
+    const mesh = child as THREE.Mesh
+    if (mesh.geometry) mesh.geometry.dispose()
+    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined
+    if (!mat) return
+    for (const m of Array.isArray(mat) ? mat : [mat]) {
+      ;(m as THREE.MeshLambertMaterial).map?.dispose()
+      m.dispose()
+    }
+  })
+}
+
+// Drop a character from the registry when it leaves the scene, and free what
+// it holds on the GPU — the nametag sprite's canvas texture rides along in
+// the traverse, and the webcam face texture hides in userData when the
+// camera is off.
 export function releaseCharacter(group: THREE.Group): void {
   registry.delete(group)
+  disposeSubtree(group)
+  const face = group.userData.face as { texture: THREE.Texture; mat: THREE.Material } | undefined
+  face?.texture.dispose()
+  face?.mat.dispose()
 }
 
 // Blocky N64-style character. Front of the character faces +Z.
@@ -438,7 +461,10 @@ export function refreshFace(group: THREE.Group): void {
 // `weapon` field in PlayerState.
 export function setWeapon(group: THREE.Group, weapon: string): void {
   const existing = group.getObjectByName('weapon')
-  if (existing) existing.parent!.remove(existing)
+  if (existing) {
+    disposeSubtree(existing)
+    existing.parent!.remove(existing)
+  }
   group.userData.weapon = weapon
   const armR = (group.userData.rig as { armR: THREE.Mesh }).armR
   if (weapon === 'gun') {
@@ -475,7 +501,10 @@ export function setHat(group: THREE.Group, hat: string): void {
   const head = (group.userData.rig as Rig | undefined)?.head
   if (!head) return
   const existing = head.getObjectByName('hat')
-  if (existing) existing.parent!.remove(existing)
+  if (existing) {
+    disposeSubtree(existing)
+    existing.parent!.remove(existing)
+  }
   group.userData.hat = hat
   const built = buildHat(hat as Hat)
   if (built) head.add(built)
@@ -557,7 +586,10 @@ function buildHat(hat: Hat): THREE.Group | null {
 // The character sits on (or in) it — see animateCharacter.
 export function setRide(group: THREE.Group, ride: string): void {
   const existing = group.getObjectByName('ride')
-  if (existing) existing.parent!.remove(existing)
+  if (existing) {
+    disposeSubtree(existing)
+    existing.parent!.remove(existing)
+  }
   group.userData.ride = ride
   delete group.userData.rideWheels
   delete group.userData.rideLimbs

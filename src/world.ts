@@ -50,7 +50,6 @@ interface Prop {
   z: number
   hitR: number
   s: number
-  alive: boolean
 }
 
 // Where the sea sits. Deep water floats you chest-deep instead of sinking
@@ -185,6 +184,13 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
   }
   if (fresh.length === 0) return []
   craters.push(...fresh)
+  // Mirror the server's 500-crater replay cap so an all-night session can't
+  // grow the heightAt walk forever. Drop the key too, or a re-sent old
+  // crater would be deduped into nothing.
+  while (craters.length > 500) {
+    const old = craters.shift()!
+    craterKeys.delete(`${old.x}|${old.z}|${old.r}|${old.d}`)
+  }
   revision++
 
   // Every tile: a crater can land on any island, or in the realm.
@@ -221,15 +227,23 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
   }
 
   const dead: DestroyedProp[] = []
-  for (const prop of props) {
-    if (!prop.alive) continue
+  for (let i = props.length - 1; i >= 0; i--) {
+    const prop = props[i]
     for (const c of fresh) {
       const reach = c.r + prop.hitR * 0.5
       const dx = prop.x - c.x
       const dz = prop.z - c.z
       if (dx * dx + dz * dz >= reach * reach) continue
-      prop.alive = false
       worldScene?.remove(prop.obj)
+      // Free the prop's GPU resources; the rocks share one material per
+      // scatter, but disposing a still-shared material is safe in three.js
+      // (it just re-uploads on next use).
+      prop.obj.traverse((child) => {
+        const mesh = child as THREE.Mesh
+        if (mesh.geometry) mesh.geometry.dispose()
+        if (mesh.material) (mesh.material as THREE.Material).dispose()
+      })
+      props.splice(i, 1)
       dead.push({ kind: prop.kind, x: prop.x, y: prop.y, z: prop.z, s: prop.s })
       break
     }
@@ -241,7 +255,6 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
 // a prop head-on detonates against it instead of flying through.
 export function propInPath(p: THREE.Vector3): boolean {
   for (const prop of props) {
-    if (!prop.alive) continue
     const dx = p.x - prop.x
     const dz = p.z - prop.z
     const r = prop.hitR * 0.8
@@ -370,7 +383,7 @@ function scatterProps(
     tree.scale.setScalar(s)
     tree.rotation.y = rand() * Math.PI * 2
     scene.add(tree)
-    props.push({ kind: 'tree', obj: tree, x, y: h - 0.1, z, hitR: 1.6 * s, s, alive: true })
+    props.push({ kind: 'tree', obj: tree, x, y: h - 0.1, z, hitR: 1.6 * s, s })
   }
 
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x7d7d85, flatShading: true })
@@ -384,6 +397,6 @@ function scatterProps(
     rock.position.set(x, h, z)
     rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI)
     scene.add(rock)
-    props.push({ kind: 'rock', obj: rock, x, y: h, z, hitR: size, s: size, alive: true })
+    props.push({ kind: 'rock', obj: rock, x, y: h, z, hitR: size, s: size })
   }
 }

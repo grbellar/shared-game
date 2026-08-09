@@ -63,6 +63,13 @@ interface Beam {
 // reference alone leaks both — invisible until something spawns them fast
 // (the fifty, at fourteen rounds a second), at which point it degrades until
 // the frame gives out.
+// The rocket is the one transient built from shared parts (created once, so
+// the bare scene.remove on impact frees everything there is to free).
+const ROCKET_OLIVE_MAT = new THREE.MeshLambertMaterial({ color: 0x55603a, flatShading: true })
+const ROCKET_RED_MAT = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
+const ROCKET_BODY_GEO = new THREE.CylinderGeometry(0.11, 0.11, 0.5, 6).rotateX(Math.PI / 2)
+const ROCKET_NOSE_GEO = new THREE.ConeGeometry(0.11, 0.26, 6).rotateX(Math.PI / 2)
+
 function discard(scene: THREE.Scene, mesh: THREE.Mesh): void {
   scene.remove(mesh)
   mesh.geometry.dispose()
@@ -93,10 +100,8 @@ export class Effects {
 
   spawnRocket(ownerId: string, origin: THREE.Vector3, dir: THREE.Vector3): void {
     const mesh = new THREE.Group()
-    const olive = new THREE.MeshLambertMaterial({ color: 0x55603a, flatShading: true })
-    const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.5, 6).rotateX(Math.PI / 2), olive)
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.26, 6).rotateX(Math.PI / 2), red)
+    const body = new THREE.Mesh(ROCKET_BODY_GEO, ROCKET_OLIVE_MAT)
+    const nose = new THREE.Mesh(ROCKET_NOSE_GEO, ROCKET_RED_MAT)
     nose.position.z = 0.38
     mesh.add(body, nose)
     mesh.position.copy(origin)

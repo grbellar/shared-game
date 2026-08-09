@@ -25,22 +25,26 @@ interface Flight {
   life: number
 }
 
+// One shared set of geometries and materials for every arrow ever built
+// (same pattern as the laser bolts) — so a bare scene.remove leaks nothing.
+const WOOD_MAT = new THREE.MeshLambertMaterial({ color: 0x9a6a35, flatShading: true })
+const STEEL_MAT = new THREE.MeshLambertMaterial({ color: 0xb9bec6, flatShading: true })
+const RED_MAT = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
+const SHAFT_GEO = new THREE.CylinderGeometry(0.025, 0.025, 0.8, 5).rotateX(Math.PI / 2)
+const TIP_GEO = new THREE.ConeGeometry(0.05, 0.14, 5).rotateX(Math.PI / 2)
+const FLETCH_A_GEO = new THREE.BoxGeometry(0.02, 0.12, 0.1)
+const FLETCH_B_GEO = new THREE.BoxGeometry(0.12, 0.02, 0.1)
+
 // Chunky arrow along +Z: wooden shaft, steel tip, red fletching. Exported
 // so the first-person bow can show one nocked on the string.
 export function buildArrow(): THREE.Group {
   const arrow = new THREE.Group()
-  const wood = new THREE.MeshLambertMaterial({ color: 0x9a6a35, flatShading: true })
-  const steel = new THREE.MeshLambertMaterial({ color: 0xb9bec6, flatShading: true })
-  const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.025, 0.025, 0.8, 5).rotateX(Math.PI / 2),
-    wood,
-  )
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 5).rotateX(Math.PI / 2), steel)
+  const shaft = new THREE.Mesh(SHAFT_GEO, WOOD_MAT)
+  const tip = new THREE.Mesh(TIP_GEO, STEEL_MAT)
   tip.position.z = 0.45
-  const fletchA = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.12, 0.1), red)
+  const fletchA = new THREE.Mesh(FLETCH_A_GEO, RED_MAT)
   fletchA.position.z = -0.36
-  const fletchB = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.02, 0.1), red)
+  const fletchB = new THREE.Mesh(FLETCH_B_GEO, RED_MAT)
   fletchB.position.z = -0.36
   arrow.add(shaft, tip, fletchA, fletchB)
   return arrow

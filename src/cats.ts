@@ -161,9 +161,7 @@ export class Cats {
       sfx.purr(vol)
       sfx.meow(vol * 0.5, cat.def.voice * 1.15)
     }
-    const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: heartTexture(), transparent: true, depthTest: false }),
-    )
+    const sprite = new THREE.Sprite(heartMaterial())
     sprite.scale.set(0.62, 0.44, 1)
     this.scene.add(sprite)
     this.hearts.push({ sprite, cat, t: 0, drift: (Math.random() - 0.5) * 0.7 })
@@ -378,6 +376,15 @@ const HEART_ROWS = [
   '.....##.....',
 ]
 let heartTex: THREE.CanvasTexture | null = null
+// One material shared by every heart ever popped — minting one per pet was
+// a slow leak, since bare scene.remove never frees it.
+let heartMat: THREE.SpriteMaterial | null = null
+
+function heartMaterial(): THREE.SpriteMaterial {
+  if (heartMat) return heartMat
+  heartMat = new THREE.SpriteMaterial({ map: heartTexture(), transparent: true, depthTest: false })
+  return heartMat
+}
 
 function heartTexture(): THREE.CanvasTexture {
   if (heartTex) return heartTex

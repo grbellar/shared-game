@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { disposeSubtree } from './character'
 import { heightAt } from './world'
 
 // Plantable fireworks: jam a tube into the dirt, watch the fuse sizzle, then
@@ -45,6 +46,11 @@ const STAR_SIZE = 1.0
 
 const GOLD = new THREE.Color(0xffb648)
 const WHITE = new THREE.Color(0xfff4d0)
+
+// One geometry for every burst flash. The material can't be shared — each
+// flash tints its emissive to the shell and fades its own opacity — so it's
+// disposed when the flash dies instead.
+const FLASH_GEO = new THREE.IcosahedronGeometry(1, 0)
 
 // Sparks live in one Points cloud per size class — one draw call each for the
 // whole show. Alpha is per-particle, which works because a 4-component color
@@ -297,6 +303,7 @@ export class Fireworks {
       flash.t += dt / FLASH_TIME
       if (flash.t >= 1) {
         this.scene.remove(flash.mesh)
+        ;(flash.mesh.material as THREE.Material).dispose()
         this.flashes.splice(i, 1)
         continue
       }
@@ -316,7 +323,7 @@ export class Fireworks {
     const accent = new THREE.Color(shell.accent)
 
     const flash = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1, 0),
+      FLASH_GEO,
       new THREE.MeshLambertMaterial({
         color: 0x000000,
         emissive: shell.core,
@@ -378,6 +385,7 @@ export class Fireworks {
   private remove(f: Live): void {
     const i = this.live.indexOf(f)
     if (i >= 0) this.live.splice(i, 1)
+    disposeSubtree(f.mesh)
     this.scene.remove(f.mesh)
   }
 }

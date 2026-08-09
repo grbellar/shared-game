@@ -142,8 +142,12 @@ function buildDestiny(): THREE.Group {
   }
 
   // Replace the ordinary tag with a wider one so the full stage name fits.
-  const oldTag = group.getObjectByName('nametag')
-  if (oldTag) group.remove(oldTag)
+  const oldTag = group.getObjectByName('nametag') as THREE.Sprite | undefined
+  if (oldTag) {
+    oldTag.material.map?.dispose()
+    oldTag.material.dispose()
+    group.remove(oldTag)
+  }
   const tag = makeNameTag('Destiny')
   tag.scale.x = 4.6
   group.add(top, bustL, bustR, skirt, belt, hairBack, fringe, pony, tag)
