@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { refreshFace } from './character'
+import { refreshFace, voxelsOf } from './character'
 
 // Character skins: every genre of fiction mashed together. Each skin dresses
 // the base blocky character by recoloring its part materials and bolting
@@ -24,16 +24,24 @@ export const SKINS: { id: string; label: string }[] = [
 export const SKIN_IDS = SKINS.map((s) => s.id)
 
 interface Rig {
-  body: THREE.Mesh
-  head: THREE.Mesh
-  legL: THREE.Mesh
-  legR: THREE.Mesh
-  armL: THREE.Mesh
-  armR: THREE.Mesh
+  body: THREE.Group
+  head: THREE.Group
+  legL: THREE.Group
+  legR: THREE.Group
+  armL: THREE.Group
+  armR: THREE.Group
 }
 
-const paint = (mesh: THREE.Mesh, color: number): void => {
-  ;(mesh.material as THREE.MeshLambertMaterial).color.set(color)
+// Rig parts are Groups of instanced voxels, so recoloring goes through the
+// cluster inside rather than a material on the part itself.
+const paint = (part: THREE.Object3D, color: number): void => {
+  const mesh = voxelsOf(part)
+  if (mesh) (mesh.material as THREE.MeshLambertMaterial).color.set(color)
+}
+
+const dress = (part: THREE.Object3D, mat: THREE.Material): void => {
+  const mesh = voxelsOf(part)
+  if (mesh) mesh.material = mat
 }
 
 // Accessory box: sized, colored, positioned, parented. Returns the mesh so
@@ -195,15 +203,14 @@ export function applySkin(group: THREE.Group, skin: string): void {
     const old = parent.getObjectByName('skinparts')
     if (old) parent.remove(old)
   }
-  const bodyMat = new THREE.MeshLambertMaterial({ color: baseColor })
-  rig.body.material = bodyMat
-  const armMat = new THREE.MeshLambertMaterial({ color: baseColor })
-  rig.armL.material = armMat
-  rig.armR.material = armMat
-  const legMat = new THREE.MeshLambertMaterial({ color: 0x33333a })
-  rig.legL.material = legMat
-  rig.legR.material = legMat
-  rig.head.material = new THREE.MeshLambertMaterial({ color: 0xe0b088 })
+  dress(rig.body, new THREE.MeshLambertMaterial({ color: baseColor, flatShading: true }))
+  const armMat = new THREE.MeshLambertMaterial({ color: baseColor, flatShading: true })
+  dress(rig.armL, armMat)
+  dress(rig.armR, armMat)
+  const legMat = new THREE.MeshLambertMaterial({ color: 0x33333a, flatShading: true })
+  dress(rig.legL, legMat)
+  dress(rig.legR, legMat)
+  dress(rig.head, new THREE.MeshLambertMaterial({ color: 0xe0b088, flatShading: true }))
 
   const build = BUILDERS[skin]
   if (build) {

@@ -5,7 +5,7 @@ import type { Player } from './player'
 import type { Remotes } from './remotes'
 import type { Effects } from './effects'
 import type { Net } from './net'
-import type { Health } from './health'
+import type { Mass } from './mass'
 import { animateCharacter, createCharacter, popHead, startJabber, type Rig } from './character'
 import { sfx } from './audio'
 
@@ -16,7 +16,7 @@ import { sfx } from './audio'
 // positions, so the sim can't be deterministic — the lowest player id hosts
 // it and streams `mob` state ~10x/sec, everyone else interpolates. Damage
 // *to* a mob is relayed as `mobhit` and only the attacker sends it; damage a
-// mob does *to you* is decided on your own client through health.damage,
+// mob does *to you* is decided on your own client through mass.damage,
 // exactly like shark bites and blast knockback.
 
 export type MobState = 'wander' | 'chase' | 'dead'
@@ -229,7 +229,8 @@ interface Mob {
 export const MOB_TARGET_PREFIX = 'mob:'
 
 export class Mobs {
-  onDeath: (name: string) => void = () => {}
+  // Name plus where it fell — a dead mob leaves a pile of voxels behind.
+  onDeath: (name: string, at: THREE.Vector3, i: number) => void = () => {}
   // A mob "spoke" — main.ts pins a chat bubble on it.
   onSay: (group: THREE.Group, text: string) => void = () => {}
   private mobs: Mob[] = []
@@ -242,7 +243,7 @@ export class Mobs {
     private net: Net,
     private effects: Effects,
     private remotes: Remotes,
-    private health: Health,
+    private mass: Mass,
   ) {
     for (const def of [BEAR, GARY]) {
       const bear = def === BEAR ? buildBear() : null
@@ -320,6 +321,21 @@ export class Mobs {
 
   // --- taking hits (attacker mints damage, same rule as sharkhit) ---------
 
+  // Landed on from above. Unlike a skeleton a bear takes the weight rather
+  // than dying to it, so the stomper sizes the damage by their own mass.
+  stomp(feet: THREE.Vector3, dmg: number): boolean {
+    for (const m of this.mobs) {
+      if (m.st === 'dead') continue
+      const p = m.group.position
+      if (Math.hypot(p.x - feet.x, p.z - feet.z) > 1.8) continue
+      const dy = feet.y - p.y
+      if (dy < 1.0 || dy > 4.2) continue
+      this.hit(m, dmg)
+      return true
+    }
+    return false
+  }
+
   blast(center: THREE.Vector3): void {
     for (const m of this.mobs) {
       if (m.st === 'dead') continue
@@ -387,7 +403,7 @@ export class Mobs {
         sfx.pop(this.volFor(m))
       }
       this.effects.spawnDebris(m.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 0x8a1f1f, 12, 7)
-      this.onDeath(m.def.name)
+      this.onDeath(m.def.name, m.group.position.clone(), this.mobs.indexOf(m))
     } else if (m.st === 'dead') {
       // Back up: clear the fall-over pose.
       m.group.rotation.set(0, m.yaw, 0)
@@ -581,7 +597,7 @@ export class Mobs {
   // Everything a mob does *to you* is decided here, on your own client.
   private affectPlayer(m: Mob, dt: number, player: Player): void {
     if (m.hitCd > 0) m.hitCd -= dt
-    if (m.st !== 'chase' || player.dead || this.health.dead) return
+    if (m.st !== 'chase' || player.dead || this.mass.dead) return
     const p = player.group.position
     if (inRealm(p.x, p.z)) return
     const flat = Math.hypot(p.x - m.pos.x, p.z - m.pos.y)
@@ -592,7 +608,7 @@ export class Mobs {
     m.hitCd = m.def.hitCd
     if (m.kind === 'bear') sfx.crunch(1)
     else sfx.slash(0.8)
-    this.health.damage(m.def.dmg)
+    this.mass.damage(m.def.dmg)
     const len = Math.max(0.001, flat)
     player.applyImpulse(
       ((p.x - m.pos.x) / len) * m.def.knock,

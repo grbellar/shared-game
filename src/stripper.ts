@@ -1,6 +1,13 @@
 import * as THREE from 'three'
 import { type Bubbles } from './bubbles'
-import { animateCharacter, createCharacter, makeNameTag, startJabber, type Rig } from './character'
+import {
+  animateCharacter,
+  createCharacter,
+  makeNameTag,
+  startJabber,
+  voxelsOf,
+  type Rig,
+} from './character'
 import { heightAt } from './world'
 import type { Effects } from './effects'
 
@@ -120,12 +127,14 @@ function buildDestiny(): THREE.Group {
   const blonde = new THREE.MeshLambertMaterial({ color: 0xffe36e, flatShading: true })
   const boa = new THREE.MeshLambertMaterial({ color: 0xff7fce, flatShading: true })
 
-  rig.body.material = skin
-  rig.head.material = skin
-  rig.armL.material = skin
-  rig.armR.material = skin
-  rig.legL.material = black
-  rig.legR.material = black
+  for (const part of [rig.body, rig.head, rig.armL, rig.armR]) {
+    const mesh = voxelsOf(part)
+    if (mesh) mesh.material = skin
+  }
+  for (const part of [rig.legL, rig.legR]) {
+    const mesh = voxelsOf(part)
+    if (mesh) mesh.material = black
+  }
 
   const top = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.38, 0.56), pink)
   top.position.y = 1.38

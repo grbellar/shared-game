@@ -5,7 +5,7 @@ import { WATER_LEVEL, type Player } from './player'
 import type { Remotes } from './remotes'
 import type { Effects } from './effects'
 import type { Net } from './net'
-import type { Health } from './health'
+import type { Mass } from './mass'
 import { sfx } from './audio'
 
 // The shark: one per room, patrolling the deep water around the island.
@@ -207,7 +207,8 @@ function buildPrompt(): HTMLDivElement {
 export const SHARK_TARGET_ID = 'shark'
 
 export class Shark {
-  onDeath: () => void = () => {}
+  // Where it went down — a shark is the biggest meal on the island.
+  onDeath: (at: THREE.Vector3) => void = () => {}
   private group: THREE.Group
   private rig: Rig
   private pos = new THREE.Vector2(0, PATROL_R)
@@ -238,7 +239,7 @@ export class Shark {
     private net: Net,
     private effects: Effects,
     private remotes: Remotes,
-    private health: Health,
+    private mass: Mass,
   ) {
     const built = buildShark()
     this.group = built.group
@@ -374,7 +375,7 @@ export class Shark {
       this.hp = 0
       sfx.sharkDie()
       this.effects.spawnDebris(this.group.position, 0x8a1f1f, 16, 8)
-      this.onDeath()
+      this.onDeath(this.group.position.clone())
     } else if (this.st === 'dead') {
       this.sinkY = 0
       this.rig.body.rotation.z = 0
@@ -672,27 +673,27 @@ export class Shark {
     // the range check a respawn mid-grab would yank us back out to sea.
     // Under rocket power you're out of reach, and it must not keep a latch it
     // already had — otherwise it tows the launch straight back into the sea.
-    const down = player.dead || this.health.dead || player.flying
+    const down = player.dead || this.mass.dead || player.flying
     let gotMe =
       this.grabId === this.myId && !down && (this.wasGrabbingMe || flat < GRAB_R + 3)
 
     if (gotMe) {
-      // health.damage drives the shared HUD and announces our own death; we
+      // mass.damage drives the shared HUD and announces our own death; we
       // just read `dead` back to know whether that bite was the last one.
       if (!this.wasGrabbingMe) {
         sfx.chomp()
         this.effects.spawnDebris(this.mouth, 0x8a1f1f, 10, 6)
-        this.health.damage(CHOMP_DAMAGE)
+        this.mass.damage(CHOMP_DAMAGE)
       }
-      if (!this.health.dead) {
+      if (!this.mass.dead) {
         player.grabbed = true
         // Ride along in its jaws, dunked just under the surface.
         player.group.position.set(this.mouth.x, WATER_LEVEL - 0.45, this.mouth.z)
         player.group.rotation.y = this.yaw + Math.PI
-        this.health.damage(DRAG_DPS * dt)
+        this.mass.damage(DRAG_DPS * dt)
         if (Math.random() < dt * 3) sfx.thrash(0.6)
       }
-      if (this.health.dead) {
+      if (this.mass.dead) {
         // Let go rather than towing the corpse out to sea for a frame.
         player.grabbed = false
         this.release()
@@ -712,7 +713,7 @@ export class Shark {
         this.biteCd = 1.5
         sfx.chomp()
         this.effects.spawnDebris(this.mouth, 0x8a1f1f, 8, 5)
-        this.health.damage(BITE_DAMAGE)
+        this.mass.damage(BITE_DAMAGE)
         const away = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw))
         player.applyImpulse(away.x * 9, 5, away.z * 9)
       }

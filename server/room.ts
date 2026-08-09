@@ -14,16 +14,15 @@ interface Block {
   gy: number
   gz: number
   m: number
-  hp: number
 }
 
-const BLOCK_HP = [2, 4, 6, 8] // keep in sync with MATERIALS in src/blocks.ts
+const MATERIAL_COUNT = 4 // keep in sync with MATERIALS in src/blocks.ts
 const BLOCK_CAP = 1500
 const GRID_XZ_MAX = 2700 // |gx|,|gz| cap — keep in sync with src/blocks.ts
-// Damage to blocks this room never stored: the castle in the shadow realm,
-// which every client generates for itself. Roughly one entry per castle block
-// anyone has touched, so the cap is sized to let the whole thing come down.
-const WORLD_DMG_CAP = 5000
+// Broken cells in the castle that this room never stored: every client
+// generates it identically, so we only track which of it is destroyed. Roughly
+// one entry per castle block anyone has touched.
+const BROKEN_CAP = 5000
 // Craters and world damage reach out to the realm (x≈1800), the far rock at
 // x=280 (src/world.ts) — and downtown Wichita, whose west bank runs out past
 // x=-3900 (src/wichita.ts). Anything beyond this gets clamped somewhere
@@ -32,6 +31,9 @@ const WORLD_XZ_MAX = 4100
 // Skeleton roster cap: 5 packed numbers each (see src/skeletons.ts), with room
 // to grow the garrison without touching the server.
 const SKEL_MAX_FIELDS = 64 * 5
+// Enough to hollow out a colossus that ate a castle.
+const BORE_CAP = 8192
+const BORE_BATCH = 512 // indices in one bore message
 
 interface PlayerState {
   id: string
@@ -52,6 +54,7 @@ interface PlayerState {
   hp: number // head pitch
   hy: number // head yaw, offset from the body's facing
   hat: string
+  g: number // voxels ever accreted (see src/voxelbody.ts)
 }
 
 interface Score {
@@ -89,15 +92,13 @@ export class GameRoom extends DurableObject<Env> {
   // World damage (blast craters, shovel digs), replayed to late joiners in
   // `welcome`. In-memory like `states`: hibernation heals the island.
   private craters: Crater[] = []
-  // Player-built blocks, keyed by grid cell. Remaining hp lives here so
-  // half-damaged blocks replay accurately; insertion order doubles as the
+  // Player-built blocks, keyed by grid cell. Insertion order doubles as the
   // eviction order when the cap trips. In-memory like everything else.
   private blocks = new Map<string, Block>()
-  // Accumulated damage on cells that aren't in `blocks` — the castle, which
-  // isn't ours to store because every client generates it identically. We
-  // only have to remember how broken it is. Summed, so replay order can't
-  // matter; insertion order doubles as the eviction order at the cap.
-  private worldDmg = new Map<string, number>()
+  // Broken cells that aren't in `blocks` — the castle, which isn't ours to
+  // store because every client generates it identically. We only have to
+  // remember which of it is gone.
+  private broken = new Set<string>()
   // Where each Meckie was last left: index -> {x, z, by}. `by` is the id of
   // whoever is carrying them, '' if they're on the ground. A carried Meckie
   // needs no position updates — every client derives it from the carrier's
@@ -125,6 +126,10 @@ export class GameRoom extends DurableObject<Env> {
   private found: number[] = []
   // The trebuchet has been destroyed
   private treb = false
+  // Voxels bored out of each player's body, by sequence index, so a late
+  // joiner sees the holes already in everyone. A set union, which is why
+  // replay order and duplicate hits cannot fork it.
+  private bores = new Map<string, Set<number>>()
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
@@ -142,13 +147,14 @@ export class GameRoom extends DurableObject<Env> {
         players: [...this.states.values()],
         craters: this.craters,
         blocks: [...this.blocks.values()],
-        wdmg: [...this.worldDmg].map(([cell, dmg]) => [...cell.split(',').map(Number), dmg]),
+        wdmg: [...this.broken].map((cell) => cell.split(',').map(Number)),
         clock: { hours: this.clockHours(), running: this.clock.running },
         faces: [...this.faces].map(([fid, d]) => ({ id: fid, d })),
         meck: [...this.meck].map(([i, m]) => [i, m.x, m.z, m.by]),
         scores: [...this.scores.values()],
         found: this.found,
         treb: this.treb,
+        bores: [...this.bores].map(([id, s]) => [id, [...s]]),
       }),
     )
     return new Response(null, { status: 101, webSocket: client })
@@ -189,7 +195,13 @@ export class GameRoom extends DurableObject<Env> {
         hp: clampLook(msg.hp, 1.2),
         hy: clampLook(msg.hy, 1.0),
         hat: String(msg.hat ?? 'none').slice(0, 12),
+        g: Math.max(0, Math.min(1e6, Math.round(Number(msg.g) || 0))),
       }
+      // `g` is monotonic in life; it only ever drops on a respawn. A fresh
+      // body has no wounds, so the stored bores go with it — clients forget
+      // their copies off the same g drop, no message needed.
+      const prev = this.states.get(att.id)
+      if (prev && p.g < prev.g) this.bores.delete(att.id)
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
     } else if (msg.t === 'chat') {
@@ -227,20 +239,6 @@ export class GameRoom extends DurableObject<Env> {
       )
     } else if (msg.t === 'slash') {
       this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
-    } else if (msg.t === 'hit') {
-      // Relayed damage. Only the named victim acts on it: they own their own
-      // health, and they're the one who announces the resulting `kill`.
-      const dmg = Number(msg.dmg)
-      if (!Number.isFinite(dmg)) return
-      this.broadcast(
-        JSON.stringify({
-          t: 'hit',
-          id: att.id,
-          victim: String(msg.victim).slice(0, 16),
-          dmg: Math.max(0, Math.min(100, dmg)),
-        }),
-        ws,
-      )
     } else if (msg.t === 'kill') {
       // The victim announces their own death (see Health in CLAUDE.md), so
       // the sender IS the victim and `by` is whoever they say finished them.
@@ -359,6 +357,59 @@ export class GameRoom extends DurableObject<Env> {
         JSON.stringify({ t: 'clock', hours: this.clock.hours, running: this.clock.running }),
         ws,
       )
+    } else if (msg.t === 'bore') {
+      // Indices into the shared voxel sequence (src/voxelbody.ts), unioned per
+      // victim so order, duplicates and re-sends are all harmless.
+      const victim = String(msg.victim ?? '').slice(0, 16)
+      const raw = msg.i
+      if (!victim || !Array.isArray(raw) || raw.length > BORE_BATCH) return
+      const indices: number[] = []
+      for (const v of raw) {
+        const n = Number(v)
+        if (Number.isInteger(n) && n >= 0 && n < 1e6) indices.push(n)
+      }
+      if (!indices.length) return
+      let set = this.bores.get(victim)
+      if (!set) {
+        set = new Set<number>()
+        this.bores.set(victim, set)
+      }
+      // Store only what the victim will actually remove: nothing in the base
+      // figure (the first 15 indices — keep in sync with BASE_MASS in
+      // src/voxelbody.ts), nothing past their current figure, and nothing
+      // once they are down to the floor (those hits cost lives, not voxels).
+      // The RELAY stays unfiltered — a hit naming only core voxels still has
+      // to reach the victim, who charges a core life for it.
+      const vg = this.states.get(victim)?.g || undefined
+      if (vg === undefined || vg - set.size > 15) {
+        for (const n of indices) {
+          if (n < 15 || (vg !== undefined && n >= vg)) continue
+          if (set.size < BORE_CAP) set.add(n)
+        }
+      }
+      this.broadcast(JSON.stringify({ t: 'bore', id: att.id, victim, i: indices }))
+    } else if (msg.t === 'heal') {
+      // Eating closes wounds, only ever the sender's own. Only indices that
+      // really were wounds get relayed, so a bogus heal is a no-op everywhere.
+      const raw = msg.i
+      if (!Array.isArray(raw) || raw.length > BORE_BATCH) return
+      const set = this.bores.get(att.id)
+      if (!set) return
+      const indices: number[] = []
+      for (const v of raw) {
+        const n = Number(v)
+        if (Number.isInteger(n) && set.delete(n)) indices.push(n)
+      }
+      if (!indices.length) return
+      this.broadcast(JSON.stringify({ t: 'heal', id: att.id, i: indices }), ws)
+    } else if (msg.t === 'claim') {
+      // Loose voxels somebody picked up. Stored nowhere: a late joiner simply
+      // never sees the pickups that dropped before they arrived.
+      const raw = msg.k
+      if (!Array.isArray(raw) || raw.length > BORE_BATCH) return
+      const keys = raw.filter((k: unknown) => typeof k === 'string' && k.length <= 32)
+      if (!keys.length) return
+      this.broadcast(JSON.stringify({ t: 'claim', id: att.id, k: keys }), ws)
     } else if (msg.t === 'bplace') {
       const gx = Number(msg.gx)
       const gy = Number(msg.gy)
@@ -368,12 +419,12 @@ export class GameRoom extends DurableObject<Env> {
       // client didn't ask for and fork everyone's world.
       if (!Number.isInteger(gx) || !Number.isInteger(gy) || !Number.isInteger(gz)) return
       if (Math.abs(gx) > GRID_XZ_MAX || Math.abs(gz) > GRID_XZ_MAX || gy < -8 || gy > 40) return
-      if (!Number.isInteger(m) || m < 0 || m >= BLOCK_HP.length) return
+      if (!Number.isInteger(m) || m < 0 || m >= MATERIAL_COUNT) return
       const cell = `${gx},${gy},${gz}`
       // Simultaneous place: first writer wins, the loser's phantom block
       // heals on their next welcome.
       if (this.blocks.has(cell)) return
-      this.blocks.set(cell, { gx, gy, gz, m, hp: BLOCK_HP[m] })
+      this.blocks.set(cell, { gx, gy, gz, m })
       this.broadcast(JSON.stringify({ t: 'bplace', gx, gy, gz, m }), ws)
       if (this.blocks.size > BLOCK_CAP) {
         // Evict the oldest block and tell EVERYONE (no except): reusing the
@@ -381,9 +432,7 @@ export class GameRoom extends DurableObject<Env> {
         // placed the block that tripped the cap.
         const oldest: Block = this.blocks.values().next().value!
         this.blocks.delete(`${oldest.gx},${oldest.gy},${oldest.gz}`)
-        this.broadcast(
-          JSON.stringify({ t: 'bhit', gx: oldest.gx, gy: oldest.gy, gz: oldest.gz, dmg: 999 }),
-        )
+        this.broadcast(JSON.stringify({ t: 'bhit', gx: oldest.gx, gy: oldest.gy, gz: oldest.gz }))
       }
     } else if (msg.t === 'bhit') {
       const gx = Number(msg.gx)
@@ -391,32 +440,27 @@ export class GameRoom extends DurableObject<Env> {
       const gz = Number(msg.gz)
       if (!Number.isInteger(gx) || !Number.isInteger(gy) || !Number.isInteger(gz)) return
       if (Math.abs(gx) > GRID_XZ_MAX || Math.abs(gz) > GRID_XZ_MAX || gy < -8 || gy > 40) return
-      const dmg = Math.max(1, Math.min(999, Math.round(Number(msg.dmg) || 0)))
       const cell = `${gx},${gy},${gz}`
-      const b = this.blocks.get(cell)
-      if (b) {
-        b.hp -= dmg
-        if (b.hp <= 0) this.blocks.delete(cell)
-      } else {
-        // Either a castle block — ours to remember the damage on, not the
-        // block itself — or a stale hit on something already dead. We can't
-        // tell the two apart and don't need to: damaging a cell with nothing
+      if (!this.blocks.delete(cell)) {
+        // Either a castle block — ours to remember the break on, not the
+        // block itself — or a stale hit on something already gone. We can't
+        // tell the two apart and don't need to: breaking a cell with nothing
         // in it is a no-op on every client, so recording it is harmless.
         // But only remember cells where world-generated blocks can exist —
         // the realm's footprint (x 1800±400 over BLOCK 1.5 → gx 1200±267).
-        // Anywhere else a recorded hit is pure no-op, and without this gate
+        // Anywhere else a recorded break is pure no-op, and without this gate
         // one client spraying bhits at empty cells fills the cap and churns
-        // real castle damage out of the map (the castle silently heals).
+        // real castle breaks out of the set (the castle silently heals).
         if (Math.abs(gx - 1200) <= 267 && Math.abs(gz) <= 267) {
-          this.worldDmg.set(cell, (this.worldDmg.get(cell) ?? 0) + dmg)
-          if (this.worldDmg.size > WORLD_DMG_CAP) {
-            this.worldDmg.delete(this.worldDmg.keys().next().value!)
+          this.broken.add(cell)
+          if (this.broken.size > BROKEN_CAP) {
+            this.broken.delete(this.broken.keys().next().value!)
           }
         }
       }
-      // hp is a commutative sum of relayed dmg, so clients that see hits in
-      // different orders still agree on when a block dies.
-      this.broadcast(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }), ws)
+      // Breaking is a delete, so clients that see hits in different orders
+      // still land on the same grid.
+      this.broadcast(JSON.stringify({ t: 'bhit', gx, gy, gz }), ws)
     } else if (msg.t === 'pet') {
       // Cats are deterministic (src/cats.ts), so the index is all anyone
       // needs to pop a heart over the right one.
@@ -616,6 +660,9 @@ export class GameRoom extends DurableObject<Env> {
     const att = ws.deserializeAttachment() as { id: string } | null
     if (!att) return
     this.states.delete(att.id)
+    // A reconnecting player comes back as a fresh base figure, so keeping the
+    // old wounds would maim them.
+    this.bores.delete(att.id)
     this.faces.delete(att.id)
     // Anyone in their arms sits back down where they were picked up. Clients
     // do exactly the same on `leave`, so nobody diverges.

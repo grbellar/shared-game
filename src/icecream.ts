@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { WICHITA_X, WICHITA_Z, WICHITA_GROUND } from './wichita'
 import { sfx } from './audio'
-import type { Health } from './health'
+import type { Mass } from './mass'
 
 // Old Town Scoops: an ice cream parlor on the north side of East Douglas
 // Avenue, two blocks east of the arcade. The lot at local (1190, -6) was
@@ -12,8 +12,9 @@ import type { Health } from './health'
 // front, you walk it into your pocket, carry it inside, and trade three
 // coins at the counter for a cone. Everything is local, like an arcade run —
 // coins, pocket and cone exist on your screen only, so there's no message
-// type and nothing to desync. The cone pays out through health.heal while
-// you eat it, because ice cream fixes everything.
+// type and nothing to desync. The cone pays out in voxels while you eat it —
+// it closes wounds first and then makes you bigger, exactly like anything
+// else you swallow, because ice cream fixes everything.
 
 const SX = WICHITA_X + 1190
 const SZ = WICHITA_Z + -6
@@ -27,7 +28,7 @@ const COIN_RANGE = 1.2
 const COIN_RESPAWN = 45 // seconds; the street stays generous
 const COUNTER_RANGE = 2.6
 const EAT_TIME = 12
-const HEAL_RATE = 6 // hp per second of licking — a full cone is most of a bar
+const FEED_RATE = 0.9 // voxels per second of licking — a full cone is most of a base figure
 
 const CREAM = 0xe8ddc4
 const TRIM = 0x8e4a32 // Old Town brick, for the base course
@@ -91,6 +92,7 @@ export class IceCream {
   private pocket = 0
   private cone: THREE.Group | null = null
   private eating = 0 // seconds left on the current cone
+  private licked = 0 // fractional voxels banked toward the next bite
   private scoop: THREE.Mesh | null = null
   private hint: HTMLDivElement
   private hintShown = ''
@@ -100,7 +102,7 @@ export class IceCream {
   constructor(
     scene: THREE.Scene,
     private playerGroup: THREE.Group,
-    private health: Health,
+    private mass: Mass,
   ) {
     this.buildShop(scene)
     this.buildCoins(scene)
@@ -246,7 +248,13 @@ export class IceCream {
         this.dropCone()
       } else {
         this.eating -= dt
-        this.health.heal(HEAL_RATE * dt)
+        // Mass moves in whole voxels, so bank the fraction between bites.
+        this.licked += FEED_RATE * dt
+        const bite = Math.floor(this.licked)
+        if (bite > 0) {
+          this.licked -= bite
+          this.mass.eat(bite)
+        }
         if (this.scoop) {
           const s = Math.max(0.12, this.eating / EAT_TIME)
           this.scoop.scale.setScalar(s)
@@ -301,6 +309,7 @@ export class IceCream {
     this.cone = null
     this.scoop = null
     this.eating = 0
+    this.licked = 0
   }
 
   private showHint(text: string): void {

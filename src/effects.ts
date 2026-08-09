@@ -9,6 +9,10 @@ import { spawnPhysicsDebris, attachPhysicsBody } from './physics'
 export interface Target {
   id: string
   pos: THREE.Vector3
+  // Figure radius and height (see remotes.targets()); absent means a
+  // person-sized body.
+  r?: number
+  h?: number
 }
 
 const ROCKET_SPEED = 26
@@ -86,11 +90,15 @@ function discard(scene: THREE.Scene, mesh: THREE.Mesh): void {
 export class Effects {
   // Toggled by cheats.ts: every burst and fireball goes highlighter-coloured.
   paintball = false
-  onBlast: (center: THREE.Vector3) => void = () => {}
-  // Fires only for the local player's own rockets. Craters hang off this so
-  // exactly one client (the shooter) mints the world damage — per-client sim
-  // divergence must never fork the terrain.
-  onOwnExplosion: (center: THREE.Vector3) => void = () => {}
+  // `ownerId` is 'me' for our own rockets — knockback applies to everyone,
+  // but self-erosion is only ever from our own blasts (anyone else's damage
+  // arrives as their bore, so it must not double-dip here).
+  onBlast: (center: THREE.Vector3, ownerId: string) => void = () => {}
+  // Fires only for the local player's own rockets, with the rocket's flight
+  // direction so a body in the blast can be bored along it. Craters hang off
+  // this so exactly one client (the shooter) mints the world damage —
+  // per-client sim divergence must never fork the terrain.
+  onOwnExplosion: (center: THREE.Vector3, dir: THREE.Vector3) => void = () => {}
   // Extra rocket-stopping solids beyond terrain and props (built blocks).
   // A callback so effects stays ignorant of the blocks module; main.ts wires it.
   solidAt: (p: THREE.Vector3) => boolean = () => false
@@ -215,12 +223,16 @@ export class Effects {
       }
       const p = r.mesh.position
       const hitGround = p.y <= Math.max(heightAt(p.x, p.z), 0) + 0.15
-      // Compare against chest height, since target positions are at the feet.
-      const hitPlayer = targets.some(
-        (t) => t.id !== r.ownerId && this.tmp.set(t.pos.x, t.pos.y + 1.2, t.pos.z).distanceTo(p) < 1.5,
-      )
+      // Distance to the body's core line, feet to crown — a rocket used to
+      // fly clean through a colossus and only burst at the ankles.
+      const hitPlayer = targets.some((t) => {
+        if (t.id === r.ownerId) return false
+        const dy = Math.max(0, Math.min(t.h ?? 2.6, p.y - t.pos.y))
+        this.tmp.set(t.pos.x, t.pos.y + dy, t.pos.z)
+        return this.tmp.distanceTo(p) < Math.max(1.5, (t.r ?? 0) + 0.4)
+      })
       if (hitGround || hitPlayer || propInPath(p) || this.solidAt(p) || r.life <= 0) {
-        this.explode(p.clone(), r.ownerId)
+        this.explode(p.clone(), r.ownerId, r.vel.clone().normalize())
         this.scene.remove(r.mesh)
         this.rockets.splice(i, 1)
       }
@@ -370,7 +382,7 @@ export class Effects {
     return PAINT[Math.floor(Math.random() * PAINT.length)]
   }
 
-  private explode(center: THREE.Vector3, ownerId: string): void {
+  private explode(center: THREE.Vector3, ownerId: string, dir: THREE.Vector3): void {
     const splat = this.paintball ? this.paint() : 0
     const mesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(1, 0),
@@ -385,8 +397,8 @@ export class Effects {
     this.scene.add(mesh)
     this.explosions.push({ mesh, t: 0 })
     this.burst(center, 0x333338, 10, 9)
-    this.onBlast(center)
-    if (ownerId === 'me') this.onOwnExplosion(center)
+    this.onBlast(center, ownerId)
+    if (ownerId === 'me') this.onOwnExplosion(center, dir)
   }
 
   // A handful of flying cubes: debris, blood, whatever the occasion calls

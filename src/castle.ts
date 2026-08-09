@@ -1,4 +1,4 @@
-import { BLOCK, MATERIALS, placeBlock } from './blocks'
+import { BLOCK, placeBlock } from './blocks'
 import { REALM_GROUND, REALM_X, REALM_Z } from './realm'
 
 // Blackstone Keep: a few thousand blocks of the ordinary building grid,
@@ -67,7 +67,7 @@ export const GUARD_POSTS: { x: number; y: number; z: number }[] = [
 ]
 
 function put(u: number, v: number, gy: number, m: number): void {
-  placeBlock({ gx: CGX + u, gy, gz: CGZ + v, m, hp: MATERIALS[m].hp })
+  placeBlock({ gx: CGX + u, gy, gz: CGZ + v, m })
 }
 
 // A solid column from `from` up to and including `to`.

@@ -21,8 +21,10 @@ interface Bolt {
 export interface LaserTarget {
   id: string
   pos: THREE.Vector3
-  // Hit radius, when this target isn't person-shaped (an X-wing).
+  // Figure radius and height (see remotes.targets()) — the X-wing's wingspan
+  // rides in `r` too.
   r?: number
+  h?: number
 }
 
 // One shared geometry and material for every bolt in the air — a long thin
@@ -40,7 +42,14 @@ export class Lasers {
   solidAt: (p: THREE.Vector3) => boolean = () => false
   // A bolt reached the end of its flight. `hitId` is set when it was a
   // player. Only ever called with `ownerId === 'me'` in mind — main.ts checks.
-  onImpact: (pos: THREE.Vector3, yaw: number, ownerId: string, hitId?: string) => void = () => {}
+  // `dir` is the bolt's flight direction, so a hit can bore along it.
+  onImpact: (
+    pos: THREE.Vector3,
+    yaw: number,
+    ownerId: string,
+    hitId: string | undefined,
+    dir: THREE.Vector3,
+  ) => void = () => {}
   private bolts: Bolt[] = []
 
   constructor(private scene: THREE.Scene) {}
@@ -72,10 +81,12 @@ export class Lasers {
         const p = b.mesh.position
         for (const t of targets) {
           if (t.id === b.ownerId) continue
-          const hr = t.r ?? HIT_R
-          // Aim at the chest, not the feet, where the group's origin sits.
-          if (Math.abs(p.y - (t.pos.y + 1.1)) > hr) continue
-          if (Math.hypot(p.x - t.pos.x, p.z - t.pos.z) > hr) continue
+          // Distance to the body's core line, feet to crown, in the figure
+          // the target actually wears — a fixed chest window let every bolt
+          // pass over a colossus' knees.
+          const hr = Math.max(HIT_R, (t.r ?? 0) + 0.5)
+          const dy = Math.max(0, Math.min(t.h ?? 2.2, p.y - t.pos.y))
+          if (Math.hypot(p.x - t.pos.x, p.y - t.pos.y - dy, p.z - t.pos.z) > hr) continue
           hitId = t.id
           done = true
           break
@@ -88,7 +99,9 @@ export class Lasers {
       if (!done) continue
       const yaw = Math.atan2(b.vel.x, b.vel.z)
       // A bolt that simply timed out in open air fizzles quietly.
-      if (b.life > 0) this.onImpact(b.mesh.position.clone(), yaw, b.ownerId, hitId)
+      if (b.life > 0) {
+        this.onImpact(b.mesh.position.clone(), yaw, b.ownerId, hitId, b.vel.clone().normalize())
+      }
       this.scene.remove(b.mesh)
       this.bolts.splice(i, 1)
     }

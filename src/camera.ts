@@ -24,6 +24,10 @@ export class GameCamera {
   // walking distance the camera sits inside its own engines.
   private boom = 0
   private targetBoom = 0
+  // The whole rig is sized for a person, so a colossus scales the boom and the
+  // look height together — otherwise the camera parks at its shins.
+  private scale = 1
+  private targetScale = 1
   private camYaw = 0
   private camPitch = PITCH_DEFAULT
   private targetYaw = 0
@@ -59,6 +63,12 @@ export class GameCamera {
     this.targetBoom = extra
   }
 
+  // The player's linear size (1 = base figure), eased so a big meal swells the
+  // view instead of snapping it.
+  setScale(s: number): void {
+    this.targetScale = Math.max(1, s)
+  }
+
   // Pointer-locked mouse movement; main.ts routes it here in third person.
   // Mouse right pans the view right, mouse up looks up (camera dips).
   addLook(dx: number, dy: number): void {
@@ -76,14 +86,16 @@ export class GameCamera {
     this.pivot.copy(player.group.position)
     this.started = true
     this.boom = this.targetBoom
+    this.scale = this.targetScale
     const cp = Math.cos(this.camPitch)
-    const d = DISTANCE + this.boom
+    const d = DISTANCE * this.scale + this.boom
     this.offset.set(Math.sin(this.camYaw) * d * cp, Math.sin(this.camPitch) * d, Math.cos(this.camYaw) * d * cp)
     this.camera.position.copy(this.pivot).add(this.offset)
   }
 
   update(dt: number, player: Player, settings: Settings, fp: FirstPersonAim): void {
     this.boom += (this.targetBoom - this.boom) * Math.min(1, 2.5 * dt)
+    this.scale += (this.targetScale - this.scale) * Math.min(1, 2.5 * dt)
     if (fp.isActive) {
       // Rigid eye camera: at the head, looking along the crosshair. Follows
       // the crouch squat via the animation blend so ducking actually ducks.
@@ -122,14 +134,14 @@ export class GameCamera {
     }
 
     const cp = Math.cos(this.camPitch)
-    const d = DISTANCE + this.boom
+    const d = DISTANCE * this.scale + this.boom
     this.offset.set(Math.sin(this.camYaw) * d * cp, Math.sin(this.camPitch) * d, Math.cos(this.camYaw) * d * cp)
     this.camera.position.copy(this.pivot).add(this.offset)
     // Never sink under the island — low pitches can run the boom into a hill.
     const ground = Math.max(heightAt(this.camera.position.x, this.camera.position.z), 0) + 0.4
     if (this.camera.position.y < ground) this.camera.position.y = ground
     this.lookTarget.copy(this.pivot)
-    this.lookTarget.y += LOOK_HEIGHT
+    this.lookTarget.y += LOOK_HEIGHT * this.scale
     this.camera.lookAt(this.lookTarget)
   }
 }

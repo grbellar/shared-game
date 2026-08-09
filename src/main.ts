@@ -25,15 +25,25 @@ import { Tornado } from './tornado'
 import { buildCastle } from './castle'
 import { Portals, type Gate } from './portal'
 import * as blocks from './blocks'
-import { initBlocks, blockAtPoint, MATERIALS, type BlockSpec } from './blocks'
+import { initBlocks, blockAtPoint, BLOCK, MATERIALS } from './blocks'
 import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
-import { FIFTY_RPM, FIFTY_BLOCK_DAMAGE, FIFTY_LETHAL, FIFTY_CRATER } from './fifty'
+import { FIFTY_RPM, FIFTY_LETHAL, FIFTY_CRATER } from './fifty'
 import { FirstPersonAim } from './firstperson'
 import { Scope, ScopeInput, hitscan } from './sniper'
 import { Minimap } from './minimap'
-import { Health, MAX_HP } from './health'
+import { Pickups } from './pickups'
+import {
+  BASE_MASS,
+  COLOSSUS_MASS,
+  VOXEL,
+  boreCells,
+  massOf,
+  outermost,
+  spillJitter,
+} from './voxelbody'
+import { Mass } from './mass'
 import { Shark, SHARK_TARGET_ID } from './shark'
 import { Mobs, MOB_TARGET_PREFIX } from './mobs'
 import { Skeletons, SKEL_TARGET_PREFIX } from './skeletons'
@@ -47,7 +57,7 @@ import { handPreview, ridePreview } from './preview'
 import { GameMap } from './map'
 import { RocketRide, DESTINATIONS, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
 import { Trebuchet } from './trebuchet'
-import { NessieRide } from './nessie'
+import { NessieRide, NESSIE_BITE_R } from './nessie'
 import { XWingFlight, airborneAt } from './xwing'
 import { A10_MUZZLE } from './a10'
 import { A10Strikes } from './a10strike'
@@ -65,6 +75,8 @@ import {
   startJabber,
   popHead,
   SLASH_DURATION,
+  bodyOf,
+  setBody,
 } from './character'
 import { Critters } from './critters'
 import { Treasure } from './treasure'
@@ -197,20 +209,68 @@ if (settings.webcamFace) {
   })
 }
 const touch = new TouchControls()
-const health = new Health()
-player.onRespawn = () => health.revive()
+const mass = new Mass()
+player.onRespawn = () => {
+  mass.revive()
+  // Everyone else forgets our wounds off the g drop in our next state; our
+  // own spill keys reset here so the reborn body can spill them again.
+  if (net.id) pickups.unclaimPrefix(`b:${net.id}:`)
+}
 // Old Town Scoops, further down Douglas: sidewalk coins in, ice cream out.
 // Purely local, like an arcade run — see icecream.ts.
-const icecream = new IceCream(scene, player.group, health)
+const icecream = new IceCream(scene, player.group, mass)
 // Anything that hurts us and isn't a player — a bear, a skeleton, the lava —
 // still brings the house down. Nobody to strike, but they shout about it.
-health.onHurt = () => meckies.rally()
+mass.onHurt = () => meckies.rally()
 const cats = new Cats(scene, touch.active)
 // The Meckies: residents you can pick up and carry somewhere else.
 const meckies = new Meckies(scene, touch.active)
 const hud = new Hud()
 const killboard = new Killboard()
 const treasure = new Treasure()
+
+const pickups = new Pickups(scene)
+pickups.onCollect = (keys) => mass.eat(keys.length)
+
+// The other half of every remote body: `grown` streams in `state` (setBody
+// mirrors it into the group's userData), and the holes bored in them ride
+// `bore` and live here, so any body can be rebuilt from the pair at any moment.
+const remoteWounds = new Map<string, Set<number>>()
+function woundsOf(id: string): Set<number> {
+  let s = remoteWounds.get(id)
+  if (!s) {
+    s = new Set()
+    remoteWounds.set(id, s)
+  }
+  return s
+}
+function rebuildRemote(id: string, grown?: number): void {
+  const group = remotes.getGroup(id)
+  if (group) setBody(group, grown ?? group.userData.grown ?? BASE_MASS, woundsOf(id))
+}
+
+const FLESH_TINT = 0xd08a5a
+
+// Voxels leaving a body burst out around it and drop. Where each lands is
+// hashed off its sequence index, so every client scatters the same debris in
+// the same places without anyone sending a position.
+function spill(group: THREE.Group, ownerId: string, indices: number[], tint: number): void {
+  const figure = bodyOf(group)
+  for (const i of indices) {
+    const j = spillJitter(i)
+    const r = figure.radius * (0.35 + 0.65 * j.r)
+    pickups.spawn(
+      `b:${ownerId}:${i}`,
+      group.position.x + Math.cos(j.a) * r,
+      group.position.y + figure.height * (0.2 + 0.7 * j.h),
+      group.position.z + Math.sin(j.a) * r,
+      tint,
+    )
+  }
+}
+
+mass.onChange = () => setBody(player.group, mass.grown, mass.removed)
+mass.onSpill = (indices) => spill(player.group, net.id ?? 'me', indices, FLESH_TINT)
 
 // Sounds fade with distance from the local player.
 function distVol(pos: THREE.Vector3, range = 70): number {
@@ -219,11 +279,17 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, found, treb) => {
+net.onWelcome = (players, craters, blocks, broken, faces, meck, scores, found, treb, bores) => {
+  // Everyone else's holes replay; our own body comes back clean, which is why
+  // the room drops our bores when we drop the socket.
+  remoteWounds.clear()
+  pickups.clear()
+  for (const [id, indices] of bores) remoteWounds.set(id, new Set(indices))
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
     remotes.upsert(p)
+    rebuildRemote(p.id, p.g || BASE_MASS)
     voice.peerJoined(p.id)
   })
   // Our own face reappears for everyone else on the next captured frame.
@@ -239,9 +305,9 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, fou
   // replays dedupe to a no-op inside addCraters.
   destruction.applyRemote(craters, true)
   // Blocks get a full reset instead: some may have died while we were away.
-  // The castle regenerates pristine inside this call, then takes the room's
-  // accumulated damage back on top.
-  building.replay(blocks, worldDamage)
+  // The castle regenerates pristine inside this call, then gets re-broken by
+  // the room's cell list on top.
+  building.replay(blocks, broken)
   // Wherever the Meckies were left, including in somebody's arms.
   for (const [i, x, z, by] of meck) meckies.applyRemote(i, x, z, by)
   // Treasure somebody already dug up, and the damage already done.
@@ -253,12 +319,26 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, fou
   else trebuchet.restore()
 }
 net.onState = (p) => {
+  const prevGrown = remotes.getGroup(p.id)?.userData.grown as number | undefined
   const isNew = !remotes.getGroup(p.id)
   remotes.upsert(p)
+  // Rebuilding rewrites every instance matrix in the body, and `state` arrives
+  // fifteen times a second — so only when the figure actually changed size.
+  const grown = p.g || BASE_MASS
+  // `grown` is monotonic in life; it only ever drops on a respawn. Fresh
+  // body, fresh wound set — without this, every death leaves its holes
+  // behind and a regrown giant renders as sticks and swiss cheese. The room
+  // forgets its copy off the same g drop, so no message is needed.
+  if (prevGrown !== undefined && grown < prevGrown) {
+    woundsOf(p.id).clear()
+    pickups.unclaimPrefix(`b:${p.id}:`)
+  }
+  if (isNew || remotes.getGroup(p.id)?.userData.grown !== grown) rebuildRemote(p.id, grown)
   if (isNew) voice.peerJoined(p.id)
 }
 net.onLeave = (id) => {
   meckies.dropCarriedBy(id)
+  remoteWounds.delete(id) // mirroring what the room does on disconnect
   remotes.remove(id)
   faceBar.remove(id)
   voice.peerLeft(id)
@@ -307,6 +387,7 @@ emoteWheel.onPick = (id) => emotes.play(id)
 // else's pose flipping to 'slung' is the only signal that it just fired.
 
 setInterval(() => {
+  net.sendClaim(pickups.drainClaims())
   const look = getLook(player.group)
   net.sendState({
     x: player.group.position.x,
@@ -329,6 +410,7 @@ setInterval(() => {
     hp: look.pitch,
     hy: look.yaw,
     hat,
+    g: mass.grown,
   })
 }, 66)
 
@@ -342,11 +424,24 @@ net.onArrow = (id, origin, dir, power) => {
   arrows.spawn(id, from, new THREE.Vector3(...dir), power)
 }
 const destruction = new Destruction(effects, net)
-const shark = new Shark(scene, net, effects, remotes, health)
-const mobs = new Mobs(scene, net, effects, remotes, health)
+// The relay never echoes a crater to its sender, so without this hook the
+// digger is the only player whose shovel feeds them no dirt.
+destruction.onCrater = (c) => spillDirt(c)
+// A colossus does not land so much as arrive: one synced dig crater under the
+// impact, the same message a shovel scoop sends.
+player.onLand = (speed) => {
+  if (mass.mass < COLOSSUS_MASS || speed < 9) return
+  const p = player.group.position
+  // Only when the ground itself caught us — landing on a rampart must not
+  // carve the terrain forty feet under the blocks that actually took the hit.
+  if (p.y - heightAt(p.x, p.z) > 1) return
+  destruction.dig(p.x, p.z)
+}
+const shark = new Shark(scene, net, effects, remotes, mass)
+const mobs = new Mobs(scene, net, effects, remotes, mass)
 // The castle garrison. Hosted by one client like the shark and the land mobs,
 // and only ever a problem for people who went through the portal.
-const skeletons = new Skeletons(scene, net, remotes, effects, health)
+const skeletons = new Skeletons(scene, net, remotes, effects, mass)
 const building = new Building(effects, net)
 building.volumeAt = (pos) => distVol(pos, 50)
 const buildHud = initBuildHud()
@@ -384,6 +479,13 @@ function equipWeapon(next: Weapon): void {
   saveLoadout()
 }
 function equipRide(next: Ride): void {
+  // Past COLOSSUS_MASS nothing fits you: small is fast, airborne and fragile;
+  // big is slow, grounded and durable. Rocket travel still works at any size —
+  // it writes your position rather than seating you in anything.
+  if (next !== 'none' && mass.mass >= COLOSSUS_MASS) {
+    hud.feed('too big to fit')
+    return
+  }
   // Climbing out of a ship that's still in the air is allowed — you just
   // fall. What isn't allowed is leaving the flight model running without a
   // ship attached to it. The Hog shares the X-wing's flight model, so both
@@ -458,9 +560,20 @@ remotes.onSplash = (x, z) => {
 }
 // Rockets detonate on built blocks, and our own blasts chew through them.
 effects.solidAt = (p) => blockAtPoint(p.x, p.y, p.z) !== undefined
-effects.onOwnExplosion = (center) => {
+effects.onOwnExplosion = (center, dir) => {
   destruction.rocketCrater(center)
-  building.blastDamage(center)
+  building.blast(center)
+  // A rocket is an aimed weapon like the rest: the owner works out the
+  // channel it bores along its flight path, and the victim still decides
+  // whether that was fatal. The victim takes no separate blast erosion (see
+  // onBlast below), so this is the one place their damage is minted. The
+  // blast reaches the body's core line, not the feet — a burst against a
+  // colossus' chest is ten units from where it stands.
+  for (const { id, pos, r, h } of remotes.targets()) {
+    const dy = Math.max(0, Math.min(h ?? 2.6, center.y - pos.y))
+    const d = Math.hypot(center.x - pos.x, center.y - pos.y - dy, center.z - pos.z)
+    if (d < ROCKET_HIT_R + (r ?? 0)) boreVictim(id, center, ROCKET_BORE_R, dir, BORE_THROUGH)
+  }
   // Same rule as craters: only the rocket's owner scores the hit, so one
   // blast can't be counted once per client in the room.
   shark.blast(center)
@@ -510,6 +623,9 @@ function killDuck(byName: string, mine: boolean): void {
   sfx.quack(mine ? 1 : distVol(at, 60))
   sfx.pop(mine ? 1 : distVol(at, 60))
   hud.feed(`★ ${byName} MURDERED THE DUCK ★`)
+  // Keyed off the duck's own spot, so the murderer and everyone hearing about
+  // it through the `duck` egg drop the same four voxels.
+  spillPile(`d:${Math.round(at.x)},${Math.round(at.z)}`, at, 4, 0xf2d24b)
   if (!mine) return
   hud.banner('YOU MONSTER', 3000)
   hat = 'duck'
@@ -555,7 +671,7 @@ net.onEgg = (e) => {
   else if (e.k === 'treb') smashTrebuchet(e.name, false)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
-net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
+net.onBlockHit = (gx, gy, gz) => building.applyRemoteBreak(gx, gy, gz)
 
 net.onFifty = (_id, from, to) => {
   const a = new THREE.Vector3(...from)
@@ -573,12 +689,32 @@ net.onCrater = (c) => {
   // Dig-sized craters get a scoop sound; rocket craters already boomed.
   if (c.r < 3) sfx.dig(distVol(new THREE.Vector3(c.x, player.group.position.y, c.z), 50))
   destruction.applyRemote([c])
+  spillDirt(c)
 }
-effects.onBlast = (center) => {
+// Turned earth. A flat count rather than the crater's true volume: a shovel
+// swing scoops about sixty-seven voxels' worth, and paying that out would
+// inflate the whole economy off one click.
+const DIRT_PER_CRATER = 4
+function spillDirt(c: { x: number; z: number; r: number }): void {
+  const gx = Math.round(c.x * 4)
+  const gz = Math.round(c.z * 4)
+  for (let n = 0; n < DIRT_PER_CRATER; n++) {
+    const a = (n / DIRT_PER_CRATER) * Math.PI * 2
+    const x = c.x + Math.cos(a) * c.r * 0.5
+    const z = c.z + Math.sin(a) * c.r * 0.5
+    pickups.spawn(`c:${gx},${gz},${n}`, x, heightAt(x, z) + 1, z, 0x7a5a3a)
+  }
+}
+effects.onBlast = (center, ownerId) => {
   const BLAST_RADIUS = 7
   const BLAST_DAMAGE = 75 // dead center; a rocket jump off the rim is cheap
   sfx.explosion(distVol(center, 90))
-  const d = player.group.position.distanceTo(center)
+  // Distance to our own body line rather than our feet — a burst against a
+  // giant's head used to register as ten units away and do nothing.
+  const fig = bodyOf(player.group)
+  const pp = player.group.position
+  const bodyDy = Math.max(0, Math.min(fig.height, center.y - pp.y))
+  const d = Math.hypot(center.x - pp.x, center.y - pp.y - bodyDy, center.z - pp.z)
   if (d >= BLAST_RADIUS) return
   const k = 1 - d / BLAST_RADIUS
   const dir = player.group.position.clone().sub(center)
@@ -586,8 +722,10 @@ effects.onBlast = (center) => {
   if (dir.lengthSq() < 0.01) dir.set(0, 0, 1)
   dir.normalize()
   player.applyImpulse(dir.x * 20 * k, 7 + 9 * k, dir.z * 20 * k)
-  // Own blast included: rocket jumps should hurt.
-  health.damage(BLAST_DAMAGE * k)
+  // Only our own blasts erode us here — rocket jumps should hurt. Anybody
+  // else's rocket does its damage through the bore their client mints, so
+  // taking blast erosion on top would double-charge every hit.
+  if (ownerId === 'me') mass.damage(BLAST_DAMAGE * k)
 }
 net.onFire = (id, origin, dir) => {
   const from = new THREE.Vector3(...origin)
@@ -625,7 +763,7 @@ function touchdown(pos: THREE.Vector3): void {
   sfx.impact()
   net.sendLand(pos)
   destruction.rocketCrater(pos)
-  building.blastDamage(pos)
+  building.blast(pos)
   shark.blast(pos)
 }
 rocket.onLand = touchdown
@@ -685,6 +823,10 @@ const nessie = new NessieRide(scene, effects, distVol, {
   killDuck: () => killDuck(profile.name, true),
   smashTrebuchet: () => smashTrebuchet(profile.name, true),
 })
+// Same split as every other weapon: she removes voxels, and the victim decides
+// that was fatal and announces it.
+// `at` already sits inside the victim's body, at the height the jaws struck.
+nessie.onBite = (id, at) => boreVictim(id, at, NESSIE_BITE_R)
 
 function mountNessie(): void {
   equipRide('nessie')
@@ -713,7 +855,7 @@ net.onLand = (_id, at) => {
   if (dir.lengthSq() < 0.01) dir.set(0, 0, 1)
   dir.normalize()
   player.applyImpulse(dir.x * 22 * k, 8 + 10 * k, dir.z * 22 * k)
-  health.damage(LAND_BLAST_DAMAGE * k)
+  mass.damage(LAND_BLAST_DAMAGE * k)
 }
 map.data = () => ({
   me: {
@@ -831,7 +973,7 @@ xwing.onCrash = (pos, kind) => {
     effects.spawnImpact(pos)
     effects.spawnDebris(pos, ride === 'a10' ? 0x7f8578 : 0xd8d4c6, 16, 9)
     sfx.explosion()
-    health.damage(CRASH_DAMAGE)
+    mass.damage(CRASH_DAMAGE)
   }
   // No message and no crater: the wreck is cosmetic and self-inflicted, and
   // everyone else already watched the ship fall out of the sky in the
@@ -843,15 +985,33 @@ xwing.onCrash = (pos, kind) => {
 // which is where the damage is decided — the same split rockets and arrows
 // already use.
 const lasers = new Lasers(scene)
+// A weapon carries a volume rather than a damage number: it takes whatever
+// voxels fall inside it, so one shot is lethal to a base figure and a flesh
+// wound on a colossus. Sized against the base figure's 15 voxels so the old
+// balance survives — two katana swings, two sniper rounds, five laser bolts.
+const LASER_BORE_R = 0.45 // ~3 voxels
+const SWORD_BORE_R = 0.7 // ~11
+const SNIPER_BORE_R = 0.65 // ~9
+const FIFTY_BORE_R = 0.85 // ~20, more than a whole base player
+// A rocket bores a channel along its flight rather than a sphere: lethal
+// through a base figure, a tunnel through a colossus. HIT_R is how close the
+// blast centre must land to the body to count as boring it at all — wider
+// than that is knockback only.
+const ROCKET_HIT_R = 3
+const ROCKET_BORE_R = 0.8
+// How far a boring projectile's channel runs, centred on the impact. Long
+// enough to cross the fattest colossus, so every round exits the far side —
+// Breakout rules, and the reason a through-shot costs a giant a real tunnel.
+const BORE_THROUGH = 18
 const LASER_DAMAGE = 22
 lasers.solidAt = (p) => blockAtPoint(p.x, p.y, p.z) !== undefined
-lasers.onImpact = (pos, yaw, ownerId, hitId) => {
+lasers.onImpact = (pos, yaw, ownerId, hitId, dir) => {
   effects.spawnDebris(pos, 0xff6a2a, 4, 7)
   if (ownerId !== 'me') return
   if (hitId) {
-    // Just the damage — the victim decides whether that was fatal, exactly
-    // like a katana hit.
-    net.sendHit(hitId, LASER_DAMAGE)
+    // Voxels only — the victim decides whether that was fatal, exactly like a
+    // katana hit. The bolt bores straight through along its flight.
+    boreVictim(hitId, pos, LASER_BORE_R, dir, BORE_THROUGH)
     sfx.hitmark()
     return
   }
@@ -862,7 +1022,7 @@ lasers.onImpact = (pos, yaw, ownerId, hitId) => {
   if (shark.swing(pos, yaw, LASER_DAMAGE)) return
   if (mobs.swing(pos, yaw, LASER_DAMAGE)) return
   const block = blockAtPoint(pos.x, pos.y, pos.z)
-  if (block) building.hit(block.gx, block.gy, block.gz, 1)
+  if (block) building.breakCell(block.gx, block.gy, block.gz)
 }
 net.onLaser = (id, origin, dir) => {
   const from = new THREE.Vector3(...origin)
@@ -902,12 +1062,16 @@ strikes.onBurst = (owner, impact) => {
   // The dirt kicks up on every screen; what it broke is the caller's to say.
   effects.spawnDebris(impact, 0x6b4526, 3, 5)
   if (owner !== 'me') return
-  for (const { id, pos } of remotes.targets()) {
-    if (pos.distanceTo(impact) < STRIKE_HIT_R) net.sendHit(id, MAX_HP)
+  // Girth counts: a colossus standing over the impact point is still hit
+  // even though its centre is well outside the burst radius.
+  for (const { id, pos, r } of remotes.targets()) {
+    if (Math.hypot(impact.x - pos.x, impact.z - pos.z) < STRIKE_HIT_R + (r ?? 0)) {
+      boreVictim(id, pos.clone().setY(pos.y + 1), FIFTY_BORE_R)
+    }
   }
-  // Your own strike can shred you too — through health.damage, the same
+  // Your own strike can shred you too — through mass.damage, the same
   // self-inflicted path as standing under your own rocket.
-  if (player.group.position.distanceTo(impact) < STRIKE_HIT_R) health.damage(STRIKE_SELF_DAMAGE)
+  if (player.group.position.distanceTo(impact) < STRIKE_HIT_R) mass.damage(STRIKE_SELF_DAMAGE)
   shark.blast(impact)
   mobs.blast(impact)
   skeletons.blast(impact)
@@ -916,7 +1080,7 @@ strikes.onBurst = (owner, impact) => {
   for (const h of [0.4, 1.6, 2.8]) {
     const block = blockAtPoint(impact.x, impact.y + h, impact.z)
     if (block) {
-      building.hit(block.gx, block.gy, block.gz, FIFTY_BLOCK_DAMAGE)
+      building.breakCell(block.gx, block.gy, block.gz)
       break
     }
   }
@@ -957,10 +1121,14 @@ meckies.onMove = (i, x, z, by) => net.sendMeckie(i, x, z, by)
 meckies.personName = () => profile.name
 meckies.onWarCry = (group, text) => bubbles.show(group, text)
 meckies.onSay = (name, text) => chat.addMessage(name, text)
-// Struck through the ordinary `hit` path, so the rules still hold: attackers
-// only ever send damage, and the victim is the one who decides it was fatal
-// and announces their own death.
-meckies.onStrike = (id) => net.sendHit(id, MAX_HP)
+// Wide enough to bore clean through, which kills a base figure outright and
+// merely hurts a colossus. The rules still hold: attackers only ever remove
+// voxels, and the victim announces their own death.
+const MECKIE_BORE_R = 9
+meckies.onStrike = (id) => {
+  const group = remotes.getGroup(id)
+  if (group) boreVictim(id, group.position.clone().setY(group.position.y + 1), MECKIE_BORE_R)
+}
 // 'me' on the wire means the sender, so resolve it to their id before it
 // reaches the Meckies — to us they're just another carrier.
 net.onMeckie = (id, i, x, z, by) => meckies.applyRemote(i, x, z, by === 'me' ? id : by)
@@ -981,25 +1149,210 @@ net.onSlash = (id) => {
   sfx.slash(group ? distVol(group.position) : 0.7)
   remotes.slash(id)
 }
-// Who last hurt us, and when. The killboard needs a culprit, and under
-// health.ts we're the only one who knows — everyone else just sent a `hit`
-// and moved on. Stale credit expires, so a shark finishing you 20 seconds
-// later doesn't get pinned on the last player who grazed you.
+// Who last hurt us, and when. The killboard needs a culprit, and under mass.ts
+// we're the only one who knows — everyone else just sent a `bore` and moved on.
+// Stale credit expires, so a shark finishing you 20 seconds later doesn't get
+// pinned on the last player who grazed you.
 const CREDIT_WINDOW = 10000
 let lastAttacker = ''
 let lastAttackerAt = 0
-net.onHit = (attacker, dmg) => {
-  lastAttacker = attacker
-  lastAttackerAt = performance.now()
-  // avenge BEFORE the damage lands: health.damage fires onHurt, and whichever
-  // fires first takes the per-resident cooldown. This one knows who did it and
-  // can hit back, so it has to win the race.
-  meckies.avenge(attacker)
-  health.damage(dmg)
+mass.onSelfBore = (indices) => {
+  if (net.id) net.sendBore(net.id, indices)
 }
-// Losing the last of your health is your own announcement to make: the head
-// pops here, and everyone else hears about it through `kill`.
-health.onDeath = () => {
+// Tell the room, so its wound set shrinks to match and late joiners see the
+// healed body. A healed voxel can be bored again, so its old pickup key
+// comes back into play too.
+mass.onHeal = (indices) => {
+  net.sendHeal(indices)
+  for (const i of indices) pickups.unclaim(`b:${net.id}:${i}`)
+}
+net.onHeal = (id, indices) => {
+  const wounds = remoteWounds.get(id)
+  if (!wounds) return
+  for (const i of indices) {
+    wounds.delete(i)
+    pickups.unclaim(`b:${id}:${i}`)
+  }
+  rebuildRemote(id)
+}
+
+// Take voxels out of somebody with an aimed weapon. The sphere resolves in the
+// VICTIM'S own space, so it cannot drift with interpolation, and only the
+// shooter resolves it — everyone else just applies the indices. A sphere that
+// catches nothing still costs a voxel, so aim drift can never turn a landed
+// shot into a whiff.
+function boreVictim(
+  victimId: string,
+  at: THREE.Vector3,
+  radius: number,
+  dir?: THREE.Vector3,
+  len = 0,
+): boolean {
+  const group = remotes.getGroup(victimId)
+  if (!group) return false
+  const local = group.worldToLocal(at.clone())
+  const figure = bodyOf(group)
+  // With a direction the sphere becomes a channel CENTERED on `at`, running
+  // len/2 both ways — Breakout rules: a round takes every voxel on its path
+  // through the body, entry to exit. The direction has to turn into the
+  // victim's space along with the point.
+  const d = dir ? dir.clone().applyQuaternion(group.getWorldQuaternion(_boreQ).invert()) : null
+  if (d) local.addScaledVector(d, -len / 2)
+  let hit = boreCells(figure, {
+    ox: local.x, oy: local.y, oz: local.z,
+    dx: d?.x ?? 0, dy: d?.y ?? 1, dz: d?.z ?? 0, r: radius, len,
+  })
+  if (!hit.length) hit = outermost(figure, 1)
+  if (!hit.length) return false
+  net.sendBore(victimId, hit)
+  return true
+}
+const _boreQ = new THREE.Quaternion()
+
+// Break every block the body is standing in, bounded by the figure's own
+// footprint. Contact plowing calls it every frame for a colossus; a melee swing
+// calls it once for anyone, so a mid-size giant jammed against rubble can still
+// cut itself free.
+function breakOverlapping(figure: ReturnType<typeof bodyOf>): number {
+  const p = player.group.position
+  const r = Math.ceil(figure.radius / BLOCK)
+  const h = Math.ceil(figure.height / BLOCK)
+  const cgx = Math.round(p.x / BLOCK)
+  const cgy = Math.floor(p.y / BLOCK)
+  const cgz = Math.round(p.z / BLOCK)
+  let broke = 0
+  const reachSq = ((figure.radius + BLOCK * 0.5) / BLOCK) ** 2
+  for (let dx = -r; dx <= r; dx++) {
+    for (let dz = -r; dz <= r; dz++) {
+      if (dx * dx + dz * dz > reachSq) continue
+      for (let dy = 0; dy <= h; dy++) {
+        if (blockAtPoint((cgx + dx) * BLOCK, (cgy + dy) * BLOCK + 0.1, (cgz + dz) * BLOCK)) {
+          building.breakCell(cgx + dx, cgy + dy, cgz + dz)
+          broke++
+        }
+      }
+    }
+  }
+  return broke
+}
+
+// A parked colossus can skip the sweep; the timer still catches a block
+// somebody builds into it while it stands there.
+const lastPlow = new THREE.Vector3(Infinity, 0, 0)
+let lastPlowMs = 0
+function plowThrough(): void {
+  const p = player.group.position
+  const now = performance.now()
+  if (p.distanceToSquared(lastPlow) < 0.0004 && now - lastPlowMs < 300) return
+  lastPlow.copy(p)
+  lastPlowMs = now
+  breakOverlapping(bodyOf(player.group))
+}
+
+// Goomba rules: falling through somebody's crown takes a bite sized to the
+// stomper and springs you back off their head. Only the stomper resolves it,
+// the same owner-mints rule as every other weapon.
+const STOMP_BORE_R = 0.55
+const STOMP_MS = 600
+const stompedAt = new Map<string, number>()
+function checkStomp(): void {
+  if (player.dead || player.flying || player.piloting || player.grabbed) return
+  const vy = player.fallSpeed
+  if (vy > -5) return
+  const p = player.group.position
+  const myFig = bodyOf(player.group)
+  for (const { id, pos } of remotes.targets()) {
+    const g = remotes.getGroup(id)
+    if (!g) continue
+    const fig = bodyOf(g)
+    if (Math.hypot(p.x - pos.x, p.z - pos.z) > fig.radius + myFig.radius * 0.5) continue
+    const crown = pos.y + fig.height
+    if (p.y < crown - 1.4 || p.y > crown + 1.2) continue
+    const now = performance.now()
+    if (now - (stompedAt.get(id) ?? 0) < STOMP_MS) continue
+    stompedAt.set(id, now)
+    boreVictim(id, new THREE.Vector3(pos.x, crown - 0.3, pos.z), STOMP_BORE_R * mass.scale)
+    player.applyImpulse(0, 8 - vy, 0) // the bounce, the whole reason to do it
+    sfx.hitmark()
+    return
+  }
+  // NPCs aren't in remotes.targets() — they live in their own modules with
+  // their own damage paths, so each had to grow its own stomp. Bones squash
+  // outright; a bear takes the weight by the stomper's mass.
+  if (skeletons.stomp(p) || mobs.stomp(p, 30 * mass.scale)) {
+    player.applyImpulse(0, 8 - vy, 0)
+    sfx.hitmark()
+  }
+}
+
+net.onClaim = (keys) => pickups.claimRemote(keys)
+// `key` comes from what died and where, never from a counter, so every client
+// names the same voxels.
+function spillPile(key: string, at: THREE.Vector3, n: number, tint: number): void {
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + i * 0.7
+    const r = 0.4 + (i % 3) * 0.5
+    pickups.spawn(`${key}:${i}`, at.x + Math.cos(a) * r, at.y + 1.2, at.z + Math.sin(a) * r, tint)
+  }
+}
+
+// Rubble. Keyed by the cell it fell out of, so two clients that saw the wall
+// come down in a different order still agree which voxel is which. A building
+// block is three voxels on a side, so it comes apart into three — and it costs
+// the same three to put one back (BUILD_COST below), or breaking your own wall
+// would be a mass printer.
+const RUBBLE_PER_BLOCK = 3
+building.onBreak = (gx, gy, gz, m, at) => {
+  for (let n = 0; n < RUBBLE_PER_BLOCK; n++) {
+    pickups.spawn(`w:${gx},${gy},${gz}:${n}`, at.x, at.y, at.z, MATERIALS[m].debris, VOXEL * 0.9)
+  }
+}
+// A rebuilt cell is new rubble, so the old claims on its keys let go —
+// placements are synced, which is what keeps every client's claim set moving
+// together. Without this, any cell whose rubble was ever eaten goes silent
+// for the rest of the session.
+building.onPlace = (gx, gy, gz) => {
+  for (let n = 0; n < RUBBLE_PER_BLOCK; n++) pickups.unclaim(`w:${gx},${gy},${gz}:${n}`)
+}
+net.onBore = (attacker, victim, indices) => {
+  if (victim === net.id) {
+    // Our own self-announcements echo back (the room broadcasts bores to
+    // everyone). Re-applying one isn't a no-op: the whiff fallback in take()
+    // charges a fresh voxel for a set of already-removed ones, so the echo
+    // of every lava tick and spent block would eat a bonus voxel forever.
+    if (attacker === net.id) return
+    if (attacker) {
+      lastAttacker = attacker
+      lastAttackerAt = performance.now()
+      // Avenge BEFORE the voxels go: mass fires onHurt, and whichever handler
+      // fires first takes the per-resident cooldown. This one knows who did it
+      // and can hit back, so it has to win the race.
+      meckies.avenge(attacker)
+    }
+    mass.bore(indices)
+    return
+  }
+  // Mirror the victim's own filter (take() in mass.ts): the core never
+  // erodes, indices past the figure are base-figure pokes the victim ignored,
+  // and a victim at the floor loses a life rather than a voxel. Banking any
+  // of those here is how wound sets drift until a giant renders as a stick.
+  const wounds = woundsOf(victim)
+  const grownV = remotes.getGroup(victim)?.userData.grown as number | undefined
+  if (grownV !== undefined && massOf(grownV, wounds) <= BASE_MASS) return
+  const fresh = indices.filter(
+    (i) => i >= BASE_MASS && (grownV === undefined || i < grownV) && !wounds.has(i),
+  )
+  if (!fresh.length) return
+  for (const i of fresh) wounds.add(i)
+  const group = remotes.getGroup(victim)
+  if (group) {
+    spill(group, victim, fresh, FLESH_TINT)
+    rebuildRemote(victim)
+  }
+}
+// Being taken apart at your smallest form is your own announcement to make:
+// the head pops here, and everyone else hears about it through `kill`.
+mass.onDeath = () => {
   const fresh = performance.now() - lastAttackerAt < CREDIT_WINDOW
   if (net.id) net.sendKill(net.id, fresh ? lastAttacker : undefined)
   lastAttacker = ''
@@ -1021,7 +1374,7 @@ function dieLocally(): void {
 net.onKill = (victim, _killer, killerName, victimName) => {
   hud.feed(killerName ? `${killerName} finished ${victimName}` : `${victimName} died`)
   if (victim === net.id) {
-    health.kill()
+    mass.kill()
     dieLocally()
   } else {
     const group = remotes.getGroup(victim)
@@ -1060,21 +1413,32 @@ function releaseBow(): void {
 // ground-level block is half-sunk into the hillside, so its top sits below
 // the chest height you'd naively probe.
 const MELEE_REACH = [1.1, 1.7, 2.3]
-const MELEE_HEIGHTS = [0.2, 1.2, 2.2] // above the feet: sunk block, chest, head
-function meleeBlockTarget(): BlockSpec | undefined {
+// Every block a swing plausibly meets, not just the first a probe finds: the
+// aimed columns ahead, with reach and height scaled to the figure, plus
+// everything the body already overlaps — so a colossus standing waist-deep in
+// masonry swings the whole wall face off. Returns how many blocks died, which
+// is how the shovel decides whether to fall through to digging.
+function meleeBreakBlocks(): number {
+  const figure = bodyOf(player.group)
   const p = player.group.position
   const ry = player.group.rotation.y
   const sin = Math.sin(ry)
   const cos = Math.cos(ry)
+  const s = mass.scale
+  let broke = 0
   for (const dist of MELEE_REACH) {
-    const tx = p.x + sin * dist
-    const tz = p.z + cos * dist
-    for (const h of MELEE_HEIGHTS) {
+    const tx = p.x + sin * dist * s
+    const tz = p.z + cos * dist * s
+    for (let h = 0.2; h < figure.height + 0.4; h += BLOCK) {
       const hit = blockAtPoint(tx, p.y + h, tz)
-      if (hit) return hit
+      if (hit) {
+        building.breakCell(hit.gx, hit.gy, hit.gz)
+        broke++
+      }
     }
   }
-  return undefined
+  broke += breakOverlapping(figure)
+  return broke
 }
 
 // At the controls of an airborne aircraft, which overrides whatever is in
@@ -1097,14 +1461,14 @@ let bulletSpark = 0
 // click-per-shot.
 let firing = false
 let lastBrrrt = 0 // the burp sound spans several rounds, so it has its own gate
-const SWORD_DAMAGE = 55 // two clean swings takes a head off
 const SNIPER_DAMAGE = 80 // brutal, but it's two hits and a slow bolt either way
 
 // Everything one lethal .50 round does when it lands — shared by the
 // handheld M2 and the A-10's nose gun, so the two can never disagree about
 // what "kills anything it touches" means. Living things die outright; blocks
 // come apart whatever they're made of; dirt gets bitten at a sane cadence.
-function applyFiftyRound(hit: ReturnType<typeof hitscan>, now: number): void {
+// `dir` is the round's flight, so a body hit bores clean through.
+function applyFiftyRound(hit: ReturnType<typeof hitscan>, now: number, dir: THREE.Vector3): void {
   if (hit.id === SHARK_TARGET_ID) {
     shark.shot(FIFTY_LETHAL)
     sfx.hitmark()
@@ -1116,11 +1480,11 @@ function applyFiftyRound(hit: ReturnType<typeof hitscan>, now: number): void {
     sfx.hitmark()
   } else if (hit.id) {
     // A player still gets to announce their own death — attackers only ever
-    // send damage. MAX_HP from full health is one round, one kill.
-    net.sendHit(hit.id, MAX_HP)
+    // remove voxels. Out of a base figure, one round is all of them.
+    boreVictim(hit.id, hit.point, FIFTY_BORE_R, dir, BORE_THROUGH)
     sfx.hitmark()
   } else if (hit.block) {
-    building.hit(hit.block.gx, hit.block.gy, hit.block.gz, FIFTY_BLOCK_DAMAGE)
+    building.breakCell(hit.block.gx, hit.block.gy, hit.block.gz)
   } else if (hit.kind !== 'sky') {
     if (
       now - lastBulletCrater > BULLET_CRATER_MS &&
@@ -1162,7 +1526,7 @@ function attack(): void {
       )
       effects.spawnTracer(origin, hit.point)
       net.sendFifty(origin, hit.point)
-      applyFiftyRound(hit, now)
+      applyFiftyRound(hit, now, dir)
       return
     }
     if (now - lastAttack < 180) return
@@ -1238,8 +1602,9 @@ function attack(): void {
       sfx.hitmark()
     } else if (hit.id) {
       // Same deal as the katana: send the damage, let the victim decide
-      // whether that was fatal and announce it back as `kill`.
-      net.sendHit(hit.id, SNIPER_DAMAGE)
+      // whether that was fatal and announce it back as `kill`. The round
+      // bores through along its flight, Breakout rules.
+      boreVictim(hit.id, hit.point, SNIPER_BORE_R, dir, BORE_THROUGH)
       sfx.hitmark()
     } else if (hit.kind !== 'sky') {
       sfx.ricochet(distVol(hit.point, 70))
@@ -1258,17 +1623,25 @@ function attack(): void {
     // Check for a hit at the midpoint of the swing. Players first — a block
     // behind a victim never eats the killing blow.
     setTimeout(() => {
-      for (const { id, pos } of remotes.targets()) {
+      // The blade swings at the swinger's own chest height, reach scaled to
+      // the swinger, and the victim's girth counts — two colossi could
+      // otherwise stand chest to chest unable to connect, and a base player
+      // could only ever cut a giant's ankles.
+      const swingY = player.group.position.y + 1.2 * mass.scale
+      for (const { id, pos, r, h } of remotes.targets()) {
         const to = pos.clone().sub(player.group.position)
-        if (to.length() > 2.4) continue
+        const dy = Math.max(0, Math.min(h ?? 2.2, swingY - pos.y))
+        if (Math.hypot(to.x, swingY - pos.y - dy, to.z) > 2.4 * mass.scale + (r ?? 0)) continue
         const facing = Math.atan2(
           Math.sin(Math.atan2(to.x, to.z) - player.group.rotation.y),
           Math.cos(Math.atan2(to.x, to.z) - player.group.rotation.y),
         )
         if (Math.abs(facing) < 1.2) {
           // Just the damage — the victim decides whether that was fatal and
-          // announces it, so the head pops when their `kill` comes back.
-          net.sendHit(id, SWORD_DAMAGE)
+          // announces it, so the head pops when their `kill` comes back. The
+          // cut lands where the blade actually swept, clamped into the body.
+          const cutY = Math.max(pos.y + 0.3, Math.min(pos.y + (h ?? 2.2) - 0.2, swingY))
+          boreVictim(id, new THREE.Vector3(pos.x, cutY, pos.z), SWORD_BORE_R * mass.scale)
           sfx.hitmark()
           return
         }
@@ -1285,8 +1658,7 @@ function attack(): void {
         killDuck(profile.name, true)
         return
       }
-      const block = meleeBlockTarget()
-      if (block) building.hit(block.gx, block.gy, block.gz, 1)
+      meleeBreakBlocks()
     }, SLASH_DURATION * 500)
   } else if (weapon === 'shovel' && now - lastAttack > 600) {
     lastAttack = now
@@ -1304,11 +1676,7 @@ function attack(): void {
         sfx.hitmark()
         return
       }
-      const block = meleeBlockTarget()
-      if (block) {
-        building.hit(block.gx, block.gy, block.gz, 2)
-        return
-      }
+      if (meleeBreakBlocks()) return
       // A shovel to the nose counts too, and beats digging a hole in the sea.
       if (shark.swing(player.group.position, player.group.rotation.y, 24)) return
       if (mobs.swing(player.group.position, player.group.rotation.y, 24)) return
@@ -1330,7 +1698,12 @@ function attack(): void {
     // target is the crosshair's ground point in first person, else the
     // column just ahead; either way the column stacks upward.
     const aimed = fp.isActive ? fp.aimedDigPoint() : null
-    building.place(player.group.position, player.group.rotation.y, material, aimed)
+    // A placed block IS voxels off your body: one currency for combat, growth
+    // and construction, so a colossus can trade size back for speed by
+    // building with it. It costs exactly what breaking one pays back.
+    if (mass.spend(RUBBLE_PER_BLOCK)) {
+      building.place(player.group.position, player.group.rotation.y, material, aimed)
+    }
   } else if (weapon === 'm2' && now - lastAttack > FIFTY_RPM) {
     lastAttack = now
     sfx.fiftyShot()
@@ -1354,7 +1727,7 @@ function attack(): void {
     effects.spawnMuzzleFlash(muzzle)
     effects.spawnTracer(muzzle, hit.point)
     net.sendFifty(muzzle, hit.point)
-    applyFiftyRound(hit, now)
+    applyFiftyRound(hit, now, dir)
   } else if (weapon === 'radio' && now - lastAttack > 500) {
     lastAttack = now
     callFireMission()
@@ -1533,9 +1906,16 @@ if (profile.voice) {
 }
 
 const chat = new Chat()
-shark.onDeath = () => chat.addMessage('🦈', 'blub…')
-mobs.onDeath = (name) =>
+shark.onDeath = (at) => {
+  chat.addMessage('🦈', 'blub…')
+  spillPile(`s:${Math.round(at.x)},${Math.round(at.z)}`, at, 60, 0x4a6b7a)
+}
+mobs.onDeath = (name, at, i) => {
   chat.addMessage(name === 'bear' ? '🐻' : '😵', name === 'bear' ? 'the bear is down' : 'gary will return')
+  // The island has no blocks on it, so without this the only food out here is
+  // what you dig and what you take off each other.
+  spillPile(`m:${i}:${Math.round(at.x)}`, at, name === 'bear' ? 14 : 8, 0x8a1f1f)
+}
 const bubbles = new Bubbles(camera, renderer.domElement)
 mobs.onSay = (group, text) => bubbles.show(group, text)
 const stripper = new Stripper(scene, bubbles)
@@ -1761,7 +2141,7 @@ function crossTo(gate: Gate): void {
   daynight,
   voice,
   arrows,
-  health,
+  mass,
   shark,
   mobs,
   effects,
@@ -1977,7 +2357,7 @@ function frame(): void {
   // The realm's sea is molten. player.ts floats you in it exactly like water,
   // which is the joke: the only difference is that it kills you.
   if (shadow && player.pose === 'swim' && !player.dead) {
-    health.damage(52 * dt)
+    mass.damage(52 * dt)
     burnT -= dt
     if (burnT <= 0) {
       burnT = 0.35
@@ -1987,7 +2367,17 @@ function frame(): void {
     burnT = 0
   }
 
-  health.update(dt)
+  mass.update(dt)
+  // A colossus does not go around masonry, it goes through it — minted by the
+  // player doing the plowing, the same owner-mints rule craters and rockets
+  // follow. The rubble drops through building.onBreak like any other break, so
+  // it walks out of a wall eating the wall.
+  if (player.plows && !player.dead) plowThrough()
+  checkStomp()
+  // Size is a movement stat, derived from mass on every client rather than sent.
+  player.mass = mass.mass
+  pickups.update(dt, player.group.position, mass.scale)
+  gameCamera.setScale(mass.scale)
   voice.update(dt)
   player.group.userData.talk = voice.level // our own mouth flaps too
   voice.updateVolumes(player.group.position, (id) => remotes.getGroup(id)?.position)

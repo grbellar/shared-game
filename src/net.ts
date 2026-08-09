@@ -4,7 +4,7 @@ import type * as THREE from 'three'
 
 import type { Pose } from './character'
 import type { Crater } from './world'
-import type { BlockSpec, WorldDamage } from './blocks'
+import type { BlockSpec, BrokenCell } from './blocks'
 import type { SharkNetState } from './shark'
 import type { MobNetState } from './mobs'
 
@@ -30,6 +30,10 @@ export interface PlayerState {
   hp: number // head pitch, up-positive radians
   hy: number // head yaw, offset from the body's facing
   hat: string // 'none' or dug-up loot / the duck (see character.ts)
+  // Voxels ever accreted (see voxelbody.ts). The whole figure — height, reach,
+  // speed, where the legs are — is derived from this one monotonic int, so
+  // none of that is sent. What's been bored OUT of it rides `bore`.
+  g: number
 }
 
 export interface Face {
@@ -63,7 +67,7 @@ type ServerMsg =
       blocks?: BlockSpec[]
       // Damage done to world-generated blocks (the castle), which the room
       // remembers even though it never stored the blocks themselves.
-      wdmg?: WorldDamage[]
+      wdmg?: BrokenCell[]
       clock?: { hours: number; running: boolean }
       faces?: Face[]
       // Where each Meckie was left: [index, x, z, carrierId].
@@ -71,6 +75,8 @@ type ServerMsg =
       scores?: Score[]
       found?: number[]
       treb?: boolean
+      // Holes already in everyone: [playerId, indices].
+      bores?: [string, number[]][]
     }
   | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
@@ -79,7 +85,6 @@ type ServerMsg =
   | { t: 'fire'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
   | { t: 'snipe'; id: string; x: number; y: number; z: number; ex: number; ey: number; ez: number }
   | { t: 'slash'; id: string }
-  | { t: 'hit'; id: string; victim: string; dmg: number }
   | { t: 'kill'; victim: string; killer: string; killerName: string; victimName: string }
   | { t: 'crater'; x: number; z: number; r: number; d: number }
   | { t: 'score'; scores: Score[] }
@@ -88,7 +93,10 @@ type ServerMsg =
   | { t: 'arrow'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; p: number }
   | { t: 'laser'; id: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
   | { t: 'bplace'; gx: number; gy: number; gz: number; m: number }
-  | { t: 'bhit'; gx: number; gy: number; gz: number; dmg: number }
+  | { t: 'bhit'; gx: number; gy: number; gz: number }
+  | { t: 'bore'; id: string; victim: string; i: number[] }
+  | { t: 'heal'; id: string; i: number[] }
+  | { t: 'claim'; id: string; k: string[] }
   | { t: 'pet'; id: string; cat: number }
   | { t: 'fw'; id: string; x: number; z: number; c: number }
   | { t: 'fwgo'; id: string }
@@ -110,7 +118,7 @@ export class Net {
     players: PlayerState[],
     craters: Crater[],
     blocks: BlockSpec[],
-    worldDamage: WorldDamage[],
+    broken: BrokenCell[],
     faces: Face[],
     meck: [number, number, number, string][],
     scores: Score[],
@@ -118,6 +126,7 @@ export class Net {
     // Whether the room remembers the trebuchet destroyed; a reconnect into a
     // fresh room needs the false to rebuild it.
     treb: boolean,
+    bores: [string, number[]][],
   ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
@@ -129,8 +138,6 @@ export class Net {
   onSnipe: (id: string, from: [number, number, number], to: [number, number, number]) => void =
     () => {}
   onSlash: (id: string) => void = () => {}
-  // Only fires when the hit was aimed at us — you apply your own damage.
-  onHit: (attacker: string, dmg: number) => void = () => {}
   onKill: (victim: string, killer: string, killerName: string, victimName: string) => void = () => {}
   onCrater: (c: Crater) => void = () => {}
   onScores: (scores: Score[]) => void = () => {}
@@ -148,7 +155,15 @@ export class Net {
     () => {}
   onClock: (hours: number, running: boolean) => void = () => {}
   onBlockPlace: (gx: number, gy: number, gz: number, m: number) => void = () => {}
-  onBlockHit: (gx: number, gy: number, gz: number, dmg: number) => void = () => {}
+  onBlockHit: (gx: number, gy: number, gz: number) => void = () => {}
+  // Sequence indices into the shared voxel ordering (see voxelbody.ts).
+  // Applying them is a set union, so order, duplicates and replays all land on
+  // the same body.
+  onBore: (attacker: string, victim: string, indices: number[]) => void = () => {}
+  // Loose voxels somebody else got to first.
+  onClaim: (keys: string[]) => void = () => {}
+  // Somebody's wounds closing: eaten voxels refilled these indices.
+  onHeal: (id: string, indices: number[]) => void = () => {}
   onPet: (cat: number) => void = () => {}
   onFirework: (id: string, x: number, z: number, c: number) => void = () => {}
   onFireworkLaunch: (id: string) => void = () => {}
@@ -206,6 +221,7 @@ export class Net {
           msg.scores ?? [],
           msg.found ?? [],
           msg.treb === true,
+          msg.bores ?? [],
         )
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {
@@ -225,8 +241,6 @@ export class Net {
         }
       } else if (msg.t === 'slash') {
         if (msg.id !== this.id) this.onSlash(msg.id)
-      } else if (msg.t === 'hit') {
-        if (msg.victim === this.id) this.onHit(msg.id, msg.dmg)
       } else if (msg.t === 'kill') {
         this.onKill(msg.victim, msg.killer, msg.killerName, msg.victimName)
       } else if (msg.t === 'score') {
@@ -247,10 +261,18 @@ export class Net {
         if (msg.id !== this.id) this.onLaser(msg.id, [msg.x, msg.y, msg.z], [msg.dx, msg.dy, msg.dz])
       } else if (msg.t === 'bplace') {
         this.onBlockPlace(msg.gx, msg.gy, msg.gz, msg.m)
+      } else if (msg.t === 'heal') {
+        if (msg.id !== this.id && Array.isArray(msg.i)) this.onHeal(msg.id, msg.i)
+      } else if (msg.t === 'bore') {
+        // Not skipped for the sender: the shooter already applied it locally,
+        // and adding an index twice is a set union, so the echo is a no-op.
+        if (Array.isArray(msg.i)) this.onBore(msg.id, msg.victim, msg.i)
+      } else if (msg.t === 'claim') {
+        if (msg.id !== this.id && Array.isArray(msg.k)) this.onClaim(msg.k)
       } else if (msg.t === 'bhit') {
         // Cap-eviction bhits DO come back to their own trigger (broadcast to
         // all) — safe, because damaging a missing block is a no-op.
-        this.onBlockHit(msg.gx, msg.gy, msg.gz, msg.dmg)
+        this.onBlockHit(msg.gx, msg.gy, msg.gz)
       } else if (msg.t === 'pet') {
         if (msg.id !== this.id) this.onPet(msg.cat)
       } else if (msg.t === 'fw') {
@@ -356,11 +378,6 @@ export class Net {
     this.ws!.send(JSON.stringify({ t: 'slash' }))
   }
 
-  sendHit(victim: string, dmg: number): void {
-    if (!this.connected) return
-    this.ws!.send(JSON.stringify({ t: 'hit', victim, dmg }))
-  }
-
   // You announce your own death. `by` is whoever last hurt you, so the room
   // can credit the kill — the victim is the only one who knows for sure,
   // since the victim is the only one who runs their own health.
@@ -456,9 +473,32 @@ export class Net {
     this.ws!.send(JSON.stringify({ t: 'bplace', gx, gy, gz, m }))
   }
 
-  sendBlockHit(gx: number, gy: number, gz: number, dmg: number): void {
+  sendBlockHit(gx: number, gy: number, gz: number): void {
     if (!this.connected) return
-    this.ws!.send(JSON.stringify({ t: 'bhit', gx, gy, gz, dmg }))
+    this.ws!.send(JSON.stringify({ t: 'bhit', gx, gy, gz }))
+  }
+
+  // Voxels we just took out of somebody (or, for lava and falls and shark
+  // bites, out of ourselves). Indices rather than geometry: every client builds
+  // the identical voxel sequence, so an index can't drift with interpolation
+  // the way a world-space shape would.
+  sendBore(victim: string, indices: number[]): void {
+    if (!this.connected || !indices.length) return
+    this.ws!.send(JSON.stringify({ t: 'bore', victim, i: indices }))
+  }
+
+  // Wounds we just closed by eating. Only ever our own body — healing someone
+  // else is not a thing any message can say.
+  sendHeal(indices: number[]): void {
+    if (!this.connected || !indices.length) return
+    this.ws!.send(JSON.stringify({ t: 'heal', i: indices }))
+  }
+
+  // Batched, because running through a collapsed colossus is three hundred
+  // voxels at once.
+  sendClaim(keys: string[]): void {
+    if (!this.connected || !keys.length) return
+    this.ws!.send(JSON.stringify({ t: 'claim', k: keys }))
   }
 
   sendPet(cat: number): void {

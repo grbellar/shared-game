@@ -14,6 +14,11 @@ const DIG_CRATER = { r: 2.2, d: 1.1 }
 const DIRT = 0x6b4526
 
 export class Destruction {
+  // Craters we mint locally. The server never echoes one back to its sender,
+  // so anything hung off net.onCrater alone (the dirt pickups) would happen on
+  // every screen except the digger's own.
+  onCrater: (c: Crater) => void = () => {}
+
   constructor(
     private effects: Effects,
     private net: Net,
@@ -66,6 +71,7 @@ export class Destruction {
   private applyLocal(c: Crater): void {
     this.apply([c], true)
     this.net.sendCrater(c)
+    this.onCrater(c)
   }
 
   private apply(craters: Crater[], debris: boolean): void {

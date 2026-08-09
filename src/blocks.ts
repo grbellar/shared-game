@@ -15,6 +15,10 @@ import { heightAt } from './world'
 // stores and replays. WORLD blocks (the castle in the shadow realm) are
 // generated deterministically by every client from the same code, so they
 // never ride the wire — only the damage done to them does.
+//
+// Storage is chunked, one InstancedMesh per chunk per material, so the castle
+// in the shadow realm costs nothing while you're on the island facing the
+// other way.
 
 export const BLOCK = 1.5 // under the ~2.0 jump apex, so one block is climbable
 // |gx|,|gz| cap. Wide enough for the island AND the shadow realm out at
@@ -26,67 +30,84 @@ export const GY_MAX = 40
 // on top, and walls only block when their top is beyond STEP — so a single
 // block is a stair and a 2-stack is a wall, never both.
 const STEP = 1.55
-// Instances reserved per material. Blocks render as four InstancedMeshes —
-// four draw calls for the entire castle — because a few thousand individual
-// meshes would spend the whole frame budget on scene-graph traversal.
-const CAPACITY = 6000
+// Cells per chunk edge. Coarse enough that the castle is a handful of draw
+// calls rather than a hundred, fine enough to cull usefully.
+const CHUNK = 16
+// Pools grow by doubling from CHUNK_START — sizing every chunk for the worst
+// case would allocate tens of megabytes for cells nobody ever fills.
+const CHUNK_START = 64
+const CHUNK_CAPACITY = CHUNK ** 3
 
 export interface BlockSpec {
   gx: number
   gy: number
   gz: number
   m: number
-  hp: number
 }
 
-// HP table duplicated in server/room.ts (BLOCK_HP) — keep in sync.
+// Look only. Every block takes exactly one hit, so there's no hp column and
+// no table to keep in sync with the server.
 export const MATERIALS = [
-  { name: 'wood', hp: 2, debris: 0x8a5a2b },
-  { name: 'stone', hp: 4, debris: 0x8a8a92 },
-  { name: 'brick', hp: 6, debris: 0xa34632 },
-  { name: 'metal', hp: 8, debris: 0x9aa0a8 },
+  { name: 'wood', debris: 0x8a5a2b },
+  { name: 'stone', debris: 0x8a8a92 },
+  { name: 'brick', debris: 0xa34632 },
+  { name: 'metal', debris: 0x9aa0a8 },
 ]
 
 interface Cell {
   spec: BlockSpec
-  inst: number // slot in the material's InstancedMesh
+  chunk: Chunk
+  inst: number // slot in this chunk's mesh for the block's material
 }
 
-const cells = new Map<string, Cell>()
+// Meshes are created on first use, so a chunk that only ever holds wood never
+// allocates the other three.
+interface Chunk {
+  key: number
+  cx: number
+  cy: number
+  cz: number
+  meshes: (THREE.InstancedMesh | null)[]
+  free: number[][]
+  used: number[]
+}
+
+const cells = new Map<number, Cell>()
+const chunks = new Map<number, Chunk>()
 // Bumped whenever a block appears or dies. Anything caching a picture of the
 // grid (the minimap's castle layer) watches this instead of wiring a callback.
 let revision = 0
-let meshes: THREE.InstancedMesh[] = []
-// Recycled instance slots per material, plus the high-water mark that bounds
-// how many instances the GPU actually walks.
-const freeSlots: number[][] = []
-const used: number[] = []
 // Regenerates the world blocks (the castle). Held here so a welcome snapshot
 // can rebuild the world from scratch before replaying damage onto it.
 let seedWorld: (() => void) | null = null
+let root: THREE.Scene | null = null
+let geometry: THREE.BoxGeometry | null = null
+let materials: THREE.MeshLambertMaterial[] = []
 const dummy = new THREE.Object3D()
 
-const key = (gx: number, gy: number, gz: number) => `${gx},${gy},${gz}`
+// A cell key is one small integer rather than a string — blockFloorAt and
+// wallAt probe the grid per player per frame. Strides come off the caps
+// themselves: hardcode them and widening GRID_XZ_MAX folds distant cells onto
+// the same key, which is two blocks sharing one slot half a map apart.
+const XZ_SPAN = GRID_XZ_MAX * 2 + 1
+const key = (gx: number, gy: number, gz: number) =>
+  ((gx + GRID_XZ_MAX) * XZ_SPAN + (gz + GRID_XZ_MAX)) * 64 + (gy - GY_MIN)
+
+const CHUNK_XZ = Math.ceil(GRID_XZ_MAX / CHUNK)
+const CHUNK_SPAN = CHUNK_XZ * 2 + 1
+const chunkKey = (cx: number, cy: number, cz: number) =>
+  ((cx + CHUNK_XZ) * CHUNK_SPAN + (cz + CHUNK_XZ)) * 16 + (cy + 8)
 
 export function cellCenter(gx: number, gy: number, gz: number): THREE.Vector3 {
   return new THREE.Vector3(gx * BLOCK, gy * BLOCK + BLOCK / 2, gz * BLOCK)
 }
 
 export function initBlocks(scene: THREE.Scene, seed?: () => void): void {
-  const geo = new THREE.BoxGeometry(BLOCK, BLOCK, BLOCK)
-  meshes = MATERIALS.map((_, i) => {
-    const mat = new THREE.MeshLambertMaterial({ map: makeBlockTexture(i), flatShading: true })
-    const mesh = new THREE.InstancedMesh(geo, mat, CAPACITY)
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-    // Instances are scattered across two continents; one bounding sphere
-    // would never cull usefully anyway, and culling it wrong hides the castle.
-    mesh.frustumCulled = false
-    mesh.count = 0
-    scene.add(mesh)
-    freeSlots.push([])
-    used.push(0)
-    return mesh
-  })
+  root = scene
+  geometry = new THREE.BoxGeometry(BLOCK, BLOCK, BLOCK)
+  materials = MATERIALS.map(
+    (_, i) => new THREE.MeshLambertMaterial({ map: makeBlockTexture(i), flatShading: true }),
+  )
   seedWorld = seed ?? null
   seedWorld?.()
 }
@@ -111,75 +132,124 @@ export function forEachBlock(fn: (spec: BlockSpec) => void): void {
 
 // False if the cell is already occupied (simultaneous-place race: the server
 // keeps the first, the loser's phantom heals on the next welcome) or the
-// material's instance pool is full.
+// chunk's instance pool for that material is full.
 export function placeBlock(spec: BlockSpec): boolean {
   const k = key(spec.gx, spec.gy, spec.gz)
   if (cells.has(k)) return false
-  const inst = alloc(spec.m)
+  const chunk = chunkFor(spec.gx, spec.gy, spec.gz)
+  const inst = alloc(chunk, spec.m)
   if (inst < 0) return false
-  cells.set(k, { spec, inst })
-  writeInstance(spec.m, inst, spec)
+  cells.set(k, { spec, chunk, inst })
+  writeInstance(chunk, spec.m, inst, spec)
   revision++
   return true
 }
 
-// Null when there's no block there (stale hits are no-ops — that's what
-// makes the server's cap-eviction bhit broadcast safe for everyone).
-export function damageBlock(
+// One hit, one dead block. Null on an empty cell, which is what makes a
+// relayed break idempotent: replays, double-breaks and the server's
+// cap-eviction broadcast are all no-ops on a cell that already went.
+export function breakBlock(
   gx: number,
   gy: number,
   gz: number,
-  dmg: number,
-): { destroyed: boolean; m: number; center: THREE.Vector3 } | null {
+): { m: number; center: THREE.Vector3 } | null {
   const k = key(gx, gy, gz)
   const entry = cells.get(k)
   if (!entry) return null
-  entry.spec.hp -= dmg
-  const center = cellCenter(gx, gy, gz)
-  if (entry.spec.hp <= 0) {
-    writeInstance(entry.spec.m, entry.inst, null)
-    freeSlots[entry.spec.m].push(entry.inst)
-    cells.delete(k)
-    revision++
-    return { destroyed: true, m: entry.spec.m, center }
-  }
-  writeInstance(entry.spec.m, entry.inst, entry.spec)
-  return { destroyed: false, m: entry.spec.m, center }
+  writeInstance(entry.chunk, entry.spec.m, entry.inst, null)
+  entry.chunk.free[entry.spec.m].push(entry.inst)
+  cells.delete(k)
+  revision++
+  return { m: entry.spec.m, center: cellCenter(gx, gy, gz) }
 }
 
-function alloc(m: number): number {
-  if (m < 0 || m >= meshes.length) return -1
-  const recycled = freeSlots[m].pop()
+function chunkFor(gx: number, gy: number, gz: number): Chunk {
+  const cx = Math.floor(gx / CHUNK)
+  const cy = Math.floor(gy / CHUNK)
+  const cz = Math.floor(gz / CHUNK)
+  const k = chunkKey(cx, cy, cz)
+  let chunk = chunks.get(k)
+  if (!chunk) {
+    chunk = { key: k, cx, cy, cz, meshes: [null, null, null, null], free: [[], [], [], []], used: [0, 0, 0, 0] }
+    chunks.set(k, chunk)
+  }
+  return chunk
+}
+
+// The bounding sphere is the chunk's own extent rather than anything derived
+// from the instances, so it never goes stale as blocks come and go — which is
+// what lets frustum culling stay on.
+function meshFor(chunk: Chunk, m: number): THREE.InstancedMesh | null {
+  const existing = chunk.meshes[m]
+  if (existing) return existing
+  if (!root || !geometry) return null
+  const mesh = new THREE.InstancedMesh(geometry, materials[m], CHUNK_START)
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  mesh.count = 0
+  const half = (CHUNK * BLOCK) / 2
+  const center = new THREE.Vector3(
+    (chunk.cx * CHUNK) * BLOCK - BLOCK / 2 + half,
+    (chunk.cy * CHUNK) * BLOCK + half,
+    (chunk.cz * CHUNK) * BLOCK - BLOCK / 2 + half,
+  )
+  mesh.boundingSphere = new THREE.Sphere(center, half * Math.sqrt(3) + BLOCK)
+  root.add(mesh)
+  chunk.meshes[m] = mesh
+  return mesh
+}
+
+function alloc(chunk: Chunk, m: number): number {
+  if (m < 0 || m >= MATERIALS.length) return -1
+  const mesh = meshFor(chunk, m)
+  if (!mesh) return -1
+  const recycled = chunk.free[m].pop()
   if (recycled !== undefined) return recycled
-  if (used[m] >= CAPACITY) return -1
-  const inst = used[m]++
-  meshes[m].count = used[m]
+  if (chunk.used[m] >= CHUNK_CAPACITY) return -1
+  const inst = chunk.used[m]++
+  if (inst >= mesh.instanceMatrix.count) growPool(chunk, m)
+  chunk.meshes[m]!.count = chunk.used[m]
   return inst
 }
 
-// Paint one instance, or null to park it out of sight at zero scale. Half-dead
-// blocks shrink a hair and sit crooked — reads as "loosened" without cloning
-// materials for crack decals. The tilt is hashed from the cell so every client
-// leans the same block the same way.
-function writeInstance(m: number, inst: number, spec: BlockSpec | null): void {
+// InstancedMesh capacity is fixed at construction, so doubling means swapping
+// in a fresh mesh and carrying the written matrices over.
+function growPool(chunk: Chunk, m: number): void {
+  const old = chunk.meshes[m]!
+  const size = Math.min(CHUNK_CAPACITY, old.instanceMatrix.count * 2)
+  const mesh = new THREE.InstancedMesh(geometry!, materials[m], size)
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  mesh.instanceMatrix.array.set(old.instanceMatrix.array)
+  mesh.boundingSphere = old.boundingSphere
+  mesh.count = old.count
+  root!.remove(old)
+  old.dispose()
+  root!.add(mesh)
+  chunk.meshes[m] = mesh
+}
+
+// Paint one instance, or null to park it out of sight at zero scale. The tilt
+// is hashed from the cell so every client leans the same block the same way —
+// a wall of perfectly aligned cubes reads as a texture swatch, not masonry.
+function writeInstance(chunk: Chunk, m: number, inst: number, spec: BlockSpec | null): void {
+  const mesh = chunk.meshes[m]
+  if (!mesh) return
   if (spec) {
     dummy.position.copy(cellCenter(spec.gx, spec.gy, spec.gz))
-    const worn = spec.hp <= Math.ceil(MATERIALS[spec.m].hp / 2)
-    dummy.scale.setScalar(worn ? 0.94 : 1)
-    dummy.rotation.set(0, worn ? tiltOf(spec) : 0, 0)
+    dummy.scale.setScalar(1)
+    dummy.rotation.set(0, tiltOf(spec), 0)
   } else {
     dummy.position.set(0, -9999, 0)
     dummy.scale.setScalar(0)
     dummy.rotation.set(0, 0, 0)
   }
   dummy.updateMatrix()
-  meshes[m].setMatrixAt(inst, dummy.matrix)
-  meshes[m].instanceMatrix.needsUpdate = true
+  mesh.setMatrixAt(inst, dummy.matrix)
+  mesh.instanceMatrix.needsUpdate = true
 }
 
 function tiltOf(spec: BlockSpec): number {
   const h = Math.sin(spec.gx * 12.9898 + spec.gy * 78.233 + spec.gz * 37.719) * 43758.5453
-  return (h - Math.floor(h) - 0.5) * 0.12
+  return (h - Math.floor(h) - 0.5) * 0.06
 }
 
 // The lowest empty cell in the column whose top pokes above the terrain —
@@ -202,7 +272,7 @@ export function blockFloorAt(x: number, z: number, feetY: number): number {
   const gz = Math.round(z / BLOCK)
   let gy = Math.min(GY_MAX, Math.floor((feetY + STEP) / BLOCK + 1e-6) - 1)
   for (; gy >= GY_MIN; gy--) {
-    if (cells.get(key(gx, gy, gz))) return (gy + 1) * BLOCK
+    if (cells.has(key(gx, gy, gz))) return (gy + 1) * BLOCK
   }
   return -Infinity
 }
@@ -216,7 +286,7 @@ export function wallAt(x: number, z: number, feetY: number): boolean {
   const gz = Math.round(z / BLOCK)
   for (const h of WALL_SAMPLE_HEIGHTS) {
     const gy = Math.floor((feetY + h) / BLOCK)
-    if (cells.get(key(gx, gy, gz)) && (gy + 1) * BLOCK > feetY + STEP) return true
+    if (cells.has(key(gx, gy, gz)) && (gy + 1) * BLOCK > feetY + STEP) return true
   }
   return false
 }
@@ -224,22 +294,25 @@ export function wallAt(x: number, z: number, feetY: number): boolean {
 // Replace everything with a welcome snapshot. Blocks can be destroyed while
 // we're away, so reconnects need a full reset — crater-style dedupe isn't
 // enough here. World blocks aren't in the snapshot: they're regenerated
-// pristine and then re-broken by the accumulated damage the room replays,
-// which is idempotent because hp is a commutative sum.
-export function resetBlocks(specs: BlockSpec[], worldDamage: WorldDamage[]): void {
-  for (const cell of cells.values()) {
-    writeInstance(cell.spec.m, cell.inst, null)
-    freeSlots[cell.spec.m].push(cell.inst)
+// pristine and then re-broken by the cell list the room replays, which is
+// idempotent because breaking is a delete.
+export function resetBlocks(specs: BlockSpec[], broken: BrokenCell[]): void {
+  for (const chunk of chunks.values()) {
+    for (const mesh of chunk.meshes) {
+      if (!mesh) continue
+      root?.remove(mesh)
+      mesh.dispose()
+    }
   }
+  chunks.clear()
   cells.clear()
   seedWorld?.()
-  for (const [gx, gy, gz, dmg] of worldDamage) damageBlock(gx, gy, gz, dmg)
+  for (const [gx, gy, gz] of broken) breakBlock(gx, gy, gz)
   for (const spec of specs) placeBlock(spec)
 }
 
-// Accumulated damage on one world cell: [gx, gy, gz, total]. Packed as a
-// tuple because the welcome replay can carry thousands of them.
-export type WorldDamage = [number, number, number, number]
+// A tuple rather than an object because the welcome replay can carry thousands.
+export type BrokenCell = [gx: number, gy: number, gz: number]
 
 // 32x32 canvas textures, nearest-filtered: chunky Minecraft-by-way-of-N64
 // pixels. Hardcoded layouts, no randomness — every client draws the same.

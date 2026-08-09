@@ -3,6 +3,15 @@ import { applyEmote, clearEmotePose } from './emotes'
 import { buildXWing, poseXWing } from './xwing'
 import { buildA10, poseA10 } from './a10'
 import { NESSIE_BELLY, NESSIE_HIDE } from './critters'
+import {
+  BASE_MASS,
+  PARTS,
+  VOXEL,
+  cellCenter as bodyCellCenter,
+  layout,
+  type Layout,
+  type PartName,
+} from './voxelbody'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
 
@@ -53,64 +62,168 @@ export function releaseCharacter(group: THREE.Group): void {
   face?.mat.dispose()
 }
 
-// Blocky N64-style character. Front of the character faces +Z.
-// Limbs pivot at the hip/shoulder and are stashed in userData so
-// animateCharacter can pose them.
+// Shared by every voxel of every character: bodies are InstancedMeshes, one
+// per rig part, so a colossus made of four thousand voxels is still six draw
+// calls.
+const voxelGeo = new THREE.BoxGeometry(VOXEL, VOXEL, VOXEL)
+
+// Blocky N64-style character, built out of voxels. Front faces +Z. The six
+// named rig parts are Groups rather than meshes, each holding its own
+// InstancedMesh, which is what lets animateCharacter, emotes.ts and skins.ts
+// keep addressing `rig.armR` exactly as they always did.
 export function createCharacter(color: string, name: string): THREE.Group {
   const group = new THREE.Group()
-  const bodyMat = new THREE.MeshLambertMaterial({ color })
-  const darkMat = new THREE.MeshLambertMaterial({ color: 0x33333a })
-  const skinMat = new THREE.MeshLambertMaterial({ color: 0xe0b088 })
+  const bodyMat = new THREE.MeshLambertMaterial({ color, flatShading: true })
+  const darkMat = new THREE.MeshLambertMaterial({ color: 0x33333a, flatShading: true })
+  const skinMat = new THREE.MeshLambertMaterial({ color: 0xe0b088, flatShading: true })
+  const matFor = (part: PartName) =>
+    part === 'head' ? skinMat : part === 'legL' || part === 'legR' ? darkMat : bodyMat
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.0, 0.5), bodyMat)
-  body.position.y = 1.1
+  const rig = {} as Rig
+  for (const part of PARTS) {
+    const g = new THREE.Group()
+    g.name = part
+    const mesh = new THREE.InstancedMesh(voxelGeo, matFor(part), 32)
+    mesh.name = 'voxels'
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    mesh.count = 0
+    // A body moves every frame, so culling costs more in bounds maintenance
+    // than it saves.
+    mesh.frustumCulled = false
+    g.add(mesh)
+    group.add(g)
+    rig[part] = g
+  }
+  rig.head.rotation.order = 'YXZ' // turn, then tilt — a head, not a gimbal
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), skinMat)
-  head.name = 'head'
-  head.position.y = 1.95
-  head.rotation.order = 'YXZ' // turn, then tilt — a head, not a gimbal
-  const eyeGeo = new THREE.BoxGeometry(0.09, 0.12, 0.05)
+  // A thin slab on the front of the head cluster rather than a material slot
+  // on the head itself: the head is instanced, and instances cannot carry six
+  // materials. setBody resizes it with the head.
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.08), skinMat)
+  plate.name = 'faceplate'
+  const eyeGeo = new THREE.BoxGeometry(0.15, 0.2, 0.06)
   const eyeMat = new THREE.MeshLambertMaterial({ color: 0x111111 })
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat)
   const eyeR = new THREE.Mesh(eyeGeo, eyeMat)
   eyeL.name = eyeR.name = 'eye'
-  eyeL.position.set(-0.14, 0.05, 0.31)
-  eyeR.position.set(0.14, 0.05, 0.31)
+  eyeL.position.set(-0.23, 0.08, 0.06)
+  eyeR.position.set(0.23, 0.08, 0.06)
   // Mouth: a dark slot that animateCharacter scales open while the player
   // talks (voice level synced in state) or jabbers out a chat message.
   const mouth = new THREE.Mesh(
-    new THREE.BoxGeometry(0.26, 0.14, 0.05),
+    new THREE.BoxGeometry(0.44, 0.22, 0.06),
     new THREE.MeshLambertMaterial({ color: 0x5a1f1f }),
   )
-  mouth.position.set(0, -0.16, 0.3)
+  mouth.position.set(0, -0.26, 0.06)
   mouth.scale.y = 0.22
-  head.add(eyeL, eyeR, mouth)
-
-  const legGeo = new THREE.BoxGeometry(0.3, 0.6, 0.3)
-  legGeo.translate(0, -0.3, 0) // pivot at the hip
-  const legL = new THREE.Mesh(legGeo, darkMat)
-  const legR = new THREE.Mesh(legGeo, darkMat)
-  legL.position.set(-0.22, 0.6, 0)
-  legR.position.set(0.22, 0.6, 0)
-
-  const armGeo = new THREE.BoxGeometry(0.22, 0.7, 0.22)
-  armGeo.translate(0, -0.35, 0) // pivot at the shoulder
-  const armL = new THREE.Mesh(armGeo, bodyMat)
-  const armR = new THREE.Mesh(armGeo, bodyMat)
-  armL.position.set(-0.55, 1.6, 0)
-  armR.position.set(0.55, 1.6, 0)
+  plate.add(eyeL, eyeR, mouth)
+  rig.head.add(plate)
+  rig.mouth = mouth
+  rig.plate = plate
 
   // Yaw first, then pitch, so an emote's forward tilt (see emotes.ts) stays
   // forward no matter which way the character is facing.
   group.rotation.order = 'YXZ'
-  group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
-  group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
+  group.userData.rig = rig
   group.userData.anim = { crouch: 0, swim: 0, mouth: 0, foils: 0 }
   group.userData.look = { pitch: 0, yaw: 0, tPitch: 0, tYaw: 0 }
   group.userData.baseColor = color // skins.ts resets to this when undressing
   registry.add(group)
+  setBody(group, BASE_MASS, EMPTY_REMOVED)
   return group
+}
+
+const EMPTY_REMOVED: ReadonlySet<number> = new Set()
+
+// Rebuild the voxel clusters for a (grown, removed) pair and re-seat every
+// joint. Idempotent, and cheap enough to call whenever either changes — on
+// damage and on eating, never per frame.
+export function setBody(
+  group: THREE.Group,
+  grown: number,
+  removed: ReadonlySet<number>,
+): Layout {
+  const rig = group.userData.rig as Rig
+  const l = layout(grown, removed)
+  const center = new THREE.Vector3()
+  const dummy = new THREE.Object3D()
+  for (const part of PARTS) {
+    const { cells, pivot } = l.parts[part]
+    const g = rig[part]
+    g.position.copy(pivot)
+    const mesh = g.getObjectByName('voxels') as THREE.InstancedMesh
+    const grownMesh = ensureCapacity(g, mesh, cells.length)
+    for (let i = 0; i < cells.length; i++) {
+      bodyCellCenter(cells[i], center).sub(pivot)
+      dummy.position.copy(center)
+      dummy.updateMatrix()
+      grownMesh.setMatrixAt(i, dummy.matrix)
+    }
+    grownMesh.count = cells.length
+    grownMesh.instanceMatrix.needsUpdate = true
+  }
+
+  const head = l.parts.head
+  let hx = VOXEL / 2
+  let hy = VOXEL / 2
+  let hz = VOXEL / 2
+  for (const c of head.cells) {
+    bodyCellCenter(c, center).sub(head.pivot)
+    hx = Math.max(hx, Math.abs(center.x) + VOXEL / 2)
+    hy = Math.max(hy, Math.abs(center.y) + VOXEL / 2)
+    hz = Math.max(hz, center.z + VOXEL / 2)
+  }
+  rig.plate.scale.set(hx * 2, hy * 2, 1)
+  rig.plate.position.set(0, 0, hz)
+
+  // Hats and skin accessories are modelled against the base figure, so without
+  // this a colossus wears a crown the size of a coin.
+  const worn = (hx * 2) / VOXEL
+  const hat = rig.head.getObjectByName('hat')
+  if (hat) hat.scale.setScalar(worn)
+  for (const [part, ref] of [[rig.head, hx * 2], [rig.body, l.radius * 2]] as const) {
+    const skinparts = part.getObjectByName('skinparts')
+    if (skinparts) skinparts.scale.setScalar(Math.max(1, ref / VOXEL / 2))
+  }
+
+  group.userData.body = l
+  group.userData.grown = grown
+  return l
+}
+
+// InstancedMesh capacity is fixed at construction, so growth means a fresh
+// mesh. Doubling keeps that to a handful of reallocations even for a player
+// who eats the castle.
+function ensureCapacity(
+  parent: THREE.Group,
+  mesh: THREE.InstancedMesh,
+  need: number,
+): THREE.InstancedMesh {
+  if (need <= mesh.instanceMatrix.count) return mesh
+  let size = Math.max(32, mesh.instanceMatrix.count)
+  while (size < need) size *= 2
+  const next = new THREE.InstancedMesh(voxelGeo, mesh.material, size)
+  next.name = 'voxels'
+  next.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  next.frustumCulled = false
+  next.count = 0
+  parent.remove(mesh)
+  mesh.dispose()
+  parent.add(next)
+  return next
+}
+
+// The figure this character is currently wearing. Collision, the camera and
+// every weapon read it rather than recomputing the layout themselves.
+export function bodyOf(group: THREE.Group): Layout {
+  return (group.userData.body as Layout | undefined) ?? layout(BASE_MASS, EMPTY_REMOVED)
+}
+
+// A rig part is a Group with no material of its own, so skins.ts recolors
+// through the cluster inside it.
+export function voxelsOf(part: THREE.Object3D): THREE.InstancedMesh | undefined {
+  return part.getObjectByName('voxels') as THREE.InstancedMesh | undefined
 }
 
 // How far the head can crane before the body has to do the work.
@@ -147,14 +260,20 @@ function clampAngle(v: number, limit: number): number {
 }
 
 export interface Rig {
-  body: THREE.Mesh
-  head: THREE.Mesh
-  legL: THREE.Mesh
-  legR: THREE.Mesh
-  armL: THREE.Mesh
-  armR: THREE.Mesh
+  body: THREE.Group
+  head: THREE.Group
+  legL: THREE.Group
+  legR: THREE.Group
+  armL: THREE.Group
+  armR: THREE.Group
   mouth: THREE.Mesh
+  plate: THREE.Mesh
 }
+
+// Crouch offsets scale against the base figure's crown height, so a colossus
+// squats proportionally instead of dipping the same nine inches a base player
+// does.
+const BASE_HEIGHT = layout(BASE_MASS, EMPTY_REMOVED).height
 
 export function animateCharacter(
   group: THREE.Group,
@@ -191,12 +310,16 @@ export function animateCharacter(
   look.pitch += (look.tPitch - look.pitch) * lk
   look.yaw += (look.tYaw - look.yaw) * lk
 
-  // Squat: body and head drop, legs squash so the feet stay planted.
-  rig.body.position.y = 1.1 - 0.3 * crouch
-  rig.head.position.y = 1.95 - 0.5 * crouch
-  rig.legL.position.y = rig.legR.position.y = 0.6 - 0.3 * crouch
+  // Squat: body and head drop, legs squash so the feet stay planted. Joint
+  // heights come from the voxel figure rather than constants — a colossus
+  // keeps its hips a lot further off the ground.
+  const figure = bodyOf(group)
+  const hs = figure.height / BASE_HEIGHT
+  rig.body.position.y = figure.parts.body.pivot.y - 0.3 * hs * crouch
+  rig.head.position.y = figure.parts.head.pivot.y - 0.5 * hs * crouch
+  rig.legL.position.y = rig.legR.position.y = figure.parts.legL.pivot.y - 0.3 * hs * crouch
   rig.legL.scale.y = rig.legR.scale.y = 1 - 0.5 * crouch
-  rig.armL.position.y = rig.armR.position.y = 1.6 - 0.3 * crouch
+  rig.armL.position.y = rig.armR.position.y = figure.parts.armL.pivot.y - 0.3 * hs * crouch
 
   const stride = Math.sin(walkPhase) * 0.8 * moving * (1 - 0.55 * crouch)
   if (ride === 'wheelchair') {
@@ -336,7 +459,7 @@ export function animateCharacter(
   }
   anim.mouth += (Math.min(1, open) - anim.mouth) * Math.min(1, 20 * dt)
   rig.mouth.scale.y = 0.22 + 1.3 * anim.mouth
-  rig.mouth.position.y = -0.16 - 0.06 * anim.mouth // jaw drops as it opens
+  rig.mouth.position.y = -0.26 - 0.09 * anim.mouth // jaw drops as it opens
 
   // Weapon overrides for the right arm.
   const weapon = group.userData.weapon as string | undefined
@@ -416,11 +539,11 @@ export function startJabber(group: THREE.Group, durationMs = 1800): void {
 // Hide the head for the death window and return where it was (world space)
 // so effects can send a copy flying. Returns null if already headless.
 export function popHead(group: THREE.Group): THREE.Vector3 | null {
-  const head = group.getObjectByName('head')
+  const head = (group.userData.rig as Rig | undefined)?.head
   if (!head || !head.visible) return null
   head.visible = false
   setTimeout(() => (head.visible = true), 2600)
-  return group.position.clone().add(new THREE.Vector3(0, 1.95, 0))
+  return group.position.clone().add(new THREE.Vector3(0, head.position.y, 0))
 }
 
 const FACE_PX = 64
@@ -439,8 +562,11 @@ interface FaceStore {
 // head, or pass null to go back to the blocky face. Synced over the network
 // via `face` messages, not PlayerState — frames are far too big to ride along
 // at the state rate.
+//
+// The target is the face slab, not the head itself: the head is a cluster of
+// instanced voxels, and instances cannot carry a per-face material.
 export function setFace(group: THREE.Group, dataUrl: string | null): void {
-  const head = group.getObjectByName('head') as THREE.Mesh | undefined
+  const head = (group.userData.rig as Rig | undefined)?.plate
   if (!head) return
   let store = group.userData.face as FaceStore | undefined
 

@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import {
   createCharacter,
   animateCharacter,
+  bodyOf,
   setWeapon,
   setRide,
   setName,
@@ -56,7 +57,7 @@ export class Remotes {
   // The positions inside are live references to each group, so a cached entry
   // never goes stale between rebuilds. Callers iterate or spread; none holds
   // an array across frames or mutates it.
-  private targetsCache: { id: string; pos: THREE.Vector3; r?: number }[] = []
+  private targetsCache: { id: string; pos: THREE.Vector3; r?: number; h?: number }[] = []
   private stickCache: { id: string; group: THREE.Group }[] = []
   private blipsCache: { id: string; pos: THREE.Vector3; color: string; talk: number }[] = []
   private cachesDirty = true
@@ -239,10 +240,12 @@ export class Remotes {
     return this.blipsCache
   }
 
-  // Positions rockets and laser bolts can collide with. `r` overrides the
-  // caller's default hit radius — an X-wing is seven units of wingspan, and
-  // at person-sized tolerances nobody could ever hit one.
-  targets(): { id: string; pos: THREE.Vector3; r?: number }[] {
+  // Positions weapons can collide with, with the body each one is actually
+  // wearing: `r` and `h` are the voxel figure's radius and height (feet to
+  // crown), so a colossus is hittable anywhere on its body rather than only
+  // at person-sized tolerances around the feet. The X-wing keeps its wingspan
+  // override — the ship is far wider than the pilot.
+  targets(): { id: string; pos: THREE.Vector3; r?: number; h?: number }[] {
     if (this.cachesDirty) this.refreshCaches()
     return this.targetsCache
   }
@@ -263,10 +266,17 @@ export class Remotes {
     this.blipsCache.length = n
     let i = 0
     for (const [id, r] of this.players) {
-      const t = (this.targetsCache[i] ??= { id: '', pos: r.group.position, r: undefined })
+      const t = (this.targetsCache[i] ??= {
+        id: '',
+        pos: r.group.position,
+        r: undefined,
+        h: undefined,
+      })
+      const fig = bodyOf(r.group)
       t.id = id
       t.pos = r.group.position
-      t.r = r.ride === 'xwing' ? 4.4 : undefined
+      t.r = r.ride === 'xwing' ? Math.max(4.4, fig.radius) : fig.radius
+      t.h = r.ride === 'xwing' ? Math.max(3.5, fig.height) : fig.height
       const s = (this.stickCache[i] ??= { id: '', group: r.group })
       s.id = id
       s.group = r.group

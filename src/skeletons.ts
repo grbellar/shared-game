@@ -7,7 +7,7 @@ import type { Player } from './player'
 import type { Remotes } from './remotes'
 import type { Effects } from './effects'
 import type { Net } from './net'
-import type { Health } from './health'
+import type { Mass } from './mass'
 import { sfx } from './audio'
 
 // The castle garrison. Same multiplayer model as the shark, for the same
@@ -170,7 +170,7 @@ export class Skeletons {
     private net: Net,
     private remotes: Remotes,
     private effects: Effects,
-    private health: Health,
+    private mass: Mass,
   ) {
     for (const post of GUARD_POSTS) {
       const built = buildSkeleton()
@@ -259,6 +259,21 @@ export class Skeletons {
     if (!best) return false
     this.hit(best, dmg)
     return true
+  }
+
+  // Landed on from above (see checkStomp in main.ts). Bones do not argue with
+  // a boot: lethal outright, whatever the stomper's mass. Same ownership rule
+  // as swing — the stomper mints it.
+  stomp(feet: THREE.Vector3): boolean {
+    for (const s of this.list) {
+      if (s.st === 'dead') continue
+      if (Math.hypot(s.x - feet.x, s.z - feet.z) > 1.3) continue
+      const dy = feet.y - s.y
+      if (dy < 1.0 || dy > 3.2) continue
+      this.hit(s, 9999)
+      return true
+    }
+    return false
   }
 
   // Our own rocket went off. Only the rocket's owner calls this, matching the
@@ -468,7 +483,7 @@ export class Skeletons {
   }
 
   // What it does to US. Every client runs this for its own player only, the
-  // same rule blast knockback follows — so nobody's health moves because of
+  // same rule blast knockback follows — so nobody's mass moves because of
   // somebody else's laggy simulation.
   private applyToMe(s: Skel, player: Player): void {
     if (s.st !== 'strike' || player.dead || s.struck) return
@@ -478,7 +493,7 @@ export class Skeletons {
     if (Math.hypot(p.x - s.x, p.z - s.z) > REACH_R) return
     if (Math.abs(p.y - s.y) > 2.4) return
     s.struck = true
-    this.health.damage(STRIKE_DAMAGE)
+    this.mass.damage(STRIKE_DAMAGE)
     sfx.boneHit()
     player.applyImpulse(Math.sin(s.yaw) * 5, 3, Math.cos(s.yaw) * 5)
   }

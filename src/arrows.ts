@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { heightAt, propInPath } from './world'
+import { bodyOf } from './character'
 
 // Arrow simulation: proper ballistic arcs with gravity, fired from the bow
 // (see main.ts). Every client simulates the same `arrow` messages, like
@@ -82,13 +83,18 @@ export class Arrows {
       f.mesh.quaternion.setFromUnitVectors(this.zAxis, this.tmp)
       const tip = this.tmp.copy(f.vel).normalize().multiplyScalar(0.45).add(f.mesh.position)
 
-      const victim = targets.find(
-        (t) =>
-          t.id !== f.ownerId &&
+      // Distance to the body's core line in the figure the target actually
+      // wears — the old fixed chest point let arrows fly through a giant.
+      const victim = targets.find((t) => {
+        if (t.id === f.ownerId) return false
+        const fig = bodyOf(t.group)
+        const dy = Math.max(0, Math.min(fig.height, tip.y - t.group.position.y))
+        return (
           tip.distanceTo(
-            new THREE.Vector3(t.group.position.x, t.group.position.y + 1.2, t.group.position.z),
-          ) < 0.9,
-      )
+            new THREE.Vector3(t.group.position.x, t.group.position.y + dy, t.group.position.z),
+          ) < Math.max(0.9, fig.radius + 0.2)
+        )
+      })
       if (victim) {
         this.stickToPlayer(f, victim)
         this.flights.splice(i, 1)

@@ -2,9 +2,12 @@ import * as THREE from 'three'
 import { createCharacter, animateCharacter, type Pose } from './character'
 import { heightAt, WATER_LEVEL } from './world'
 import { blockFloorAt, wallAt } from './blocks'
+import { BASE_MASS, COLOSSUS_MASS, scaleOf } from './voxelbody'
 import { sfx } from './audio'
 
 const SPEED = 9
+// Eating a whole castle must never strand you motionless in the shadow realm.
+const MIN_SPEED = 3.6
 const RIDE_SPEED = 16 // wheelchair beats walking
 const RAMSEY_SPEED = 19 // and four limbs beat two wheels
 const TAXI_SPEED = 12 // an X-wing still parked on its skids, trundling about
@@ -68,6 +71,10 @@ export class Player {
   pose: Pose = 'stand'
   dead = false
   ride: 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'a10' | 'nessie' = 'none'
+  // Voxels we're currently made of, kept in step with mass.ts by main.ts.
+  // Speed, width for wall checks, jump height and whether walls stop us at all
+  // are all read off it.
+  mass = BASE_MASS
   // Something has hold of you (the shark) — input is ignored and whatever
   // grabbed you owns your position until it lets go.
   grabbed = false
@@ -82,6 +89,8 @@ export class Player {
   piloting = false
   // Called when the respawn timer puts you back on the island.
   onRespawn: () => void = () => { }
+  // Touched down after a fall, with the impact speed (positive).
+  onLand: (speed: number) => void = () => { }
   // Fired when we hit water hard enough to splash (main.ts spawns the effect).
   onSplash: (x: number, z: number) => void = () => { }
   private velY = 0
@@ -110,6 +119,12 @@ export class Player {
     this.wasFloating = false
   }
 
+  // Negative while dropping. The stomp check reads it, so a stomp only lands
+  // on the way down and never while rising through someone's feet.
+  get fallSpeed(): number {
+    return this.velY
+  }
+
   // Shove from an explosion (or whatever else wants to throw the player).
   applyImpulse(x: number, y: number, z: number): void {
     this.velX += x
@@ -118,12 +133,30 @@ export class Player {
     if (y > 0) this.onGround = false
   }
 
+  // Inverse root of linear size, floored: a colossus can still commit to a
+  // chase and can still be kited by anyone who keeps their distance.
+  get speedScale(): number {
+    return Math.max(MIN_SPEED / SPEED, 1 / Math.sqrt(scaleOf(this.mass)))
+  }
+
+  // Past COLOSSUS_MASS you stop being stopped by masonry and start eating it.
+  // Here that only means walls no longer block the move; main.ts wires up the
+  // actual breaking.
+  get plows(): boolean {
+    return this.mass >= COLOSSUS_MASS
+  }
+
   // Horizontal move with per-axis wall checks against built blocks: a
   // single block auto-steps (the floor resolve pops you up), anything
   // taller stops that axis. Terrain itself never blocks — only blocks do.
   private tryMove(mx: number, mz: number): void {
     const p = this.group.position
-    const R = 0.35 // leading edge of the blocky torso
+    if (this.plows) {
+      p.x += mx
+      p.z += mz
+      return
+    }
+    const R = 0.35 * scaleOf(this.mass) // leading edge of the blocky torso
     if (mx !== 0 && !wallAt(p.x + mx + Math.sign(mx) * R, p.z, p.y)) p.x += mx
     if (mz !== 0 && !wallAt(p.x, p.z + mz + Math.sign(mz) * R, p.y)) p.z += mz
   }
@@ -218,7 +251,11 @@ export class Player {
                 : this.ride === 'nessie'
                   ? NESSIE_SPEED
                   : SPEED
-      this.tryMove(dx * moveSpeed * speedMul * analog * dt, dz * moveSpeed * speedMul * analog * dt)
+      const heft = this.speedScale
+      this.tryMove(
+        dx * moveSpeed * speedMul * analog * heft * dt,
+        dz * moveSpeed * speedMul * analog * heft * dt,
+      )
       // Face the direction of travel, taking the short way around —
       // unless the mouse owns the facing (first-person strafe).
       if (!input.strafe) {
@@ -311,6 +348,7 @@ export class Player {
         } else if (!this.onGround && this.velY < -7) {
           sfx.land(-this.velY / 25)
         }
+        if (!this.onGround && this.velY < -6) this.onLand(-this.velY)
         this.group.position.y = floor
         this.velY = 0
         this.onGround = true
@@ -319,7 +357,8 @@ export class Player {
       }
     }
     if (input.jump && this.onGround && !this.dead && !flies) {
-      this.velY = JUMP_VELOCITY
+      // Scaled so a one-block step stays a one-block step at every size.
+      this.velY = JUMP_VELOCITY * Math.sqrt(scaleOf(this.mass))
       this.onGround = false
       sfx.jump()
     }

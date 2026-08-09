@@ -5,26 +5,25 @@ import {
   GY_MAX,
   MATERIALS,
   blockAt,
+  breakBlock,
   cellCenter,
-  damageBlock,
   findPlacementGy,
   placeBlock,
   resetBlocks,
   type BlockSpec,
-  type WorldDamage,
+  type BrokenCell,
 } from './blocks'
 import type { Effects } from './effects'
 import type { Net } from './net'
 import { sfx } from './audio'
 
 // Block building orchestration: turns clicks into synced placements and
-// weapon hits into synced damage. Like Destruction, this is the only module
+// weapon hits into synced breaks. Like Destruction, this is the only module
 // that talks to blocks + effects + net together.
 
 const PLACE_REACH = 2.2 // fixed forward offset, matching how the shovel aims
 const OVERHEAD_CAP = 4.6 // can't start a block more than ~1.5 cells over your head
 const BLAST_RADIUS = 3.2
-const BLAST_DMG = 3
 
 // What the builder is aiming at right now: the cell a place would fill and
 // the block a break would take out (the top of the same column, which is the
@@ -42,6 +41,14 @@ export interface BuildAim {
 export class Building {
   // Distance falloff for remote sounds; main.ts wires this to distVol.
   volumeAt: (pos: THREE.Vector3) => number = () => 1
+  // A dead block drops where it stood, as one loose voxel anyone can eat.
+  // Fires for our own breaks and relayed ones alike, so the rubble is on every
+  // screen — see pickups.ts.
+  onBreak: (gx: number, gy: number, gz: number, m: number, at: THREE.Vector3) => void = () => {}
+  // A cell got a fresh block, ours or relayed. main.ts unclaims the cell's
+  // rubble key on this — placements are already synced, so every client
+  // forgets the old claim together and the rebuilt block can spill again.
+  onPlace: (gx: number, gy: number, gz: number) => void = () => {}
 
   constructor(
     private effects: Effects,
@@ -75,35 +82,33 @@ export class Building {
   place(pos: THREE.Vector3, ry: number, m: number, aimed: { x: number; z: number } | null): boolean {
     const at = this.aim(pos, ry, aimed)
     if (!at || !at.valid) return false
-    if (!placeBlock({ gx: at.gx, gy: at.gy, gz: at.gz, m, hp: MATERIALS[m].hp })) return false
+    if (!placeBlock({ gx: at.gx, gy: at.gy, gz: at.gz, m })) return false
     sfx.land(0.5)
     this.net.sendBlockPlace(at.gx, at.gy, at.gz, m)
+    this.onPlace(at.gx, at.gy, at.gz)
     return true
   }
 
-  // Right-click with the builder: pop the block out whole, whatever it's made
-  // of. The builder is the one tool that unbuilds — weapons still have to chew
-  // through hp. Damage equal to remaining hp destroys it everywhere, and since
-  // hp is a commutative sum of relayed dmg, a double-break is just a no-op.
+  // Right-click with the builder: pop the block out.
   breakAt(pos: THREE.Vector3, ry: number, aimed: { x: number; z: number } | null): boolean {
     const at = this.aim(pos, ry, aimed)
     if (!at || at.breakGy === null) return false
-    const spec = blockAt(at.gx, at.breakGy, at.gz)
-    if (!spec) return false
-    this.hit(at.gx, at.breakGy, at.gz, spec.hp)
+    if (!blockAt(at.gx, at.breakGy, at.gz)) return false
+    this.breakCell(at.gx, at.breakGy, at.gz)
     return true
   }
 
-  // Owner-minted damage from our own weapons; everyone else learns over the
-  // wire. No-op when there's no block at the cell.
-  hit(gx: number, gy: number, gz: number, dmg: number): void {
-    if (!this.applyDamage(gx, gy, gz, dmg, 1)) return
-    this.net.sendBlockHit(gx, gy, gz, dmg)
+  // Owner-minted break from our own weapons; everyone else learns over the
+  // wire. A no-op on an empty cell, which is what makes a relayed break safe
+  // to apply twice.
+  breakCell(gx: number, gy: number, gz: number): void {
+    if (!this.applyBreak(gx, gy, gz, 1)) return
+    this.net.sendBlockHit(gx, gy, gz)
   }
 
-  // Our own rocket went off: chew through every block near the blast. Each
-  // damaged cell rides its own bhit, reusing the single code path.
-  blastDamage(center: THREE.Vector3): void {
+  // Our own rocket went off. Each block inside it rides its own bhit, reusing
+  // the single code path.
+  blast(center: THREE.Vector3): void {
     const cgx = Math.round(center.x / BLOCK)
     const cgy = Math.floor(center.y / BLOCK)
     const cgz = Math.round(center.z / BLOCK)
@@ -115,7 +120,7 @@ export class Building {
           const gz = cgz + dz
           if (!blockAt(gx, gy, gz)) continue
           if (cellCenter(gx, gy, gz).distanceTo(center) > BLAST_RADIUS) continue
-          this.hit(gx, gy, gz, BLAST_DMG)
+          this.breakCell(gx, gy, gz)
         }
       }
     }
@@ -123,32 +128,28 @@ export class Building {
 
   applyRemotePlace(gx: number, gy: number, gz: number, m: number): void {
     if (m < 0 || m >= MATERIALS.length) return
-    if (!placeBlock({ gx, gy, gz, m, hp: MATERIALS[m].hp })) return
+    if (!placeBlock({ gx, gy, gz, m })) return
     sfx.land(0.4 * this.volumeAt(cellCenter(gx, gy, gz)))
+    this.onPlace(gx, gy, gz)
   }
 
-  applyRemoteHit(gx: number, gy: number, gz: number, dmg: number): void {
-    this.applyDamage(gx, gy, gz, dmg, this.volumeAt(cellCenter(gx, gy, gz)))
+  applyRemoteBreak(gx: number, gy: number, gz: number): void {
+    this.applyBreak(gx, gy, gz, this.volumeAt(cellCenter(gx, gy, gz)))
   }
 
   // Welcome snapshot: full reset, silent — no debris storm for late joiners.
   // The castle isn't in the snapshot (every client generates it); what the
   // room replays is the damage done to it, which re-breaks it identically.
-  replay(specs: BlockSpec[], worldDamage: WorldDamage[]): void {
-    resetBlocks(specs, worldDamage)
+  replay(specs: BlockSpec[], broken: BrokenCell[]): void {
+    resetBlocks(specs, broken)
   }
 
-  private applyDamage(gx: number, gy: number, gz: number, dmg: number, vol: number): boolean {
-    const result = damageBlock(gx, gy, gz, dmg)
+  private applyBreak(gx: number, gy: number, gz: number, vol: number): boolean {
+    const result = breakBlock(gx, gy, gz)
     if (!result) return false
-    const color = MATERIALS[result.m].debris
-    if (result.destroyed) {
-      sfx.crunch(0.9 * vol)
-      this.effects.spawnDebris(result.center, color, 10, 7)
-    } else {
-      sfx.crunch(0.35 * vol)
-      this.effects.spawnDebris(result.center, color, 4, 4)
-    }
+    sfx.crunch(0.9 * vol)
+    this.effects.spawnDebris(result.center, MATERIALS[result.m].debris, 10, 7)
+    this.onBreak(gx, gy, gz, result.m, result.center)
     return true
   }
 }

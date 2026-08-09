@@ -13,7 +13,8 @@ const ZOOM_RATE = 14 // fov easing, per second
 const SWAY = 0.009 // radians of breathing wobble at full zoom
 const RANGE = 220 // bullets stop existing past this
 const MARCH = 1 // coarse terrain step, refined by bisection
-const HIT_R = 1.1 // how fat a player is to a bullet
+const HIT_R = 1.1 // minimum body radius to a bullet; grown figures widen it
+const HIT_H = 2.6 // default body height when a target doesn't carry one
 
 export interface Hit {
   point: THREE.Vector3
@@ -32,11 +33,13 @@ export interface HitOpts {
 }
 
 // March the ray until it meets terrain, a prop, or the range limit, then see
-// whether a player was standing in front of whatever it hit.
+// whether a player was standing in front of whatever it hit. `r`/`h` are the
+// target's figure radius and height (see remotes.targets()); absent, a
+// person-sized body is assumed.
 export function hitscan(
   origin: THREE.Vector3,
   dir: THREE.Vector3,
-  targets: { id: string; pos: THREE.Vector3 }[],
+  targets: { id: string; pos: THREE.Vector3; r?: number; h?: number }[],
   opts: HitOpts = {},
 ): Hit {
   const p = new THREE.Vector3()
@@ -91,17 +94,31 @@ export function hitscan(
     prev = t
   }
 
-  // Closest approach of the ray to each player's chest, nearest wins.
+  // Closest approach of the ray to each body's core line (feet to crown),
+  // nearest along the ray winning. Radius and height come from the figure the
+  // target is actually wearing — with the old fixed chest point, everything
+  // on a colossus above the ankles missed.
   const v = new THREE.Vector3()
   let bestId: string | null = null
   let bestT = worldT
   for (const target of targets) {
-    v.set(target.pos.x, target.pos.y + 1.3, target.pos.z).sub(origin)
-    const t = v.dot(dir)
-    if (t < 0.8 || t > bestT) continue
-    if (Math.sqrt(Math.max(0, v.lengthSq() - t * t)) > HIT_R) continue
+    const hr = Math.max(HIT_R, (target.r ?? 0) + 0.1)
+    const top = target.h ?? HIT_H
+    v.copy(target.pos).sub(origin)
+    // Ray-vs-vertical-segment: b couples the two parameters; a ray parallel
+    // to the body line (straight down a chimney) degenerates to a projection.
+    const b = dir.y
+    const denom = 1 - b * b
+    let s = denom < 1e-6 ? v.dot(dir) : (v.dot(dir) - b * v.y) / denom
+    const q = Math.max(0, Math.min(top, s * b - v.y))
+    s = v.dot(dir) + q * b
+    if (s < 0.8 || s > bestT) continue
+    const dx = s * dir.x - v.x
+    const dy = s * dir.y - v.y - q
+    const dz = s * dir.z - v.z
+    if (dx * dx + dy * dy + dz * dz > hr * hr) continue
     bestId = target.id
-    bestT = t
+    bestT = s
   }
 
   return {

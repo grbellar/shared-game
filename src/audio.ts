@@ -9,6 +9,15 @@
 
 const MUTE_KEY = 'shared-game.sfx-muted'
 
+// Semitones above the root for a collection chain — major pentatonic, so it
+// resolves however far up the ladder you get before the chain lapses.
+const COLLECT_STEPS = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21]
+
+// Where the ladder runs out and every further note is the same top one. The
+// caller spaces notes out as it approaches this, so a big pile doesn't pin the
+// high note on repeat.
+export const COLLECT_TOP = COLLECT_STEPS.length
+
 class Sfx {
   private ctx: AudioContext | null = null
   private out: GainNode | null = null
@@ -462,6 +471,15 @@ class Sfx {
   hitmark(): void {
     this.tone('square', 1250, 1650, 0.04, 0.1)
     this.tone('square', 1650, 950, 0.05, 0.09, 0.05)
+  }
+
+  // One voxel picked up. `step` climbs a pentatonic ladder as a chain builds,
+  // so a spill gathered on the run reads as a run of notes instead of the same
+  // blip eighteen times a second.
+  collect(step: number): void {
+    const f = 784 * Math.pow(2, COLLECT_STEPS[Math.min(step, COLLECT_TOP - 1)] / 12)
+    this.tone('square', f, f * 1.5, 0.05, 0.075)
+    this.tone('sine', f * 2, f * 3, 0.09, 0.05, 0.028)
   }
 
   // Comedic decapitation pop.

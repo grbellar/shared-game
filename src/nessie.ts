@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { heightAt, WATER_LEVEL } from './world'
 import { sfx } from './audio'
 import * as blocks from './blocks'
-import { FIFTY_BLOCK_DAMAGE, FIFTY_LETHAL } from './fifty'
+import { FIFTY_LETHAL } from './fifty'
 import { buildNessieHump, NESSIE_HUMPS, NESSIE_HUMP_SPACING } from './critters'
 import type { Critters } from './critters'
 import type { Effects } from './effects'
@@ -32,7 +32,9 @@ const HUMP_LEAD = 4.6 // head to the first hump, along the path
 const SAMPLE = 0.6 // minimum travel before the path takes another point
 const TRAIL_LEN = HUMP_LEAD + NESSIE_HUMPS * NESSIE_HUMP_SPACING + 4
 
-const NESSIE_DAMAGE = 60 // a bite, not an execution — the fling is the point
+// A mouthful, not an execution — the fling is the point. A base player who
+// takes one is very much dead anyway.
+export const NESSIE_BITE_R = 1.1
 const NESSIE_REACH = 3.4
 
 const DIRT = 0x6b4526
@@ -85,6 +87,10 @@ export class NessieRide {
     private deps: NessieWorld,
   ) {}
 
+  // Whoever her rider's head just closed on. main.ts turns it into a bore,
+  // since resolving a shape against a victim's body lives there.
+  onBite: (id: string, at: THREE.Vector3) => void = () => {}
+
   mount(head: THREE.Vector3): void {
     this.prevHead.copy(head)
     this.bitAt.clear()
@@ -94,7 +100,7 @@ export class NessieRide {
   // What the local rider's head does to the world this frame. Only the rider
   // mints damage (the usual mint-once rules).
   rampage(head: THREE.Vector3, now: number, digging: boolean): void {
-    const { building, remotes, net, shark, mobs, skeletons, critters, trebuchet, destruction } =
+    const { building, remotes, shark, mobs, skeletons, critters, trebuchet, destruction } =
       this.deps
     const moved = Math.min(head.distanceTo(this.prevHead), 3)
     this.prevHead.copy(head)
@@ -115,22 +121,27 @@ export class NessieRide {
           const gz = cgz + dz
           if (!blocks.blockAt(gx, gy, gz)) continue
           if (Math.hypot(gx * blocks.BLOCK - head.x, gz * blocks.BLOCK - head.z) > 2.7) continue
-          building.hit(gx, gy, gz, FIFTY_BLOCK_DAMAGE)
+          building.breakCell(gx, gy, gz)
           broken++
         }
       }
     }
 
     // Players in the path take a bite; the shove is theirs to self-apply
-    // (see shove below), the same split as blast knockback.
-    for (const { id, pos } of remotes.targets()) {
+    // (see shove below), the same split as blast knockback. The whole body
+    // counts, feet to crown — a flying head passing through a colossus'
+    // chest is nowhere near its feet.
+    for (const { id, pos, r, h } of remotes.targets()) {
       const dx = pos.x - head.x
       const dz = pos.z - head.z
-      if (dx * dx + dz * dz > NESSIE_REACH * NESSIE_REACH) continue
-      if (Math.abs(pos.y - head.y) > 3.2) continue
+      const rr = NESSIE_REACH + (r ?? 0)
+      if (dx * dx + dz * dz > rr * rr) continue
+      if (head.y - pos.y < -3.2 || head.y - pos.y > (h ?? 2.2) + 3.2) continue
       if (now - (this.bitAt.get(id) ?? 0) < 1200) continue
       this.bitAt.set(id, now)
-      net.sendHit(id, NESSIE_DAMAGE)
+      // Bite where the jaws actually are, clamped into the body.
+      const biteY = Math.max(pos.y + 0.4, Math.min(pos.y + (h ?? 2.2) - 0.3, head.y))
+      this.onBite(id, new THREE.Vector3(pos.x, biteY, pos.z))
       sfx.hitmark()
     }
 

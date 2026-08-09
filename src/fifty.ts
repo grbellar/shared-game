@@ -10,15 +10,8 @@
 // drift forking the world.
 
 export const FIFTY_RPM = 70 // ms between rounds — a slow, heavy thump
-// Enough to end anything alive in one round — that's the whole idea of it.
-// Players take MAX_HP through the ordinary `hit` path (the server caps it
-// there anyway); this is for the mobs, the skeletons and the shark, whose
-// health nothing else clamps.
+// Enough to end anything alive in one round
 export const FIFTY_LETHAL = 9999
-// "Destroys anything" — any block, any material, one round. The server caps
-// relayed damage at 999, which is the same thing it uses to evict a block.
-export const FIFTY_BLOCK_DAMAGE = 999
-
 
 // A round that lands in dirt digs a small bite. Deliberately much smaller than
 // a rocket's — it's the sustained fire that flattens ground, not one round.
