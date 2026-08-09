@@ -319,6 +319,8 @@ export class Mobs {
     for (const m of this.mobs) {
       if (m.st === 'dead') continue
       const to = m.group.position.clone().sub(from)
+      // Same vertical gate skeletons use — no swording a bear from a tower.
+      if (Math.abs(to.y) > (m.kind === 'bear' ? 3.2 : 2.6)) continue
       to.y = 0
       if (to.length() > (m.kind === 'bear' ? 4.2 : 3.4)) continue
       if (Math.abs(wrapAngle(Math.atan2(to.x, to.z) - yaw)) > 1.3) continue

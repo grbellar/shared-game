@@ -301,6 +301,9 @@ export class Shark {
   swing(from: THREE.Vector3, yaw: number, dmg: number): boolean {
     if (this.st === 'dead') return false
     const to = this.group.position.clone().sub(from)
+    // Vertical gate: no gutting it from a cliff or mid-rocket-arc. Generous,
+    // because the body is big and the swing comes from your feet.
+    if (Math.abs(to.y) > 3.5) return false
     to.y = 0
     if (to.length() > 3.6) return false
     if (Math.abs(wrapAngle(Math.atan2(to.x, to.z) - yaw)) > 1.3) return false
@@ -690,7 +693,10 @@ export class Shark {
       const inWater =
         player.group.position.y <= WATER_LEVEL + 0.4 && heightAt(player.group.position.x, player.group.position.z) <= -1.15
       // On land its teeth work anywhere it can flop to — that's the raid.
-      if (this.st !== 'dead' && !down && (inWater || this.st === 'land') && flat < BITE_R && this.biteCd <= 0) {
+      // But only at its own height: someone up a block tower or mid-jump is
+      // out of reach, same rule the land mobs follow.
+      const nearY = Math.abs(player.group.position.y - this.group.position.y) < 2.5
+      if (this.st !== 'dead' && !down && (inWater || (this.st === 'land' && nearY)) && flat < BITE_R && this.biteCd <= 0) {
         this.biteCd = 1.5
         sfx.chomp()
         this.effects.spawnDebris(this.mouth, 0x8a1f1f, 8, 5)
