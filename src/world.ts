@@ -53,8 +53,15 @@ interface Prop {
   alive: boolean
 }
 
+// Where the sea sits. Deep water floats you chest-deep instead of sinking
+// you forever; player.ts re-exports this, which is where most of the game
+// reads it from. It lives here because it's a fact about the terrain, and
+// modules that only know about the ground (xwing.ts) need it without
+// dragging in the player.
+export const WATER_LEVEL = -1.1
+
 // Craters can only dig so deep at one spot — enough that holes below the
-// water line (-1.1) become swimmable ponds, not tunnels to the void.
+// water line become swimmable ponds, not tunnels to the void.
 const MAX_DIG = 5
 
 const craters: Crater[] = []
@@ -246,7 +253,9 @@ export function propInPath(p: THREE.Vector3): boolean {
 }
 
 // Deterministic PRNG so tree/rock placement matches on every client.
-function mulberry32(seed: number): () => number {
+// Exported for other world content (treasure.ts) — always give new content
+// its own seed so the existing prop streams don't shift.
+export function mulberry32(seed: number): () => number {
   let a = seed
   return () => {
     a |= 0

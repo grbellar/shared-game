@@ -15,6 +15,7 @@ export interface Profile {
   skin: string
   material: number
   voice: boolean
+  hat: string // treasure you dug up; you keep it across sessions
 }
 
 const STORAGE_KEY = 'shared-game.profile'
@@ -22,8 +23,9 @@ const STORAGE_KEY = 'shared-game.profile'
 const NAMES = ['Goober', 'Turnip', 'Moose', 'Bandit', 'Noodle', 'Crouton', 'Gremlin', 'Pebble', 'Sprout', 'Wizard']
 const COLORS = ['#e23b3b', '#3b6fe2', '#2fa84f', '#e2a53b', '#9b4fd4', '#e26fb0', '#33c2c2', '#c2e23b']
 
-const WEAPONS = ['none', 'gun', 'sword', 'shovel', 'bow', 'builder', 'firework']
-const RIDES = ['none', 'wheelchair', 'ramsey']
+const WEAPONS = ['none', 'gun', 'sniper', 'sword', 'shovel', 'bow', 'builder', 'firework']
+const RIDES = ['none', 'wheelchair', 'ramsey', 'plane', 'xwing']
+const HATS = ['none', 'crown', 'wizard', 'cone', 'tinfoil', 'pirate', 'bucket', 'duck']
 
 function mint(): Profile {
   return {
@@ -35,6 +37,7 @@ function mint(): Profile {
     skin: 'none',
     material: 0,
     voice: true, // proximity voice chat defaults ON; V mutes
+    hat: 'none',
   }
 }
 
@@ -55,6 +58,7 @@ export function loadProfile(): Profile {
           ? Math.floor(obj.material)
           : 0,
       voice: obj.voice !== false, // absence means on
+      hat: HATS.includes(obj.hat as string) ? (obj.hat as string) : 'none',
     }
     saveProfile(profile) // heal partial/corrupt records, persist first-run mints
     return profile

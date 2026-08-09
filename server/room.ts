@@ -38,6 +38,8 @@ interface PlayerState {
   y: number
   z: number
   ry: number
+  rx: number // pitch — nonzero only for the X-wing (see src/xwing.ts)
+  rz: number // roll
   color: string
   name: string
   pose: 'stand' | 'crouch' | 'swim'
@@ -48,9 +50,18 @@ interface PlayerState {
   emote: string
   hp: number // head pitch
   hy: number // head yaw, offset from the body's facing
+  hat: string
 }
 
-// Head aim limits, matching src/character.ts.
+interface Score {
+  id: string
+  name: string
+  kills: number
+  deaths: number
+}
+
+// A finite angle inside ±limit, or 0. Used for head aim (limits matching
+// src/character.ts) and for the X-wing's pitch and roll.
 function clampLook(v: unknown, limit: number): number {
   const n = Number(v)
   if (!Number.isFinite(n)) return 0
@@ -78,6 +89,11 @@ export class GameRoom extends DurableObject<Env> {
   // only have to remember how broken it is. Summed, so replay order can't
   // matter; insertion order doubles as the eviction order at the cap.
   private worldDmg = new Map<string, number>()
+  // Where each Meckie was last left: index -> {x, z, by}. `by` is the id of
+  // whoever is carrying them, '' if they're on the ground. A carried Meckie
+  // needs no position updates — every client derives it from the carrier's
+  // own state — so this only changes on a pick-up or a put-down.
+  private meck = new Map<number, { x: number; z: number; by: string }>()
   // The shared day/night clock: time-of-day in hours anchored to this DO's
   // wall clock. Scrubs/pauses re-anchor it; late joiners get the advanced
   // value in `welcome`. In-memory: hibernation resets to mid-morning.
@@ -92,6 +108,12 @@ export class GameRoom extends DurableObject<Env> {
   // `welcome` so late joiners see faces immediately instead of waiting up to
   // 200ms. Dropped when the player leaves or turns their camera off.
   private faces = new Map<string, string>()
+  // Kill tally for the killboard. Entries outlive the connection that earned
+  // them, so leaving doesn't wipe your record for the session.
+  private scores = new Map<string, Score>()
+  // Treasure caches already dug up (indices into the client's deterministic
+  // cache list). Replayed in `welcome` so a late joiner can't re-claim one.
+  private found: number[] = []
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
@@ -112,6 +134,9 @@ export class GameRoom extends DurableObject<Env> {
         wdmg: [...this.worldDmg].map(([cell, dmg]) => [...cell.split(',').map(Number), dmg]),
         clock: { hours: this.clockHours(), running: this.clock.running },
         faces: [...this.faces].map(([fid, d]) => ({ id: fid, d })),
+        meck: [...this.meck].map(([i, m]) => [i, m.x, m.z, m.by]),
+        scores: [...this.scores.values()],
+        found: this.found,
       }),
     )
     return new Response(null, { status: 101, webSocket: client })
@@ -134,6 +159,10 @@ export class GameRoom extends DurableObject<Env> {
         y: Number(msg.y) || 0,
         z: Number(msg.z) || 0,
         ry: Number(msg.ry) || 0,
+        // Clamped to the flight model's own limits in src/xwing.ts, so a
+        // bad number can't hand anyone an inside-out character.
+        rx: clampLook(msg.rx, 1.6),
+        rz: clampLook(msg.rz, 1.6),
         color: String(msg.color).slice(0, 16),
         name: String(msg.name).slice(0, 24),
         pose: msg.pose === 'crouch' || msg.pose === 'swim' ? msg.pose : 'stand',
@@ -144,6 +173,7 @@ export class GameRoom extends DurableObject<Env> {
         emote: String(msg.emote ?? 'none').slice(0, 12),
         hp: clampLook(msg.hp, 1.2),
         hy: clampLook(msg.hy, 1.0),
+        hat: String(msg.hat ?? 'none').slice(0, 12),
       }
       this.states.set(att.id, p)
       this.broadcast(JSON.stringify({ t: 'state', p }), ws)
@@ -166,6 +196,20 @@ export class GameRoom extends DurableObject<Env> {
         }),
         ws,
       )
+    } else if (msg.t === 'snipe') {
+      this.broadcast(
+        JSON.stringify({
+          t: 'snipe',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          ex: Number(msg.ex) || 0,
+          ey: Number(msg.ey) || 0,
+          ez: Number(msg.ez) || 0,
+        }),
+        ws,
+      )
     } else if (msg.t === 'slash') {
       this.broadcast(JSON.stringify({ t: 'slash', id: att.id }), ws)
     } else if (msg.t === 'hit') {
@@ -183,7 +227,46 @@ export class GameRoom extends DurableObject<Env> {
         ws,
       )
     } else if (msg.t === 'kill') {
-      this.broadcast(JSON.stringify({ t: 'kill', victim: String(msg.victim).slice(0, 16) }), ws)
+      // The victim announces their own death (see Health in CLAUDE.md), so
+      // the sender IS the victim and `by` is whoever they say finished them.
+      // Deaths to lava, sharks and gravity arrive with no `by` at all.
+      //
+      // The victim is taken from the socket, never from the payload: this is
+      // the one message that mutates stored room state (the killboard), so a
+      // stale or buggy client must not be able to announce somebody else's
+      // death or hang a kill on a player who isn't here.
+      const victim = att.id
+      if (String(msg.victim).slice(0, 16) !== victim) return
+      const by = msg.by === undefined ? '' : String(msg.by).slice(0, 16)
+      // An unknown killer id can't score — you can only be killed by someone
+      // in the room, and unbacked ids would push real players off the board.
+      const killer = this.states.has(by) ? by : ''
+      const victimName = this.states.get(victim)?.name ?? 'someone'
+      const killerName = killer ? (this.states.get(killer)?.name ?? 'someone') : ''
+      this.broadcast(
+        JSON.stringify({ t: 'kill', victim, killer, killerName, victimName }),
+        ws,
+      )
+      // The room keeps the tally so every killboard agrees. Killing yourself
+      // is a death and nothing else.
+      if (killer && killer !== victim) this.score(killer, killerName).kills++
+      this.score(victim, victimName).deaths++
+      this.broadcast(JSON.stringify({ t: 'score', scores: [...this.scores.values()] }))
+    } else if (msg.t === 'egg') {
+      const k = String(msg.k).slice(0, 12)
+      const n = Number(msg.n)
+      // 'dig' claims a treasure cache — the only egg the room remembers, so
+      // late joiners can't dig up something that's already gone.
+      if (k === 'dig') {
+        if (!Number.isInteger(n) || n < 0 || n > 63) return
+        if (this.found.includes(n)) return
+        this.found.push(n)
+      }
+      const name = this.states.get(att.id)?.name ?? 'someone'
+      this.broadcast(
+        JSON.stringify({ t: 'egg', id: att.id, name, k, n: Number.isFinite(n) ? n : undefined }),
+        ws,
+      )
     } else if (msg.t === 'arrow') {
       this.broadcast(
         JSON.stringify({
@@ -196,6 +279,20 @@ export class GameRoom extends DurableObject<Env> {
           dy: Number(msg.dy) || 0,
           dz: Number(msg.dz) || 0,
           p: Math.max(0, Math.min(1, Number(msg.p) || 0)),
+        }),
+        ws,
+      )
+    } else if (msg.t === 'laser') {
+      this.broadcast(
+        JSON.stringify({
+          t: 'laser',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          dx: Number(msg.dx) || 0,
+          dy: Number(msg.dy) || 0,
+          dz: Number(msg.dz) || 0,
         }),
         ws,
       )
@@ -377,6 +474,41 @@ export class GameRoom extends DurableObject<Env> {
         JSON.stringify({ t: 'skelhit', i, dmg: Math.max(0, Math.min(200, dmg)) }),
         ws,
       )
+    } else if (msg.t === 'mg') {
+      // One .50 round, straight through. Nothing stored: a tracer is gone in
+      // a tenth of a second, and everything it actually broke arrives as the
+      // ordinary hit / bhit / crater the shooter mints.
+      this.broadcast(
+        JSON.stringify({
+          t: 'mg',
+          id: att.id,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          tx: Number(msg.tx) || 0,
+          ty: Number(msg.ty) || 0,
+          tz: Number(msg.tz) || 0,
+        }),
+        ws,
+      )
+    } else if (msg.t === 'meck') {
+      // Somebody picked a Meckie up or set them down. Last writer wins: two
+      // people grabbing at once is rare and self-correcting, since the loser
+      // sees the winner's relay and lets go.
+      const i = Math.floor(Number(msg.i))
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      if (!Number.isFinite(i) || i < 0 || i > 63) return
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return
+      // 'me' means the sender; store the real id so a joiner can resolve it.
+      const raw = String(msg.by ?? '').slice(0, 16)
+      const by = raw === 'me' ? att.id : raw
+      this.meck.set(i, {
+        x: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x)),
+        z: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z)),
+        by,
+      })
+      this.broadcast(JSON.stringify({ t: 'meck', id: att.id, i, x, z, by }), ws)
     } else if (msg.t === 'land') {
       // Rocket travel touching down. Relayed like `fire`: every client plays
       // the impact, and each one shoves only itself. Nothing stored — the
@@ -442,7 +574,27 @@ export class GameRoom extends DurableObject<Env> {
     if (!att) return
     this.states.delete(att.id)
     this.faces.delete(att.id)
+    // Anyone in their arms sits back down where they were picked up. Clients
+    // do exactly the same on `leave`, so nobody diverges.
+    for (const m of this.meck.values()) if (m.by === att.id) m.by = ''
     this.broadcast(JSON.stringify({ t: 'leave', id: att.id }), ws)
+  }
+
+  // Fetch (or start) a player's row on the killboard, keeping the name fresh.
+  private score(id: string, name: string): Score {
+    let row = this.scores.get(id)
+    if (!row) {
+      row = { id, name, kills: 0, deaths: 0 }
+      // Cap the board so a long-lived room can't grow without bound; the
+      // oldest record falls off first.
+      if (this.scores.size >= 32) {
+        const oldest = this.scores.keys().next()
+        if (!oldest.done) this.scores.delete(oldest.value)
+      }
+      this.scores.set(id, row)
+    }
+    if (name) row.name = name
+    return row
   }
 
   private broadcast(data: string, except?: WebSocket): void {

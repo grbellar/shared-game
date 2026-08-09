@@ -10,7 +10,7 @@ import { animateCharacter, createCharacter, popHead, startJabber, type Rig } fro
 import { sfx } from './audio'
 
 // Land mobs: a bear that lives in the trees and Gary, a wild-eyed weirdo who
-// mostly wanders in circles and occasionally decides it's your problem.
+// mostly wanders in circles until somebody gets close enough to bother them.
 //
 // Same multiplayer model as the shark (see shark.ts): they chase player
 // positions, so the sim can't be deterministic — the lowest player id hosts
@@ -42,7 +42,7 @@ interface MobDef {
   wanderSpeed: number
   chaseSpeed: number
   turn: number // rad/sec
-  aggroR: number // bear: chase anyone inside this. gary ignores it (timer-driven)
+  aggroR: number // starts a chase only when somebody enters this radius
   loseR: number
   hitR: number
   dmg: number
@@ -59,8 +59,8 @@ const BEAR: MobDef = {
   wanderSpeed: 2.6,
   chaseSpeed: 10.4, // outruns walking (9); a wheelchair (16) gets away
   turn: 2.4,
-  aggroR: 19,
-  loseR: 36,
+  aggroR: 16,
+  loseR: 28,
   hitR: 2.6,
   dmg: 18,
   knock: 12,
@@ -76,8 +76,8 @@ const GARY: MobDef = {
   wanderSpeed: 4,
   chaseSpeed: 11,
   turn: 5,
-  aggroR: 0,
-  loseR: 65,
+  aggroR: 14,
+  loseR: 26,
   hitR: 2.2,
   dmg: 8,
   knock: 14, // barely hurts, launches you anyway
@@ -210,9 +210,6 @@ interface Mob {
   heading: number
   headT: number // seconds until the next wander heading
   speed: number // current wander speed
-  targetId: string
-  chaseT: number
-  garyCd: number // seconds until Gary picks a new victim
   deadT: number
   fell: number // seconds spent dead, drives the fall-over/sink pose
   hitCd: number // local: min gap between swipes on OUR player
@@ -222,6 +219,10 @@ interface Mob {
   moving: number
   netTarget: { x: number; z: number; ry: number }
 }
+
+// The prefix targets() stamps on a mob's id, with its index after it. Callers
+// that damage by id (the sniper's hitscan) match on this.
+export const MOB_TARGET_PREFIX = 'mob:'
 
 export class Mobs {
   onDeath: (name: string) => void = () => {}
@@ -253,9 +254,6 @@ export class Mobs {
         heading: 0,
         headT: 0,
         speed: def.wanderSpeed,
-        targetId: '',
-        chaseT: 0,
-        garyCd: 12,
         deadT: 0,
         fell: 0,
         hitCd: 0,
@@ -293,6 +291,19 @@ export class Mobs {
     return low === null || low === this.net.id
   }
 
+  // Something a rocket should burst against, in the shape effects.ts wants.
+  // Without this a rocket sails straight through a bear and only hurts it if
+  // it happens to hit the ground nearby. The ids can't collide with a
+  // shooter's (server ids are uuid slices, ours is 'me'), so a rocket is never
+  // stopped by its own owner check.
+  *targets(): Generator<{ id: string; pos: THREE.Vector3 }> {
+    for (let i = 0; i < this.mobs.length; i++) {
+      const m = this.mobs[i]
+      if (m.st === 'dead') continue
+      yield { id: `${MOB_TARGET_PREFIX}${i}`, pos: m.group.position }
+    }
+  }
+
   // --- taking hits (attacker mints damage, same rule as sharkhit) ---------
 
   blast(center: THREE.Vector3): void {
@@ -317,6 +328,15 @@ export class Mobs {
     return false
   }
 
+  // A hitscan round from the local player connected with the mob that
+  // targets() called `id`. Same ownership rule as swing(): the shooter mints
+  // the damage and tells the room.
+  shot(id: string, dmg: number): void {
+    const m = this.mobs[Number(id.slice(MOB_TARGET_PREFIX.length))]
+    if (!m || m.st === 'dead') return
+    this.hit(m, dmg)
+  }
+
   private hit(m: Mob, dmg: number): void {
     this.applyDamage(m, dmg, true)
     this.net.sendMobHit(this.mobs.indexOf(m), dmg)
@@ -333,8 +353,6 @@ export class Mobs {
       6,
       5,
     )
-    // Getting stung makes it pick on whoever's closest — usually you.
-    if (m.st === 'wander' && this.isHost) m.garyCd = 0
     if (m.hp <= 0 && this.isHost) this.setState(m, 'dead')
   }
 
@@ -400,57 +418,30 @@ export class Mobs {
       (c) => !inRealm(c.pos.x, c.pos.z) && Math.hypot(c.pos.x, c.pos.z) < LEASH,
     )
 
-    if (m.kind === 'bear') {
-      const r = m.st === 'chase' ? m.def.loseR : m.def.aggroR
-      let prey: { id: string; pos: THREE.Vector3 } | null = null
-      let preyD = r
-      for (const c of reachable) {
-        const d = Math.hypot(c.pos.x - m.pos.x, c.pos.z - m.pos.y)
-        if (d < preyD) {
-          preyD = d
-          prey = c
-        }
-      }
-      // Swimmers are safe from the bear — it pulls up at the shoreline
-      // (move() refuses water), paces, and loses interest.
-      if (prey && heightAt(prey.pos.x, prey.pos.z) < -0.5) prey = null
-      if (prey) {
-        this.setState(m, 'chase')
-        this.move(m, Math.atan2(prey.pos.x - m.pos.x, prey.pos.z - m.pos.y), closeSpeed(m.def, preyD), dt)
-        return
-      }
-      this.setState(m, 'wander')
-    } else {
-      // Gary doesn't do proximity. Gary does appointments.
-      if (m.st === 'chase') {
-        m.chaseT -= dt
-        const t = reachable.find((c) => c.id === m.targetId)
-        const far = t ? Math.hypot(t.pos.x - m.pos.x, t.pos.z - m.pos.y) : Infinity
-        if (!t || far > m.def.loseR || m.chaseT <= 0) {
-          this.setState(m, 'wander')
-        } else {
-          // Full sprint, but weaving — scarier and easier to dodge at once.
-          // The weave (and the speed) die off up close, or he'd orbit you
-          // forever without ever landing the slap.
-          const zig = Math.sin((10 - m.chaseT) * 5) * Math.min(0.7, far * 0.08)
-          this.move(m, Math.atan2(t.pos.x - m.pos.x, t.pos.z - m.pos.y) + zig, closeSpeed(m.def, far), dt)
-          return
-        }
-      }
-      m.garyCd -= dt
-      if (m.garyCd <= 0) {
-        m.garyCd = 9 + Math.random() * 15
-        if (reachable.length > 0) {
-          const t = reachable[Math.floor(Math.random() * reachable.length)]
-          if (Math.hypot(t.pos.x - m.pos.x, t.pos.z - m.pos.y) < 55) {
-            m.targetId = t.id
-            m.chaseT = 7
-            this.setState(m, 'chase')
-            return
-          }
-        }
+    const aggroRange = m.st === 'chase' ? m.def.loseR : m.def.aggroR
+    let prey: { id: string; pos: THREE.Vector3 } | null = null
+    let preyD = aggroRange
+    for (const c of reachable) {
+      const d = Math.hypot(c.pos.x - m.pos.x, c.pos.z - m.pos.y)
+      if (d < preyD) {
+        preyD = d
+        prey = c
       }
     }
+    // Swimmers are safe from land mobs — move() refuses water, so chasing
+    // them would only leave the mob pacing the shore forever.
+    if (prey && heightAt(prey.pos.x, prey.pos.z) < -0.5) prey = null
+    if (prey) {
+      this.setState(m, 'chase')
+      let desired = Math.atan2(prey.pos.x - m.pos.x, prey.pos.z - m.pos.y)
+      if (m.kind === 'gary') {
+        // Gary still weaves once provoked, but no longer picks distant victims.
+        desired += Math.sin(performance.now() * 0.005) * Math.min(0.7, preyD * 0.08)
+      }
+      this.move(m, desired, closeSpeed(m.def, preyD), dt)
+      return
+    }
+    this.setState(m, 'wander')
 
     // Wandering: meander near the anchor. Gary re-rolls constantly and at
     // random speeds (including zero, staring at nothing), which is the joke.

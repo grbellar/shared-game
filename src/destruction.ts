@@ -44,6 +44,19 @@ export class Destruction {
     this.effects.spawnDebris(new THREE.Vector3(x, Math.max(heightAt(x, z), 0) + 0.4, z), DIRT, 8, 5)
   }
 
+  // A single heavy round biting the dirt (fifty.ts). Same synced-crater path
+  // as a dig, minus the shovel's sound and debris — the gun makes its own
+  // noise, and a burst would otherwise spray a hundred dirt cubes a second.
+  // Jittered like a dig so repeated rounds from one spot aren't byte-identical
+  // and eaten by the reconnect dedupe.
+  bite(x: number, z: number, shape: { r: number; d: number }): void {
+    this.applyLocal({
+      x: x + (Math.random() - 0.5) * 0.5,
+      z: z + (Math.random() - 0.5) * 0.5,
+      ...shape,
+    })
+  }
+
   // Craters arriving over the network — live relays or the welcome replay.
   // Silent skips debris bursts so a late joiner doesn't see 500 explosions.
   applyRemote(craters: Crater[], silent = false): void {

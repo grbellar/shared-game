@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { baseHeightAt, heightAt } from './world'
 import { blockFloorAt } from './blocks'
-import { GRAVITY, WATER_LEVEL, type Player } from './player'
+import { gravityNow, WATER_LEVEL, type Player } from './player'
 import type { Effects } from './effects'
 import { sfx } from './audio'
 
@@ -134,11 +134,10 @@ export class Trebuchet {
   private flight: THREE.Vector3 | null = null
   private vel = new THREE.Vector3()
   private trailT = 0
-  private baseFogFar = 150
   private hint: HTMLDivElement
 
   constructor(
-    private scene: THREE.Scene,
+    scene: THREE.Scene,
     private effects: Effects,
   ) {
     this.base.set(BASE_X, baseHeightAt(BASE_X, BASE_Z), BASE_Z)
@@ -334,6 +333,15 @@ export class Trebuchet {
 
   get loaded(): boolean {
     return this.riding
+  }
+
+  // How far to push the fog wall back this frame, handed to daynight.update
+  // rather than written onto the fog directly — daynight runs at the end of
+  // the frame and rewrites fog.far unconditionally, so anything set here would
+  // never survive to be drawn. Same deal as rocket travel's own fogLift.
+  get fogLift(): number {
+    if (!this.flight) return 0
+    return Math.max(0, this.flight.y - this.base.y - 10) * 4.5
   }
 
   private get ready(): boolean {
@@ -543,7 +551,10 @@ export class Trebuchet {
   }
 
   private canBoard(player: Player): boolean {
-    if (player.dead || player.flying || player.grabbed) return false
+    // `piloting` as well as `flying`: xwing.ts writes the position of an
+    // airborne fighter every frame, and two systems steering the same player
+    // is exactly the fight the flying guard exists to prevent. Land first.
+    if (player.dead || player.flying || player.piloting || player.grabbed) return false
     if (this.remoteRider()) return false
     const p = this.pouchWorld()
     const dx = player.group.position.x - p.x
@@ -579,8 +590,6 @@ export class Trebuchet {
     player.flying = true
     player.group.position.copy(pos)
     player.group.rotation.y = this.yaw
-    const fog = this.scene.fog as THREE.Fog | null
-    this.baseFogFar = fog ? fog.far : 150
     this.trailT = 0
     this.onThrow()
   }
@@ -591,17 +600,13 @@ export class Trebuchet {
       this.land(player, pos, false, true)
       return
     }
-    this.vel.y -= GRAVITY * dt
+    // Read live, so the moonjump cheat floats a trebuchet shot too.
+    this.vel.y -= gravityNow() * dt
     pos.addScaledVector(this.vel, dt)
     player.group.position.copy(pos)
     // Face the way you're going, and keep it there — the frame's aim for
     // everyone else is read off this same number.
     player.group.rotation.y = this.yaw
-
-    // The fog opens up as you climb, same trick rocket travel uses, so the top
-    // of the arc is worth the trip.
-    const fog = this.scene.fog as THREE.Fog | null
-    if (fog) fog.far = this.baseFogFar + Math.max(0, pos.y - this.base.y - 10) * 4.5
 
     this.trailT -= dt
     if (this.trailT <= 0) {
@@ -621,10 +626,10 @@ export class Trebuchet {
   }
 
   private land(player: Player, pos: THREE.Vector3, water: boolean, aborted: boolean): void {
+    // Dropping `flight` is also what closes the fog back down: fogLift reads
+    // straight off it, so there's no saved value to restore.
     this.flight = null
     player.flying = false
-    const fog = this.scene.fog as THREE.Fog | null
-    if (fog) fog.far = this.baseFogFar
     if (aborted) return
     player.group.position.copy(pos)
     this.onLand(pos.clone(), water)

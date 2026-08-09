@@ -18,6 +18,9 @@ TDD, code-review and verification ceremonies) and go straight to code.
      do a quick two-tab check on `npm run dev`. Anything else: build passes →
      ship. (This narrows the two-tab rule under "Rules for contributors" to
      protocol changes only while the jam is on.)
+- Start by syncing with `origin/main` and end by pushing to it — see "Sync
+  before you start" and "Land your own work" under "Rules for contributors".
+  Both apply doubly during the jam: nobody is waiting to review you.
 - Commit small and straight to `main`.
 - Need it live right now? Run `npm run deploy` locally, then push. Otherwise
   just push — GitHub Actions deploys `main`. Never sit and watch CI.
@@ -63,6 +66,12 @@ build) is the only gate.
     saves), plus name, color, and equipped loadout. Settings persist
     separately in `settings.ts`.
   - `remotes.ts` — rendering/interpolation of other players.
+  - `meckies.ts` — the Meckies: residents with a name, a signature colour and
+    a face, who live on the island and can be picked up and carried somewhere
+    else. `RESIDENTS` at the top is the roster, mirroring the `droids` table
+    in droid-body (`name`, `color`); adding one is a single line, since the
+    protocol is driven off that array's indices. They're family — the code
+    says they/them.
   - `rocket.ts` — rocket travel: the arc that throws you to another island or
     onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
     overlay that aims it — the islands drawn straight out of `baseHeightAt`,
@@ -71,6 +80,19 @@ build) is the only gate.
     sling and it latches you in; A/D swings the frame, space fires, C climbs
     out. It shares rocket travel's touchdown (`land`) and adds **no message of
     its own** — see below.
+  - `xwing.ts` — the X-wing: the model, and the arcade flight model that flies
+    it. `lasers.ts` is its cannons. See "Flying" below. (The plane in
+    `character.ts` is a separate, simpler ride — it climbs and dives but
+    never banks, and it lives in `player.ts`.)
+  - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
+    island out past the fog. Both ride the wall clock rather than a synced
+    tick; a second of drift between clients is invisible on wildlife.
+  - `treasure.ts` — buried caches and the shovel's detector. Placed by their
+    own seed, so digging can never shift where the trees are.
+  - `cheats.ts` — chat cheat codes. They ride the existing chat relay, so
+    both ends parse the text and toggle together — no new message type.
+  - `hud.ts` / `killboard.ts` — the banner, the event ticker, and the I-key
+    scoreboard (Tab is the map).
 - `server/` — Cloudflare Worker. `index.ts` routes `/ws?room=<name>` to one
   Durable Object per room (default `"main"`); everything else is served from
   `dist/` as static assets. `room.ts` is the Durable Object (`GameRoom`) that
@@ -89,7 +111,12 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 
 - server→client `welcome`: your id + everyone's last known state
 - client→server `state`: your position/rotation/color/name/weapon/ride/skin/
-  talk/emote/head aim (~15x/sec). `emote` is the radial-menu pose you're
+  talk/emote/hat/head aim (~15x/sec). Rotation is `ry` (yaw) plus `rx`/`rz`
+  (pitch and roll), which are zero for anything on its feet and exist for the
+  X-wing — a fighter that banks flat on everyone else's screen looks like
+  it's sliding sideways. `hat` is buried-treasure loot (or the duck, if you
+  killed it), built in `character.ts` and parented to the head so it crouches
+  and decapitates along with it. `emote` is the radial-menu pose you're
   playing (see `emotes.ts`); it rides in `state` rather than being its own
   message, so late joiners see a dance already in progress. Each client
   animates it off its own clock. Two poses aren't on the wheel at all:
@@ -108,12 +135,21 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 - client→server `slash`: katana swing (relayed for the animation). The
   attacker detects hits and sends `hit` `{victim, dmg}`; the server relays it
   with the attacker's id, and only the named victim acts on it.
-- client→server `kill`: you announce your own death (see Health below). The
-  server relays it to everyone and each client plays the decapitation.
+- client→server `kill`: you announce your own death (see Health below), with
+  an optional `by` — whoever last hurt you inside a 10s window. You are the
+  only one who can name your killer, since you are the only one running your
+  own health; deaths to lava, sharks and gravity carry no `by` at all. The
+  server relays it to everyone (adding `killer` and both names) and each
+  client plays the decapitation.
 - client→server `arrow`: a bow shot — origin, direction, and draw power;
   relayed with the archer's id. Every client simulates the same ballistic
   arc (`arrows.ts`); hits are cosmetic (arrows embed in terrain, props, and
   players) and each client applies arrow knockback to itself only.
+- client→server `laser`: one trigger pull of the X-wing's cannons — origin
+  and direction, relayed with the shooter's id. Every client fans the same
+  four bolts off that one origin (`fireCannons` in `main.ts`), so a burst
+  costs one message. Only the shooter resolves hits, and players are damaged
+  through `hit` like any other weapon. See `lasers.ts`.
 - client→server `clock`: a scrub or pause of the shared day/night clock,
   `{hours, running}`. The server re-anchors its room clock (replayed to late
   joiners in `welcome`) and relays it to everyone else; each client re-anchors
@@ -132,6 +168,17 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
   list and replays it in `welcome`; `world.heightAt` subtracts craters as an
   order-independent clamped sum, and prop destruction (trees/rocks caught in
   a crater) is derived from craters, never messaged. See `destruction.ts`.
+- server→client `score`: the whole killboard (`{id, name, kills, deaths}[]`).
+  The room counts `kill` messages — the one piece of bookkeeping it does — so
+  every board agrees and late joiners see the damage already done. Also
+  replayed in `welcome`. See `killboard.ts`.
+- client→server `egg`: one-off easter-egg events, `{k, n?}`, relayed with the
+  sender's id and name. Kinds: `dig` (treasure cache `n` claimed), `duck`
+  (the duck was murdered), `sun` (someone shot the sun), `nessie` (Nessie was
+  hit). Only `dig` is remembered — the room stores claimed cache indices and
+  replays them in `welcome`, so nobody digs up a chest that's already gone.
+  Everything else is fire-and-forget. Add new eggs as new `k` values rather
+  than new message types.
 - client→server `shark`: the shark's `{x, z, ry, hp, st, grab}`, ~10x/sec.
   Only ONE client sends it — the lowest player id in the room hosts the sim
   and everyone else interpolates the stream (see `shark.ts`). It can't be
@@ -166,6 +213,22 @@ split as blast knockback.
   through it, so what you see outlined is exactly what the click acts on.
 - `welcome.wdmg`: `[gx, gy, gz, total]` tuples of accumulated damage on
   world-generated blocks. Replayed onto a freshly regenerated castle.
+- client→server `mg`: one round from the M2 fifty cal — it kills anything it
+  touches (players at MAX_HP, mobs/skeletons/the shark outright, any block in
+  one round). It borrows the sniper's `hitscan` rather than carrying its own
+  ray, with `{blocks: true}` so built walls stop it; the sniper's own rounds
+  still pass through them, which is its owner's call to change. The message carries muzzle and where the
+  round stopped. Only the SHOOTER resolves the hit and mints what it broke,
+  through the ordinary `hit` / `bhit` / `crater` messages. This one exists purely so everyone draws the tracer
+  landing in the same place; per-client aim drift must never mint a second,
+  contradictory hit. Nothing stored — a tracer is gone in a tenth of a second.
+- client→server `meck`: a Meckie was picked up or set down, `{i, x, z, by}`
+  (`by` = carrier id, `''` = on the ground; send `'me'` and the room rewrites
+  it to your id). Where a *carried* Meckie is takes no traffic at all — every
+  client derives it from the carrier's own streamed position — so this only
+  fires on a pick-up or a put-down. The room keeps the last one per resident
+  and replays them in `welcome`, and clears `by` when a carrier disconnects,
+  which clients mirror on `leave` so nobody diverges. See `meckies.ts`.
 - client→server `land`: a rocket trip touching down, `{x, y, z}`; relayed with
   the traveller's id. The *flight* sends nothing at all — your position already
   streams ~15x/sec and the pose rides in `state.emote` (see above) — but the
@@ -267,6 +330,42 @@ reconnects can't disagree about it.
   spiral around different inner walls instead of stacking, and why the
   rampart's inner lane skips the stair footprints.
 
+## Flying
+
+The X-wing is a **ride** (`ride: 'xwing'`), which is what makes it nearly free
+over the wire: the model, the seated pilot and the saved loadout all travel on
+the field the wheelchair already used, and your position streams ~15x/sec, so
+remotes watch a whole flight without a single message of their own. Only pitch
+and roll had to be added (`rx`/`rz`, above).
+
+Everything else about how a ship *looks* is derived rather than sent, the same
+way the world is:
+
+- **Airborne** is `y > ground + 2.2`, computed per client from the
+  deterministic terrain (`airborneAt`). Nobody can disagree about it.
+- **S-foils** open when a ship is airborne and close when it parks, eased in
+  `animateCharacter`. That's why there is no "lock S-foils" message.
+- **Engine glow** tracks throttle, which remotes read off how fast the ship is
+  actually moving.
+
+Two things to know before touching it:
+
+- `clearEmotePose` zeroes `group.rotation.x` every frame (emotes tilt the whole
+  group forward). `animateCharacter` saves and restores the flight pitch around
+  it — without that, a remote fighter's dive is wiped one line after
+  `remotes.ts` interpolates it in.
+- Altitude opens the fog wall through `xwing.fogLift`, never by writing
+  `scene.fog.far`. `daynight.update` rewrites fog distance unconditionally at
+  the end of every frame, so anything set directly is gone before it's drawn —
+  the same lesson `rocket.fogLift` and the plane already learned. `main.ts`
+  hands `daynight` the max of all three.
+- `rocket.launch` goes through `launchRocket` in `main.ts`, which grounds the
+  fighter first — the flight model must not keep steering while the arc owns
+  your position.
+
+Crashing is self-inflicted and unsynced: the wreck is cosmetic, the damage is
+your own, and everyone else already watched you fall out of the sky.
+
 ## Health
 
 Your hit points are yours alone (`src/health.ts`), the same rule blast
@@ -291,6 +390,21 @@ should send `hit`, never `kill`.
 
 ## Rules for contributors (LLM or otherwise)
 
+- **Sync before you start.** First thing in any task, before reading or
+  editing anything: `git fetch origin && git rebase origin/main`. Several
+  agents land features on `main` in the same afternoon, so a session that
+  starts from a stale base writes conflicts it didn't need to. Don't ask
+  first — just do it. If the rebase conflicts, resolve it and carry on.
+  Expect `main` to move again while you work; re-sync before you land.
+- **Land your own work.** When the build passes and the change does what was
+  asked, ship it — don't stop and wait for a human to merge. From a worktree:
+  `git fetch origin && git rebase origin/main && git push origin HEAD:main`.
+  There's no branch protection, and pushing `main` triggers the deploy
+  Action. Say what you shipped afterwards; don't ask permission before.
+  Open a PR (`git push origin HEAD:feat/<name>` + `gh pr merge`) only when
+  you're genuinely unsure the change is right, or the user asked for one.
+  Never touch the shared main checkout at `/Users/nic/Sites/shared-game` —
+  a hook refuses it. Everything lands through `origin`.
 - `npm run build` must pass before you commit.
 - Small, focused commits: `type: short description` (feat/fix/refactor/chore).
 - Don't rewrite systems that work — extend them. Surgical changes.

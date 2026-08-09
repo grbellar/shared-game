@@ -1,7 +1,25 @@
 import * as THREE from 'three'
 import { applyEmote, clearEmotePose } from './emotes'
+import { buildXWing, poseXWing } from './xwing'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
+
+// Every live character (local + remotes), so cheats.ts can restyle everyone
+// at once without threading a registration callback through main.ts.
+const registry = new Set<THREE.Group>()
+
+export function forEachCharacter(fn: (group: THREE.Group) => void): void {
+  registry.forEach(fn)
+}
+
+export function characterCount(): number {
+  return registry.size
+}
+
+// Drop a character from the registry when it leaves the scene.
+export function releaseCharacter(group: THREE.Group): void {
+  registry.delete(group)
+}
 
 // Blocky N64-style character. Front of the character faces +Z.
 // Limbs pivot at the hip/shoulder and are stashed in userData so
@@ -56,9 +74,10 @@ export function createCharacter(color: string, name: string): THREE.Group {
   group.add(body, head, legL, legR, armL, armR)
   group.add(makeNameTag(name))
   group.userData.rig = { body, head, legL, legR, armL, armR, mouth }
-  group.userData.anim = { crouch: 0, swim: 0, mouth: 0 }
+  group.userData.anim = { crouch: 0, swim: 0, mouth: 0, foils: 0 }
   group.userData.look = { pitch: 0, yaw: 0, tPitch: 0, tYaw: 0 }
   group.userData.baseColor = color // skins.ts resets to this when undressing
+  registry.add(group)
   return group
 }
 
@@ -113,9 +132,15 @@ export function animateCharacter(
   pose: Pose = 'stand',
 ): void {
   const rig = group.userData.rig as Rig
-  const anim = group.userData.anim as { crouch: number; swim: number; mouth: number }
+  const anim = group.userData.anim as {
+    crouch: number
+    swim: number
+    mouth: number
+    foils: number
+  }
   const ride = group.userData.ride as string | undefined
-  const riding = ride === 'wheelchair' || ride === 'ramsey'
+  const riding =
+    ride === 'wheelchair' || ride === 'ramsey' || ride === 'plane' || ride === 'xwing'
   const k = Math.min(1, 10 * dt)
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
   anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
@@ -149,6 +174,21 @@ export function animateCharacter(
     rig.armR.rotation.z = 0
     const wheels = group.userData.rideWheels as THREE.Group[] | undefined
     if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
+  } else if (ride === 'plane') {
+    // In the cockpit: legs down the footwell, both hands forward on the stick.
+    rig.legL.rotation.x = -1.35
+    rig.legR.rotation.x = -1.35
+    rig.legL.rotation.z = 0
+    rig.legR.rotation.z = 0
+    rig.armL.rotation.x = -1.05
+    rig.armR.rotation.x = -1.05
+    rig.armL.rotation.z = 0.2
+    rig.armR.rotation.z = -0.2
+    // The prop never stops (the engine idles), and opens up with the throttle.
+    const prop = group.userData.rideProp as THREE.Object3D | undefined
+    if (prop) prop.rotation.z += dt * (14 + 55 * moving)
+    const wheels = group.userData.rideWheels as THREE.Group[] | undefined
+    if (wheels) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
   } else if (ride === 'ramsey') {
     // Straddling Ramsey's back: legs forward and spread down his sides,
     // hands gripping his shoulders.
@@ -170,6 +210,27 @@ export function animateCharacter(
       limbs.frontR.rotation.x = bound
       limbs.hindL.rotation.x = -bound
       limbs.hindR.rotation.x = -bound
+    }
+  } else if (ride === 'xwing') {
+    // Down in the cockpit: knees up under the console, hands on the stick.
+    rig.legL.rotation.x = -1.5
+    rig.legR.rotation.x = -1.5
+    rig.legL.rotation.z = 0.12
+    rig.legR.rotation.z = -0.12
+    rig.armL.rotation.x = -1.35
+    rig.armR.rotation.x = -1.35
+    rig.armL.rotation.z = 0.2
+    rig.armR.rotation.z = -0.2
+    // S-foils and exhausts. `airborne` is set by whoever owns this character
+    // — main.ts for us, remotes.ts for everyone else, both working it out
+    // from the ground under the ship rather than from a message. The ease is
+    // what makes the wings *unfold* instead of snapping open.
+    const ship = group.userData.rideShip as THREE.Group | undefined
+    const up = (group.userData.airborne as boolean | undefined) ? 1 : 0
+    anim.foils += (up - anim.foils) * Math.min(1, 2.6 * dt)
+    if (ship) {
+      const heat = (group.userData.throttle as number | undefined) ?? (up ? 0.5 : 0)
+      poseXWing(ship, anim.foils, anim.foils * (0.25 + 0.75 * heat))
     }
   } else {
     // Legs: stride on land (shorter while crouched), flutter kick in water.
@@ -205,12 +266,20 @@ export function animateCharacter(
 
   // Weapon overrides for the right arm.
   const weapon = group.userData.weapon as string | undefined
-  if (weapon === 'gun' || weapon === 'bow') {
+  if (weapon === 'gun' || weapon === 'sniper' || weapon === 'm2' || weapon === 'bow') {
     // Held steady out front, following the shoulder down through a squat.
     const held = group.getObjectByName('weapon')
-    if (held) held.position.y = (weapon === 'gun' ? 1.8 : 1.5) - 0.3 * crouch
+    if (held) {
+      const mount = (held.userData.mountY as number) ?? (weapon === 'gun' ? 1.8 : 1.5)
+      held.position.y = mount - 0.3 * crouch
+    }
     rig.armR.rotation.x = Math.PI / 2
     rig.armR.rotation.z = 0
+    // Sniper: the off hand comes up to cradle the fore-end.
+    if (weapon === 'sniper') {
+      rig.armL.rotation.x = -1.15
+      rig.armL.rotation.z = -0.35
+    }
   } else if (
     weapon === 'sword' ||
     weapon === 'shovel' ||
@@ -230,6 +299,11 @@ export function animateCharacter(
   }
 
   // Emotes pose last so they win over the walk cycle and the weapon arm.
+  // They tilt the whole group forward, so clearEmotePose zeroes the group's
+  // pitch — which is also where a flying X-wing keeps its nose attitude.
+  // Hold onto it and put it back below, or a remote fighter's dive is wiped
+  // every frame, one line after remotes.ts interpolated it in.
+  const flightPitch = ride === 'xwing' ? group.rotation.x : 0
   clearEmotePose(group, rig)
   const emote = group.userData.emote as string | undefined
   if (emote) {
@@ -243,6 +317,7 @@ export function animateCharacter(
     rig.head.rotation.y = look.yaw
     rig.head.position.y += 0.07 * Math.abs(look.pitch)
   }
+  if (ride === 'xwing') group.rotation.x = flightPitch
 }
 
 // Start (or clear, with 'none') an emote on a character. Synced via the
@@ -357,9 +432,10 @@ export function refreshFace(group: THREE.Group): void {
   if (store?.url) setFace(group, store.url)
 }
 
-// Equip 'gun' (shoulder bazooka), 'sword' (katana in the right hand),
-// 'shovel', 'builder' or 'firework' (also right hand), or 'none'. Synced over
-// the network via the `weapon` field in PlayerState.
+// Equip 'gun' (shoulder bazooka), 'sniper' (scoped rifle, also at the
+// shoulder), 'sword' (katana in the right hand), 'shovel', 'builder' or
+// 'firework' (also right hand), or 'none'. Synced over the network via the
+// `weapon` field in PlayerState.
 export function setWeapon(group: THREE.Group, weapon: string): void {
   const existing = group.getObjectByName('weapon')
   if (existing) existing.parent!.remove(existing)
@@ -367,6 +443,10 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
   const armR = (group.userData.rig as { armR: THREE.Mesh }).armR
   if (weapon === 'gun') {
     group.add(buildBazooka())
+  } else if (weapon === 'm2') {
+    group.add(buildM2())
+  } else if (weapon === 'sniper') {
+    group.add(buildSniper())
   } else if (weapon === 'sword') {
     armR.add(buildKatana())
   } else if (weapon === 'shovel') {
@@ -385,15 +465,104 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
   }
 }
 
-// Mount or dismount a ride: 'wheelchair' or 'ramsey' (a guy you ride like
-// a horse). Synced via the `ride` field in PlayerState. The character sits
-// on it (see animateCharacter).
+// Buried-treasure loot (and the duck's revenge). Synced via the `hat` field
+// in PlayerState so everyone sees what you dug up. Parented to the head, so
+// hats crouch, decapitate and big-head along with it — and survive a skin
+// change, since applySkin only clears children named 'skinparts'.
+export type Hat = 'none' | 'crown' | 'wizard' | 'cone' | 'tinfoil' | 'pirate' | 'bucket' | 'duck'
+
+export function setHat(group: THREE.Group, hat: string): void {
+  const head = (group.userData.rig as Rig | undefined)?.head
+  if (!head) return
+  const existing = head.getObjectByName('hat')
+  if (existing) existing.parent!.remove(existing)
+  group.userData.hat = hat
+  const built = buildHat(hat as Hat)
+  if (built) head.add(built)
+}
+
+function buildHat(hat: Hat): THREE.Group | null {
+  const group = new THREE.Group()
+  group.name = 'hat'
+  const mat = (color: number) => new THREE.MeshLambertMaterial({ color, flatShading: true })
+
+  if (hat === 'crown') {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.28, 0.14, 8), mat(0xe8c14a))
+    band.position.y = 0.37
+    group.add(band)
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 4), mat(0xe8c14a))
+      spike.position.set(Math.sin(a) * 0.24, 0.51, Math.cos(a) * 0.24)
+      group.add(spike)
+    }
+  } else if (hat === 'wizard') {
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 10), mat(0x4b2c8f))
+    brim.position.y = 0.32
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.7, 7), mat(0x5c37ad))
+    cone.position.y = 0.68
+    const star = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), mat(0xffe066))
+    star.position.set(0, 0.62, 0.22)
+    star.rotation.set(0.6, 0.6, 0)
+    group.add(brim, cone, star)
+  } else if (hat === 'cone') {
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.5), mat(0xe2621f))
+    base.position.y = 0.33
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.55, 6), mat(0xe2621f))
+    cone.position.y = 0.62
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.21, 0.09, 6), mat(0xf0f0f0))
+    band.position.y = 0.58
+    group.add(base, cone, band)
+  } else if (hat === 'tinfoil') {
+    const foil = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.44, 5), mat(0xc9ced6))
+    foil.position.y = 0.5
+    foil.rotation.set(0.14, 0.4, 0.1)
+    const crumple = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.16), mat(0xdfe4ea))
+    crumple.position.set(0.09, 0.66, -0.05)
+    crumple.rotation.set(0.5, 0.3, 0.4)
+    group.add(foil, crumple)
+  } else if (hat === 'pirate') {
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.07, 0.44), mat(0x17181c))
+    brim.position.y = 0.34
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.22, 0.34), mat(0x17181c))
+    crown.position.y = 0.46
+    const skull = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.03), mat(0xf2f2f2))
+    skull.position.set(0, 0.46, 0.18)
+    group.add(brim, crown, skull)
+  } else if (hat === 'bucket') {
+    const pail = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.26, 0.46, 8), mat(0x8d949e))
+    pail.position.y = 0.28
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.05, 8), mat(0x6f757e))
+    rim.position.y = 0.06
+    group.add(pail, rim)
+  } else if (hat === 'duck') {
+    // The duck you killed, riding your skull forever.
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.36), mat(0xf7f4ea))
+    body.position.y = 0.42
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.17, 0.17), mat(0xf7f4ea))
+    head.position.set(0, 0.6, 0.11)
+    const beak = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.13), mat(0xf0a02a))
+    beak.position.set(0, 0.57, 0.24)
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.04, 0.04), mat(0x111111))
+    eye.position.set(0, 0.64, 0.18)
+    group.add(body, head, beak, eye)
+  } else {
+    return null
+  }
+  return group
+}
+
+// Mount or dismount a ride: 'wheelchair', 'ramsey' (a guy you ride like a
+// horse), 'plane' or 'xwing'. Synced via the `ride` field in PlayerState.
+// The character sits on (or in) it — see animateCharacter.
 export function setRide(group: THREE.Group, ride: string): void {
   const existing = group.getObjectByName('ride')
   if (existing) existing.parent!.remove(existing)
   group.userData.ride = ride
   delete group.userData.rideWheels
   delete group.userData.rideLimbs
+  delete group.userData.rideProp
+  delete group.userData.rideShip
   if (ride === 'wheelchair') {
     const chair = buildWheelchair()
     group.add(chair)
@@ -402,7 +571,93 @@ export function setRide(group: THREE.Group, ride: string): void {
     const ramsey = buildRamsey()
     group.add(ramsey)
     group.userData.rideLimbs = ramsey.userData.limbs
+  } else if (ride === 'plane') {
+    const plane = buildPlane()
+    group.add(plane)
+    group.userData.rideWheels = plane.userData.wheels
+    group.userData.rideProp = plane.userData.prop
+  } else if (ride === 'xwing') {
+    const ship = buildXWing()
+    group.add(ship)
+    group.userData.rideShip = ship
   }
+  liftNameTag(group)
+}
+
+// Cherry-red open-cockpit prop plane, built around the seated rider (who
+// faces +Z, so the nose and prop are out front at +Z). Low wing under the
+// seat, tail boom out the back, fixed gear so it can taxi. The prop group
+// spins about Z (see animateCharacter).
+function buildPlane(): THREE.Group {
+  const plane = new THREE.Group()
+  plane.name = 'ride'
+  const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
+  const cream = new THREE.MeshLambertMaterial({ color: 0xe8dfc4, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+  const rubber = new THREE.MeshLambertMaterial({ color: 0x3a3d44, flatShading: true })
+
+  // Nose ahead of the footwell, engine cowl on the front of it.
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.75, 1.3), red)
+  nose.position.set(0, 0.75, 1.25)
+  const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.25), dark)
+  cowl.position.set(0, 0.75, 2.0)
+  // Cockpit tub: floor under the feet, walls beside the hips, seat back.
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.1, 1.2), red)
+  floor.position.set(0, 0.32, 0)
+  const wallL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 1.2), red)
+  const wallR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 1.2), red)
+  wallL.position.set(-0.49, 0.72, 0)
+  wallR.position.set(0.49, 0.72, 0)
+  const seatBack = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.75, 0.12), red)
+  seatBack.position.set(0, 0.85, -0.62)
+  // Tail boom tapering back to the empennage.
+  const boom = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.45, 1.7), red)
+  boom.position.set(0, 0.8, -1.5)
+  const stab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.08, 0.55), cream)
+  stab.position.set(0, 0.9, -2.25)
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.75, 0.55), cream)
+  fin.position.set(0, 1.3, -2.3)
+  // One low wing straddling the cockpit.
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.12, 1.05), cream)
+  wing.position.set(0, 0.45, 0.35)
+  plane.add(nose, cowl, floor, wallL, wallR, seatBack, boom, stab, fin, wing)
+
+  // Propeller: spinner cone plus two blades, hung off the cowl.
+  const prop = new THREE.Group()
+  const spinner = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.3, 6).rotateX(Math.PI / 2), dark)
+  spinner.position.z = 0.18
+  const bladeA = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.5, 0.06), dark)
+  const bladeB = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.14, 0.06), dark)
+  prop.add(spinner, bladeA, bladeB)
+  prop.position.set(0, 0.75, 2.15)
+  plane.add(prop)
+
+  // Fixed gear: two mains under the wing, a little tail wheel.
+  const wheels: THREE.Group[] = []
+  for (const side of [-1, 1]) {
+    const wheel = new THREE.Group()
+    const tire = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 0.22, 0.12, 8).rotateZ(Math.PI / 2),
+      rubber,
+    )
+    wheel.add(tire)
+    wheel.position.set(side * 0.75, 0.22, 0.7)
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.3, 0.07), dark)
+    strut.position.set(side * 0.75, 0.4, 0.7)
+    plane.add(wheel, strut)
+    wheels.push(wheel)
+  }
+  const tailWheel = new THREE.Group()
+  tailWheel.add(
+    new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 8).rotateZ(Math.PI / 2), rubber),
+  )
+  tailWheel.position.set(0, 0.11, -2.1)
+  plane.add(tailWheel)
+  wheels.push(tailWheel)
+
+  plane.userData.wheels = wheels
+  plane.userData.prop = prop
+  return plane
 }
 
 // Ramsey: a loyal guy on all fours you ride like a horse. Dark gray tee,
@@ -542,6 +797,44 @@ function buildWheelchair(): THREE.Group {
 // Big tube resting on the right shoulder, pointing forward (+Z). The raised
 // right arm (see animateCharacter) holds it up.
 // Exported for firstperson.ts, which shows a second copy as the view model.
+// The M2: a slab of a heavy machine gun. Long barrel with a jacket, a fat
+// receiver, spade grips, and a belt of rounds hanging out of the feed tray.
+export function buildM2(): THREE.Group {
+  const gun = new THREE.Group()
+  gun.name = 'weapon'
+  const gunmetal = new THREE.MeshLambertMaterial({ color: 0x33383f, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1b1e22, flatShading: true })
+  const brass = new THREE.MeshLambertMaterial({ color: 0xb08d3a, flatShading: true })
+
+  const along = (geo: THREE.CylinderGeometry) => geo.rotateX(Math.PI / 2) // +Y -> +Z
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 1.3), gunmetal)
+  const barrel = new THREE.Mesh(along(new THREE.CylinderGeometry(0.09, 0.09, 1.7, 8)), dark)
+  barrel.position.z = 1.4
+  // Perforated cooling jacket, faked with two rings — cheaper than holes and
+  // it reads fine at 320x240.
+  for (const z of [0.95, 1.6]) {
+    const ring = new THREE.Mesh(along(new THREE.CylinderGeometry(0.14, 0.14, 0.18, 8)), gunmetal)
+    ring.position.z = z
+    gun.add(ring)
+  }
+  const muzzle = new THREE.Mesh(along(new THREE.CylinderGeometry(0.15, 0.11, 0.22, 8)), dark)
+  muzzle.position.z = 2.28
+  // Spade grips at the back.
+  const grips = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.26, 0.1), dark)
+  grips.position.z = -0.72
+  // The belt, drooping out of the left of the feed tray.
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.4, 0.5), brass)
+  belt.position.set(-0.2, -0.22, 0.1)
+  belt.rotation.z = 0.3
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.06), dark)
+  sight.position.set(0, 0.26, 0.5)
+
+  gun.add(receiver, barrel, muzzle, grips, belt, sight)
+  gun.position.set(0.4, 1.75, 0.15)
+  gun.userData.mountY = 1.75
+  return gun
+}
+
 export function buildBazooka(): THREE.Group {
   {
     const gun = new THREE.Group()
@@ -565,8 +858,86 @@ export function buildBazooka(): THREE.Group {
 
     gun.add(tube, muzzle, exhaust, band, sight, grip)
     gun.position.set(0.38, 1.8, 0.1)
+    gun.userData.mountY = 1.8 // animateCharacter drops this through a squat
     return gun
   }
+}
+
+// Bolt-action rifle with a big chunky scope, carried at the right shoulder
+// like the bazooka and pointing forward (+Z). Long and thin so the
+// silhouette reads as "sniper" even at 320x240.
+// Exported for firstperson.ts, which shows a second copy as the view model.
+export function buildSniper(): THREE.Group {
+  const rifle = new THREE.Group()
+  rifle.name = 'weapon'
+  const metal = new THREE.MeshLambertMaterial({ color: 0x3a3f47, flatShading: true })
+  const black = new THREE.MeshLambertMaterial({ color: 0x1b1d21, flatShading: true })
+  const wood = new THREE.MeshLambertMaterial({ color: 0x6b4a2a, flatShading: true })
+  const glass = new THREE.MeshLambertMaterial({
+    color: 0x2b4a55,
+    emissive: 0x2f7f96,
+    flatShading: true,
+  })
+
+  const along = (geo: THREE.CylinderGeometry) => geo.rotateX(Math.PI / 2) // +Y -> +Z
+
+  const barrel = new THREE.Mesh(along(new THREE.CylinderGeometry(0.055, 0.05, 1.5, 6)), metal)
+  barrel.position.z = 0.62
+  const brake = new THREE.Mesh(along(new THREE.CylinderGeometry(0.085, 0.075, 0.18, 6)), black)
+  brake.position.z = 1.42
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.78), metal)
+  receiver.position.z = -0.2
+  const foreEnd = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.16, 0.62), wood)
+  foreEnd.position.z = 0.35
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.24, 0.62), wood)
+  stock.position.set(0, -0.03, -0.86)
+  const comb = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.12, 0.34), wood)
+  comb.position.set(0, 0.15, -0.66)
+  const butt = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.32, 0.08), black)
+  butt.position.set(0, -0.05, -1.19)
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.24, 0.18), black)
+  mag.position.set(0, -0.19, -0.16)
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.05, 0.22), black)
+  guard.position.set(0, -0.16, -0.42)
+  // Bolt handle out the right side — the bit the cycle animation flicks.
+  const bolt = new THREE.Group()
+  bolt.name = 'bolt'
+  const boltArm = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.05, 0.05), metal)
+  boltArm.position.x = 0.1
+  const boltKnob = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), black)
+  boltKnob.position.x = 0.21
+  bolt.add(boltArm, boltKnob)
+  bolt.position.set(0.06, 0.03, -0.36)
+
+  // Scope: a fat tube on two ring mounts, with lenses at both ends.
+  const scope = new THREE.Mesh(along(new THREE.CylinderGeometry(0.085, 0.085, 0.66, 8)), black)
+  scope.position.set(0, 0.23, -0.06)
+  const bell = new THREE.Mesh(along(new THREE.CylinderGeometry(0.11, 0.09, 0.16, 8)), black)
+  bell.position.set(0, 0.23, 0.33)
+  const lensFront = new THREE.Mesh(along(new THREE.CylinderGeometry(0.095, 0.095, 0.03, 8)), glass)
+  lensFront.position.set(0, 0.23, 0.41)
+  const lensRear = new THREE.Mesh(along(new THREE.CylinderGeometry(0.075, 0.075, 0.03, 8)), glass)
+  lensRear.position.set(0, 0.23, -0.39)
+  const mountA = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.07), metal)
+  mountA.position.set(0, 0.14, 0.14)
+  const mountB = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.07), metal)
+  mountB.position.set(0, 0.14, -0.26)
+
+  // Folded bipod under the fore-end.
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.36, 0.035), metal)
+    leg.position.set(side * 0.06, -0.24, 0.5)
+    leg.rotation.set(-0.35, 0, side * 0.3)
+    rifle.add(leg)
+  }
+
+  rifle.add(
+    barrel, brake, receiver, foreEnd, stock, comb, butt, mag, guard, bolt,
+    scope, bell, lensFront, lensRear, mountA, mountB,
+  )
+  rifle.position.set(0.36, 1.72, 0.15)
+  rifle.userData.mountY = 1.72
+  return rifle
 }
 
 // Katana held in the right hand, blade extending past the hand (local -Y),
@@ -725,4 +1096,14 @@ export function setName(group: THREE.Group, name: string): void {
     group.remove(old)
   }
   group.add(makeNameTag(name))
+  liftNameTag(group)
+}
+
+// The tag floats above a person's head. An X-wing is a good deal taller than
+// a person, and the sprite draws with depthTest off, so at head height it
+// paints straight over the canopy. Lift it clear of the whole ship. Called
+// from both setName and setRide, since either can happen first.
+function liftNameTag(group: THREE.Group): void {
+  const tag = group.getObjectByName('nametag')
+  if (tag) tag.position.y = group.userData.ride === 'xwing' ? 3.7 : 2.8
 }

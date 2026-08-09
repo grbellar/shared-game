@@ -80,16 +80,24 @@ export class RocketRide {
   private to = new THREE.Vector2() // (x, z) of the aim point
   private followId: string | null = null
   private apexY = 0
-  private baseFogFar = 150
+  private altitude = 0
   private trailT = 0
 
-  constructor(
-    private scene: THREE.Scene,
-    private effects: Effects,
-  ) {}
+  constructor(private effects: Effects) {}
 
   get active(): boolean {
     return this.t >= 0
+  }
+
+  // How far to push the fog wall back this frame, on top of whatever the world
+  // and the clock already want. Handed to daynight.update rather than written
+  // onto the fog directly — daynight runs at the end of the frame and rewrites
+  // fog.far unconditionally, so anything set here would never survive to be
+  // drawn. From the top of the arc this is worth ~1800 units of visibility,
+  // which is the one moment in the game you can see the whole world at once.
+  get fogLift(): number {
+    if (this.t < 0) return 0
+    return Math.max(0, this.altitude - 20) * 4.5
   }
 
   // Returns false if you're in no state to be launched — already flying, dead,
@@ -105,11 +113,6 @@ export class RocketRide {
     // trip is a flat skim through the fog rather than an arc over it.
     const reach = Math.hypot(this.to.x - this.from.x, this.to.y - this.from.z)
     this.apexY = Math.max(this.from.y, this.groundAtTarget()) + APEX + reach * 0.18
-    const fog = this.scene.fog as THREE.Fog | null
-    // Captured before we start driving it, and put back on landing — this is
-    // the only thing in the game that touches fog distance, and daynight.ts
-    // only ever writes fog colour, so the two never fight.
-    this.baseFogFar = fog ? fog.far : 150
     this.t = 0
     this.trailT = 0
     player.flying = true
@@ -156,17 +159,12 @@ export class RocketRide {
       y = this.apexY - (this.apexY - this.groundAtTarget()) * v * v
     }
     player.group.position.set(x, y, z)
+    this.altitude = y
 
     // Point the way we're going, so the dive reads as aimed at something.
     const dx = this.to.x - this.from.x
     const dz = this.to.y - this.from.z
     if (dx * dx + dz * dz > 1) player.group.rotation.y = Math.atan2(dx, dz)
-
-    // The fog wall opens up with altitude and closes again on the way down:
-    // from the top of the arc you can actually see both islands at once, which
-    // is the only place in the game you ever can.
-    const fog = this.scene.fog as THREE.Fog | null
-    if (fog) fog.far = this.baseFogFar + Math.max(0, y - 20) * 4.5
 
     this.trailT -= dt
     if (this.trailT <= 0) {
@@ -189,12 +187,13 @@ export class RocketRide {
     return Math.max(heightAt(this.to.x, this.to.y), WATER_LEVEL)
   }
 
-  // Always runs, landing or abort: hand back control and put the fog back.
+  // Always runs, landing or abort: hand back control. The fog needs no
+  // undoing — fogLift reads zero the moment this.t goes negative, and daynight
+  // writes the ordinary distance on its very next pass.
   private finish(player: Player): void {
     this.t = -1
+    this.altitude = 0
     this.followId = null
     player.flying = false
-    const fog = this.scene.fog as THREE.Fog | null
-    if (fog) fog.far = this.baseFogFar
   }
 }

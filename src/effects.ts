@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { heightAt, propInPath } from './world'
+import { spawnPhysicsDebris, attachPhysicsBody } from './physics'
 
 // Transient physical stuff: rockets, explosions, smoke, popped heads, debris.
 // Every client simulates the same fire events, so everyone sees the same show;
@@ -46,7 +47,33 @@ interface SplashRing {
   t: number
 }
 
+// Neon splatter for the `paintball` chat cheat.
+const PAINT = [0xff2fa8, 0x2fe0ff, 0xa8ff2f, 0xffe22f, 0xb02fff, 0xff6a2f]
+
+// A bullet tracer or muzzle flash: something bright that fades out fast.
+interface Beam {
+  mesh: THREE.Mesh
+  t: number
+  life: number
+  grow: number
+}
+
+// Take a mesh out of the scene AND free what it holds on the GPU. Every
+// transient here mints its own geometry and material, so dropping the scene
+// reference alone leaks both — invisible until something spawns them fast
+// (the fifty, at fourteen rounds a second), at which point it degrades until
+// the frame gives out.
+function discard(scene: THREE.Scene, mesh: THREE.Mesh): void {
+  scene.remove(mesh)
+  mesh.geometry.dispose()
+  const mat = mesh.material
+  if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
+  else mat.dispose()
+}
+
 export class Effects {
+  // Toggled by cheats.ts: every burst and fireball goes highlighter-coloured.
+  paintball = false
   onBlast: (center: THREE.Vector3) => void = () => {}
   // Fires only for the local player's own rockets. Craters hang off this so
   // exactly one client (the shooter) mints the world damage — per-client sim
@@ -59,6 +86,7 @@ export class Effects {
   private puffs: Puff[] = []
   private explosions: Explosion[] = []
   private splashRings: SplashRing[] = []
+  private beams: Beam[] = []
   private tmp = new THREE.Vector3()
 
   constructor(private scene: THREE.Scene) {}
@@ -103,6 +131,45 @@ export class Effects {
     this.splashRings.push({ mesh: ring, t: 0 })
   }
 
+  // Hitscan tracer: a long thin glowing box laid down the bullet's path.
+  // Gone in a blink, so at 320x240 it reads as a streak of light.
+  spawnTracer(from: THREE.Vector3, to: THREE.Vector3): void {
+    const len = from.distanceTo(to)
+    if (len < 0.2) return
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.07, 0.07, len),
+      new THREE.MeshLambertMaterial({
+        color: 0x8a6a20,
+        emissive: 0xffd070,
+        flatShading: true,
+        transparent: true,
+      }),
+    )
+    mesh.position.copy(from).add(to).multiplyScalar(0.5)
+    mesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      this.tmp.copy(to).sub(from).normalize(),
+    )
+    this.scene.add(mesh)
+    this.beams.push({ mesh, t: 0, life: 0.13, grow: 0 })
+  }
+
+  // Fat spark at the muzzle for a couple of frames.
+  spawnMuzzleFlash(pos: THREE.Vector3): void {
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.28, 0),
+      new THREE.MeshLambertMaterial({
+        color: 0x8a6000,
+        emissive: 0xffc040,
+        flatShading: true,
+        transparent: true,
+      }),
+    )
+    mesh.position.copy(pos)
+    this.scene.add(mesh)
+    this.beams.push({ mesh, t: 0, life: 0.09, grow: 1.6 })
+  }
+
   spawnHeadPop(pos: THREE.Vector3): void {
     const head = new THREE.Mesh(
       new THREE.BoxGeometry(0.6, 0.6, 0.6),
@@ -110,14 +177,19 @@ export class Effects {
     )
     head.position.copy(pos)
     this.scene.add(head)
-    this.puffs.push({
-      mesh: head,
-      t: 0,
-      lifetime: 2.4,
-      vel: new THREE.Vector3((Math.random() - 0.5) * 5, 7 + Math.random() * 2, (Math.random() - 0.5) * 5),
-      spin: new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4),
-      bounce: true,
-    })
+    const vel = new THREE.Vector3((Math.random() - 0.5) * 5, 7 + Math.random() * 2, (Math.random() - 0.5) * 5)
+    // A real rigid body when the engine is up — the head tumbles downhill
+    // and rolls to rest; the old fake bounce when it isn't.
+    if (!attachPhysicsBody(head, 0.6, vel, 4, (m) => discard(this.scene, m as THREE.Mesh))) {
+      this.puffs.push({
+        mesh: head,
+        t: 0,
+        lifetime: 2.4,
+        vel,
+        spin: new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4),
+        bounce: true,
+      })
+    }
     this.burst(pos, 0xb02020, 9, 5)
   }
 
@@ -148,7 +220,7 @@ export class Effects {
       const e = this.explosions[i]
       e.t += dt / EXPLOSION_TIME
       if (e.t >= 1) {
-        this.scene.remove(e.mesh)
+        discard(this.scene, e.mesh)
         this.explosions.splice(i, 1)
         continue
       }
@@ -161,7 +233,7 @@ export class Effects {
       const r = this.splashRings[i]
       r.t += dt / SPLASH_RING_TIME
       if (r.t >= 1) {
-        this.scene.remove(r.mesh)
+        discard(this.scene, r.mesh)
         this.splashRings.splice(i, 1)
         continue
       }
@@ -170,11 +242,24 @@ export class Effects {
       mat.opacity = 0.85 * (1 - r.t)
     }
 
+    for (let i = this.beams.length - 1; i >= 0; i--) {
+      const b = this.beams[i]
+      b.t += dt / b.life
+      if (b.t >= 1) {
+        discard(this.scene, b.mesh)
+        this.beams.splice(i, 1)
+        continue
+      }
+      const mat = b.mesh.material as THREE.MeshLambertMaterial
+      mat.opacity = 1 - b.t
+      if (b.grow) b.mesh.scale.setScalar(1 + b.grow * b.t)
+    }
+
     for (let i = this.puffs.length - 1; i >= 0; i--) {
       const s = this.puffs[i]
       s.t += dt
       if (s.t >= s.lifetime) {
-        this.scene.remove(s.mesh)
+        discard(this.scene, s.mesh)
         this.puffs.splice(i, 1)
         continue
       }
@@ -271,12 +356,17 @@ export class Effects {
     }
   }
 
+  private paint(): number {
+    return PAINT[Math.floor(Math.random() * PAINT.length)]
+  }
+
   private explode(center: THREE.Vector3, ownerId: string): void {
+    const splat = this.paintball ? this.paint() : 0
     const mesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(1, 0),
       new THREE.MeshLambertMaterial({
-        color: 0x662200,
-        emissive: 0xff7a1a,
+        color: this.paintball ? splat : 0x662200,
+        emissive: this.paintball ? splat : 0xff7a1a,
         flatShading: true,
         transparent: true,
       }),
@@ -289,12 +379,17 @@ export class Effects {
     if (ownerId === 'me') this.onOwnExplosion(center)
   }
 
-  // A handful of flying cubes: debris, blood, whatever the occasion calls for.
+  // A handful of flying cubes: debris, blood, whatever the occasion calls
+  // for. Real rigid bodies when the physics engine is up (they tumble,
+  // stack and roll downhill); the old hand-animated puffs as the fallback
+  // while the WASM is still loading.
   private burst(center: THREE.Vector3, color: number, count: number, power: number): void {
     for (let i = 0; i < count; i++) {
+      const c = this.paintball ? this.paint() : color
+      if (spawnPhysicsDebris(center, c, power)) continue
       const cube = new THREE.Mesh(
         new THREE.BoxGeometry(0.14, 0.14, 0.14),
-        new THREE.MeshLambertMaterial({ color, flatShading: true }),
+        new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
       )
       cube.position.copy(center)
       this.scene.add(cube)

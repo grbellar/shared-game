@@ -39,11 +39,10 @@ const DEEP = -2.0 // terrain below this is deep enough for it to swim
 const PATROL_DEPTH = -3.5 // the depth contour it prefers to cruise along
 const PATROL_R = 80 // fallback ring if the coast search comes up empty
 const ROAM_R = 150 // hard leash so it never wanders into the fog forever
-// The whole map is inside this: anyone who gets in the water is hunted, from
-// wherever the shark happens to be. A short aggro range meant it only ever
-// noticed you if it was already on your side of the island, and one lap of
-// the coast takes minutes — so you'd swim, see nothing, and give up.
-const AGGRO_R = 220
+// It notices nearby swimmers, not everyone in the sea. Once provoked it gets
+// a little extra leash so crossing the boundary doesn't toggle the chase.
+const AGGRO_R = 30
+const HUNT_LOSE_R = 46
 const CHARGE_R = 16
 const GRAB_R = 2.6
 const BITE_R = 3.0
@@ -60,6 +59,8 @@ const RESPAWN_TIME = 22
 const LAND_TIME = 14 // how long a raid lasts before it heads back to sea
 const LAND_SPEED = 8.5 // walking (9) barely escapes; any ride does
 const LAND_RANGE = 58 // it'll chase anyone on the island proper
+const LAND_AGGRO_R = 22 // beach raid only starts when someone approaches it
+const LAND_LOSE_R = 36
 const STALE_HOST = 2 // seconds of silence before we assume the host can't sim
 const BITE_DAMAGE = 16
 const CHOMP_DAMAGE = 22 // the initial grab
@@ -199,6 +200,11 @@ function buildPrompt(): HTMLDivElement {
   return el
 }
 
+// The id the shark answers to inside a target list, matching the convention
+// skeletons and mobs use. Can't collide with a shooter's id: server ids are
+// hex uuid slices and ours is 'me'.
+export const SHARK_TARGET_ID = 'shark'
+
 export class Shark {
   onDeath: () => void = () => {}
   private group: THREE.Group
@@ -302,6 +308,19 @@ export class Shark {
     return true
   }
 
+  // Where a bullet can find it, in the shape hitscan wants. Empty once it's
+  // dead so rounds pass through the carcass.
+  targets(): { id: string; pos: THREE.Vector3 }[] {
+    return this.st === 'dead' ? [] : [{ id: SHARK_TARGET_ID, pos: this.group.position }]
+  }
+
+  // A hitscan round from the local player connected. Same ownership rule as
+  // swing(): the shooter mints the damage and tells the room.
+  shot(dmg: number): void {
+    if (this.st === 'dead') return
+    this.hit(dmg)
+  }
+
   // Mashing keys while it has hold of you. Hurts it a little; any hit at all
   // makes it let go, so struggling always works — it just takes a few tries.
   struggle(): void {
@@ -389,6 +408,7 @@ export class Shark {
         if (inRealm(c.pos.x, c.pos.z)) continue
         if (Math.hypot(c.pos.x, c.pos.z) > LAND_RANGE) continue
         const d = Math.hypot(c.pos.x - this.pos.x, c.pos.z - this.pos.y)
+        if (d > LAND_LOSE_R) continue
         if (d < preyD) {
           preyD = d
           prey = c.pos
@@ -414,22 +434,23 @@ export class Shark {
       return
     }
     if (this.landCd <= 0 && this.st !== 'grab') {
-      // Anyone strolling the island? Ruin their picnic.
+      // Only beach somebody who actually approaches the shark. It used to
+      // select anyone anywhere on the island and cross the map to reach them.
       const someone = candidates.some(
         (c) =>
           !inRealm(c.pos.x, c.pos.z) &&
           Math.hypot(c.pos.x, c.pos.z) < LAND_RANGE &&
-          heightAt(c.pos.x, c.pos.z) > 0.5,
+          heightAt(c.pos.x, c.pos.z) > 0.5 &&
+          Math.hypot(c.pos.x - this.pos.x, c.pos.z - this.pos.y) < LAND_AGGRO_R,
       )
       if (someone) {
         this.setState('land')
         this.landT = LAND_TIME
         return
       }
-      this.landCd = 15 // nobody ashore — try again in a bit
     }
     let prey: { id: string; pos: THREE.Vector3 } | null = null
-    let preyD = AGGRO_R
+    let preyD = this.st === 'hunt' ? HUNT_LOSE_R : AGGRO_R
     for (const c of candidates) {
       if (c.pos.y > WATER_LEVEL + 0.4) continue
       if (heightAt(c.pos.x, c.pos.z) > -1.15) continue
