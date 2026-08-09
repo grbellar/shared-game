@@ -34,6 +34,10 @@ interface Remote {
   hat: string
 }
 
+// Scratch for update()'s speed measurement — one clone per remote per frame
+// adds up to nothing but garbage.
+const _before = new THREE.Vector3()
+
 // Renders and interpolates the other players in the room.
 export class Remotes {
   // Fired when a remote player hits the water (their pose flips to swim).
@@ -44,6 +48,16 @@ export class Remotes {
   // Latest webcam frame per id, kept separately because a `face` message can
   // land before that player's first `state` creates their character.
   private faces = new Map<string, string>()
+  // targets()/stickTargets()/blips() are read ~10x a frame (rockets, lasers,
+  // the shark, mobs, skeletons, the minimap), so they hand out cached arrays
+  // rebuilt only when a state message or a join/leave changes what's in them.
+  // The positions inside are live references to each group, so a cached entry
+  // never goes stale between rebuilds. Callers iterate or spread; none holds
+  // an array across frames or mutates it.
+  private targetsCache: { id: string; pos: THREE.Vector3; r?: number }[] = []
+  private stickCache: { id: string; group: THREE.Group }[] = []
+  private blipsCache: { id: string; pos: THREE.Vector3; color: string; talk: number }[] = []
+  private cachesDirty = true
 
   constructor(private scene: THREE.Scene) {}
 
@@ -130,6 +144,7 @@ export class Remotes {
       setEmote(remote.group, emote)
       if (emote !== 'none') this.onEmote(p.id, emote)
     }
+    this.cachesDirty = true
   }
 
   getGroup(id: string): THREE.Group | undefined {
@@ -203,28 +218,48 @@ export class Remotes {
   // Where everyone is, in their own colour, and how loudly they're talking
   // right now — for the minimap.
   blips(): { id: string; pos: THREE.Vector3; color: string; talk: number }[] {
-    return [...this.players.entries()].map(([id, r]) => ({
-      id,
-      pos: r.group.position,
-      color: r.color,
-      talk: (r.group.userData.talk as number) ?? 0,
-    }))
+    if (this.cachesDirty) this.refreshCaches()
+    return this.blipsCache
   }
 
   // Positions rockets and laser bolts can collide with. `r` overrides the
   // caller's default hit radius — an X-wing is seven units of wingspan, and
   // at person-sized tolerances nobody could ever hit one.
   targets(): { id: string; pos: THREE.Vector3; r?: number }[] {
-    return [...this.players.entries()].map(([id, r]) => ({
-      id,
-      pos: r.group.position,
-      r: r.ride === 'xwing' ? 4.4 : undefined,
-    }))
+    if (this.cachesDirty) this.refreshCaches()
+    return this.targetsCache
   }
 
   // Groups arrows can stick into.
   stickTargets(): { id: string; group: THREE.Group }[] {
-    return [...this.players.entries()].map(([id, r]) => ({ id, group: r.group }))
+    if (this.cachesDirty) this.refreshCaches()
+    return this.stickCache
+  }
+
+  // Rebuild the three cached views in place, reusing the entry objects so a
+  // busy room churns no garbage. Cheap enough to run per state message.
+  private refreshCaches(): void {
+    this.cachesDirty = false
+    const n = this.players.size
+    this.targetsCache.length = n
+    this.stickCache.length = n
+    this.blipsCache.length = n
+    let i = 0
+    for (const [id, r] of this.players) {
+      const t = (this.targetsCache[i] ??= { id: '', pos: r.group.position, r: undefined })
+      t.id = id
+      t.pos = r.group.position
+      t.r = r.ride === 'xwing' ? 4.4 : undefined
+      const s = (this.stickCache[i] ??= { id: '', group: r.group })
+      s.id = id
+      s.group = r.group
+      const b = (this.blipsCache[i] ??= { id: '', pos: r.group.position, color: '', talk: 0 })
+      b.id = id
+      b.pos = r.group.position
+      b.color = r.color
+      b.talk = (r.group.userData.talk as number) ?? 0
+      i++
+    }
   }
 
   remove(id: string): void {
@@ -234,6 +269,7 @@ export class Remotes {
     releaseCharacter(remote.group)
     this.players.delete(id)
     this.faces.delete(id)
+    this.cachesDirty = true
   }
 
   clear(): void {
@@ -243,7 +279,7 @@ export class Remotes {
   update(dt: number): void {
     for (const remote of this.players.values()) {
       const { group, target } = remote
-      const before = group.position.clone()
+      const before = _before.copy(group.position)
       const k = Math.min(1, 12 * dt)
       group.position.x += (target.x - group.position.x) * k
       group.position.y += (target.y - group.position.y) * k

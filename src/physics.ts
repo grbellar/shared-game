@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Collider, RigidBody } from '@dimforge/rapier3d-compat'
 import type RAPIER_ from '@dimforge/rapier3d-compat'
-import { heightAt, terrainVersion } from './world'
+import { heightAt, onCraters, terrainVersion, type Crater } from './world'
 import { BLOCK, blocksVersion, forEachBlock } from './blocks'
 import { REALM_X, REALM_Z } from './realm'
 
@@ -58,8 +58,12 @@ let world: InstanceType<typeof RAPIER_.World> | null = null
 let acc = 0
 
 const zones: Zone[] = []
-let dirtyZones: Zone[] = []
+const dirtyZones: Zone[] = []
 let seenTerrainV = -1
+// Craters carved since the last stepPhysics look — only zones one of these
+// actually overlaps get resampled (a realm rebuild alone is ~26k heightAt
+// calls, far too much to pay for a crater on the beach).
+const pendingCraters: Crater[] = []
 
 let voxCollider: Collider | null = null
 let voxSet = new Set<string>()
@@ -83,11 +87,15 @@ export async function initPhysics(scene: THREE.Scene): Promise<void> {
   await R.init()
   world = new R.World({ x: 0, y: -GRAVITY, z: 0 })
 
+  onCraters((changed) => pendingCraters.push(...changed))
   for (const z of ZONES) {
     const zone: Zone = { ...z, collider: null }
     buildZone(zone)
     zones.push(zone)
   }
+  // Craters that landed while the WASM loaded are already baked into the
+  // fields we just built.
+  pendingCraters.length = 0
   // Debris bounces off the sea surface the way the old puffs always did
   // (they floored at y=0 over water) — a big slab covering both islands.
   // The realm is beyond its edge, so out there debris sinks into the lava.
@@ -183,12 +191,17 @@ function wakeAll(): void {
   for (const a of attached) a.body.wakeUp()
 }
 
+// Did anything write into the instance buffer since the last upload? Saves
+// flagging a GPU re-upload every frame while no debris exists at all.
+let instDirty = false
+
 function freeSlot(i: number): void {
   const d = slots[i]
   if (!d) return
   world?.removeRigidBody(d.body)
   slots[i] = null
   debrisMesh?.setMatrixAt(i, GONE)
+  instDirty = true
 }
 
 // One tumbling debris cube. False when the engine isn't up (or was never
@@ -252,11 +265,25 @@ export function attachPhysicsBody(
 export function stepPhysics(dt: number): void {
   if (!R || !world || !debrisMesh) return
 
-  // Terrain changed (a crater landed): queue every zone for a resample, and
-  // rebuild one per frame so a burst of craters never stalls a frame.
+  // Terrain changed (a crater landed): queue the zones it touched for a
+  // resample, and rebuild one per frame so a burst of craters never stalls a
+  // frame. Zones the crater never overlapped keep their field as-is.
   if (terrainVersion() !== seenTerrainV) {
     seenTerrainV = terrainVersion()
-    dirtyZones = zones.slice()
+    for (const zone of zones) {
+      if (dirtyZones.includes(zone)) continue
+      const half = zone.span / 2
+      for (const c of pendingCraters) {
+        if (
+          Math.abs(c.x - zone.cx) <= half + c.r &&
+          Math.abs(c.z - zone.cz) <= half + c.r
+        ) {
+          dirtyZones.push(zone)
+          break
+        }
+      }
+    }
+    pendingCraters.length = 0
   }
   const dirty = dirtyZones.shift()
   if (dirty) {
@@ -293,8 +320,12 @@ export function stepPhysics(dt: number): void {
       tmpScale.setScalar(s),
     )
     debrisMesh.setMatrixAt(i, tmpMat)
+    instDirty = true
   }
-  debrisMesh.instanceMatrix.needsUpdate = true
+  if (instDirty) {
+    debrisMesh.instanceMatrix.needsUpdate = true
+    instDirty = false
+  }
 
   for (let i = attached.length - 1; i >= 0; i--) {
     const a = attached[i]

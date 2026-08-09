@@ -124,10 +124,14 @@ export class Minimap {
       this.cz = realm ? REALM_Z : 0
     }
     const now = performance.now()
+    // Terrain rebakes ride the same throttle as blocks: craters land in
+    // bursts too (the fifty), and each bake sweeps thousands of heightAt
+    // samples. Crossing worlds still swaps the map immediately.
     const stale =
       realm !== this.bakedRealm ||
-      terrainVersion() !== this.bakedTerrain ||
-      (realm && blocksVersion() !== this.bakedBlocks && now - this.lastBake > REBAKE_MS)
+      ((terrainVersion() !== this.bakedTerrain ||
+        (realm && blocksVersion() !== this.bakedBlocks)) &&
+        now - this.lastBake > REBAKE_MS)
     if (stale) {
       this.bakedRealm = realm
       this.bakedTerrain = terrainVersion()

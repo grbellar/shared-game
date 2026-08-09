@@ -146,6 +146,9 @@ interface Skel {
   // off the wall clock: the sim runs on dt, and in a throttled tab a
   // wall-clock cooldown expires mid-swing and lets one blow hit three times.
   struck: boolean
+  // The id targets()/stickTargets() yield for this skeleton, built once —
+  // both generators run every frame and a template literal per yield adds up.
+  tid: string
 }
 
 // The prefix targets() stamps on a skeleton's id, with its index after it.
@@ -192,6 +195,7 @@ export class Skeletons {
         netY: post.y,
         netYaw: 0,
         struck: false,
+        tid: `${SKEL_TARGET_PREFIX}${this.list.length}`,
       })
     }
 
@@ -532,20 +536,18 @@ export class Skeletons {
   // stopped by its own owner check. `group.position` is the live one — render()
   // writes it every frame — so this allocates nothing.
   *targets(): Generator<{ id: string; pos: THREE.Vector3 }> {
-    for (let i = 0; i < this.list.length; i++) {
-      const s = this.list[i]
+    for (const s of this.list) {
       if (s.st === 'dead') continue
-      yield { id: `${SKEL_TARGET_PREFIX}${i}`, pos: s.group.position }
+      yield { id: s.tid, pos: s.group.position }
     }
   }
 
   // ...and the shape arrows.ts wants, so they stick in the ribcage. Cosmetic
   // only, exactly as arrows are against players.
   *stickTargets(): Generator<{ id: string; group: THREE.Group }> {
-    for (let i = 0; i < this.list.length; i++) {
-      const s = this.list[i]
+    for (const s of this.list) {
       if (s.st === 'dead') continue
-      yield { id: `skel:${i}`, group: s.group }
+      yield { id: s.tid, group: s.group }
     }
   }
 

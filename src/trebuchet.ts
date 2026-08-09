@@ -135,6 +135,9 @@ export class Trebuchet {
   private vel = new THREE.Vector3()
   private trailT = 0
   private hint: HTMLDivElement
+  // Last hint text written to the DOM ('' = hidden), so per-frame no-ops
+  // skip the style/text writes entirely.
+  private hintShown = ''
 
   constructor(
     scene: THREE.Scene,
@@ -695,6 +698,9 @@ export class Trebuchet {
       const near = player.group.position.distanceTo(p) < BOARD_R * 2.6
       if (near) text = this.ready ? '🪨 step into the sling' : '🪨 the trebuchet is reloading'
     }
+    // Only touch the DOM when the text actually changes, same as cats.ts.
+    if (text === this.hintShown) return
+    this.hintShown = text
     if (text) {
       this.hint.textContent = text
       this.hint.style.display = 'block'

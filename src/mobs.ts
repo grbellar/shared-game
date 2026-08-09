@@ -219,6 +219,9 @@ interface Mob {
   walkPhase: number
   moving: number
   netTarget: { x: number; z: number; ry: number }
+  // The id targets() yields for this mob, built once — the generator runs
+  // every frame and a template literal per yield adds up.
+  tid: string
 }
 
 // The prefix targets() stamps on a mob's id, with its index after it. Callers
@@ -264,6 +267,7 @@ export class Mobs {
         walkPhase: 0,
         moving: 0,
         netTarget: { x: spawn.x, z: spawn.y, ry: 0 },
+        tid: `${MOB_TARGET_PREFIX}${this.mobs.length}`,
       }
       mob.group.position.set(spawn.x, Math.max(heightAt(spawn.x, spawn.y), 0), spawn.y)
       scene.add(mob.group)
@@ -308,10 +312,9 @@ export class Mobs {
   // shooter's (server ids are uuid slices, ours is 'me'), so a rocket is never
   // stopped by its own owner check.
   *targets(): Generator<{ id: string; pos: THREE.Vector3 }> {
-    for (let i = 0; i < this.mobs.length; i++) {
-      const m = this.mobs[i]
+    for (const m of this.mobs) {
       if (m.st === 'dead') continue
-      yield { id: `${MOB_TARGET_PREFIX}${i}`, pos: m.group.position }
+      yield { id: m.tid, pos: m.group.position }
     }
   }
 

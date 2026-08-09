@@ -210,10 +210,11 @@ export function blockFloorAt(x: number, z: number, feetY: number): number {
 // Is there an un-steppable wall at (x, z) for someone whose feet are at
 // feetY? Samples shin and head height so a 2-stack always registers, while
 // a single block (top within STEP) stays walkable via the floor hook.
+const WALL_SAMPLE_HEIGHTS = [1.0, 1.9]
 export function wallAt(x: number, z: number, feetY: number): boolean {
   const gx = Math.round(x / BLOCK)
   const gz = Math.round(z / BLOCK)
-  for (const h of [1.0, 1.9]) {
+  for (const h of WALL_SAMPLE_HEIGHTS) {
     const gy = Math.floor((feetY + h) / BLOCK)
     if (cells.get(key(gx, gy, gz)) && (gy + 1) * BLOCK > feetY + STEP) return true
   }

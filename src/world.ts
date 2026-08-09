@@ -152,8 +152,12 @@ export function landingSpotOn(index: number): { x: number; z: number } {
 export function heightAt(x: number, z: number): number {
   let dig = 0
   for (const c of craters) {
+    // Cheap axis-aligned reject first — this loop runs for every terrain
+    // sample and almost every crater is nowhere near the point asked about.
     const dx = x - c.x
+    if (dx > c.r || dx < -c.r) continue
     const dz = z - c.z
+    if (dz > c.r || dz < -c.r) continue
     const sq = dx * dx + dz * dz
     if (sq >= c.r * c.r) continue
     dig += c.d * (0.5 + 0.5 * Math.cos((Math.PI * Math.sqrt(sq)) / c.r))
@@ -165,6 +169,15 @@ export function heightAt(x: number, z: number): number {
 // the island (the minimap) watches this instead of wiring up a callback.
 export function terrainVersion(): number {
   return revision
+}
+
+// For consumers that cache terrain piecewise (the physics heightfields) and
+// only want to rebuild the pieces a crater actually touched: fired with each
+// batch of craters whose shape just changed, alongside the revision bump.
+// terrainVersion stays the coarse whole-world signal for everyone else.
+const craterListeners: ((changed: readonly Crater[]) => void)[] = []
+export function onCraters(cb: (changed: readonly Crater[]) => void): void {
+  craterListeners.push(cb)
 }
 
 const DIRT = new THREE.Color(0x6b4526)
@@ -186,12 +199,16 @@ export function addCraters(list: Crater[]): DestroyedProp[] {
   craters.push(...fresh)
   // Mirror the server's 500-crater replay cap so an all-night session can't
   // grow the heightAt walk forever. Drop the key too, or a re-sent old
-  // crater would be deduped into nothing.
+  // crater would be deduped into nothing. Evicted craters changed the shape
+  // too (their dig un-carves), so they count as changed for the listeners.
+  const changed: Crater[] = [...fresh]
   while (craters.length > 500) {
     const old = craters.shift()!
     craterKeys.delete(`${old.x}|${old.z}|${old.r}|${old.d}`)
+    changed.push(old)
   }
   revision++
+  for (const cb of craterListeners) cb(changed)
 
   // Every tile: a crater can land on any island, or in the realm.
   for (const geo of terrainGeos) {

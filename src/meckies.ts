@@ -85,6 +85,9 @@ export class Meckies {
   personName: () => string = () => 'my person'
   private live: Live[] = []
   private hint: HTMLDivElement
+  // Last hint text written to the DOM ('' = hidden), so per-frame no-ops
+  // skip the style/text writes entirely.
+  private hintShown = ''
   private carriedBy = -1 // index we're personally carrying, or -1
   private cryCd: number[] = []
   private fury: number[] = []
@@ -273,14 +276,21 @@ export class Meckies {
 
     // Shown by style.display, matching the cat prompt — there is no .show
     // rule in the stylesheet, so toggling a class here would never appear.
+    // Only touch the DOM when the text actually changes, same as cats.ts.
     const near = this.carriedBy >= 0 ? this.carriedBy : this.nearestIndex()
-    if (near < 0) {
+    let text = ''
+    if (near >= 0) {
+      const name = RESIDENTS[near].name
+      const verb = this.carriedBy >= 0 ? `put ${name} down` : `pick ${name} up`
+      text = this.touch ? verb : `U · ${verb}`
+    }
+    if (text === this.hintShown) return
+    this.hintShown = text
+    if (!text) {
       this.hint.style.display = 'none'
       return
     }
-    const name = RESIDENTS[near].name
-    const verb = this.carriedBy >= 0 ? `put ${name} down` : `pick ${name} up`
-    this.hint.textContent = this.touch ? verb : `U · ${verb}`
+    this.hint.textContent = text
     this.hint.style.display = 'block'
   }
 

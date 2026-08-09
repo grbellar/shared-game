@@ -69,10 +69,15 @@ const ROCKET_OLIVE_MAT = new THREE.MeshLambertMaterial({ color: 0x55603a, flatSh
 const ROCKET_RED_MAT = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
 const ROCKET_BODY_GEO = new THREE.CylinderGeometry(0.11, 0.11, 0.5, 6).rotateX(Math.PI / 2)
 const ROCKET_NOSE_GEO = new THREE.ConeGeometry(0.11, 0.26, 6).rotateX(Math.PI / 2)
+// Every smoke puff is the same cube — only its material (opacity fades per
+// puff) needs to be minted per spawn. Trails smoke every 0.04s, so this one
+// geometry saves a steady drip of allocations.
+const SMOKE_GEO = new THREE.BoxGeometry(0.16, 0.16, 0.16)
 
 function discard(scene: THREE.Scene, mesh: THREE.Mesh): void {
   scene.remove(mesh)
-  mesh.geometry.dispose()
+  // Shared geometry outlives any one puff; everything else minted its own.
+  if (mesh.geometry !== SMOKE_GEO) mesh.geometry.dispose()
   const mat = mesh.material
   if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
   else mat.dispose()
@@ -415,7 +420,7 @@ export class Effects {
 
   private smoke(pos: THREE.Vector3): void {
     const puff = new THREE.Mesh(
-      new THREE.BoxGeometry(0.16, 0.16, 0.16),
+      SMOKE_GEO,
       new THREE.MeshLambertMaterial({ color: 0x9a9aa2, transparent: true, opacity: 0.8 }),
     )
     puff.position.copy(pos)

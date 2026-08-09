@@ -34,6 +34,9 @@ export class Bubbles {
   }
 
   update(): void {
+    // Nothing on screen, nothing to lay out — getBoundingClientRect isn't
+    // free, and most frames nobody has said anything for six seconds.
+    if (this.list.length === 0) return
     const now = performance.now()
     const rect = this.canvas.getBoundingClientRect()
     for (let i = this.list.length - 1; i >= 0; i--) {
