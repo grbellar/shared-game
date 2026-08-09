@@ -19,7 +19,7 @@ import { createRealm, inRealm } from './realm'
 import { buildCastle } from './castle'
 import { Portals, type Gate } from './portal'
 import * as blocks from './blocks'
-import { initBlocks, blockAtPoint, type BlockSpec } from './blocks'
+import { initBlocks, blockAtPoint, MATERIALS, type BlockSpec } from './blocks'
 import { initBuildHud } from './buildhud'
 import { BlockGhost } from './blockghost'
 import { Fireworks, SHELLS } from './fireworks'
@@ -37,6 +37,7 @@ import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
 import { ItemWheel } from './itemwheel'
+import { handPreview, ridePreview } from './preview'
 import { GameMap } from './map'
 import { RocketRide, DESTINATIONS, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
 import { Trebuchet } from './trebuchet'
@@ -271,7 +272,7 @@ emotes.onChange = (id) => {
   setEmote(player.group, id)
   if (id !== 'none') sfx.emote(id)
 }
-const emoteWheel = new EmoteWheel(touch.active)
+const emoteWheel = new EmoteWheel(touch.active, color)
 emoteWheel.onPick = (id) => emotes.play(id)
 // remotes.onEmote is wired further down, where the trebuchet exists: someone
 // else's pose flipping to 'slung' is the only signal that it just fired.
@@ -371,38 +372,49 @@ function equipRide(next: Ride): void {
 // Item wheels: hold E and sweep for what's in your hand, hold Q for how you
 // get around. Tap instead to pin the wheel open and click. The single-key
 // toggles below still work for muscle memory.
-const handWheel = new ItemWheel(
-  'KeyE',
-  'hand',
-  [
-    { id: 'none', icon: '✋', label: 'empty' },
-    { id: 'gun', icon: '🚀', label: 'G bazooka' },
-    { id: 'sniper', icon: '🎯', label: 'N sniper' },
-    { id: 'sword', icon: '🗡️', label: 'H katana' },
-    { id: 'shovel', icon: '⛏️', label: 'F shovel' },
-    { id: 'bow', icon: '🏹', label: 'B bow' },
-    { id: 'builder', icon: '🧱', label: 'T builder' },
-    { id: 'firework', icon: '🎆', label: 'K firework' },
-    { id: 'm2', icon: '🔫', label: 'O fifty cal' },
-  ],
-  () => weapon,
-  (id) => equipWeapon(id as Weapon),
-)
-const rideWheel = new ItemWheel(
-  'KeyQ',
-  'ride',
-  [
-    { id: 'none', icon: '🚶', label: 'on foot' },
-    { id: 'wheelchair', icon: '🦽', label: 'R wheelchair' },
-    { id: 'ramsey', icon: '🧍', label: 'Y ramsey' },
-    { id: 'plane', icon: '✈️', label: 'U plane' },
+//
+// This array is the hand hotbar as well as the wheel: its order IS the 1-9
+// mapping (see the keydown handler), so the number key, the wedge position and
+// the badge on the wedge can never drift apart.
+const HAND_ITEMS: { id: Weapon; label: string; letter?: string }[] = [
+  { id: 'none', label: 'empty' },
+  { id: 'gun', label: 'bazooka', letter: 'G' },
+  { id: 'sniper', label: 'sniper', letter: 'N' },
+  { id: 'sword', label: 'katana', letter: 'H' },
+  { id: 'shovel', label: 'shovel', letter: 'F' },
+  { id: 'bow', label: 'bow', letter: 'B' },
+  { id: 'builder', label: 'builder', letter: 'T' },
+  { id: 'firework', label: 'firework', letter: 'K' },
+  { id: 'm2', label: 'fifty cal', letter: 'O' },
+]
+const handWheel = new ItemWheel({
+  key: 'KeyE',
+  title: 'hand',
+  digits: true,
+  items: HAND_ITEMS.map((item, i) => ({
+    id: item.id,
+    label: item.label,
+    key: item.letter ? `${i + 1}·${item.letter}` : `${i + 1}`,
+    preview: () => handPreview(item.id, color),
+  })),
+  getCurrent: () => weapon,
+  onPick: (id) => equipWeapon(id as Weapon),
+})
+const rideWheel = new ItemWheel({
+  key: 'KeyQ',
+  title: 'ride',
+  items: [
+    { id: 'none', label: 'on foot' },
+    { id: 'wheelchair', label: 'wheelchair', key: 'R' },
+    { id: 'ramsey', label: 'ramsey', key: 'Y' },
+    { id: 'plane', label: 'plane', key: 'U' },
     // No hotkey of its own: every letter on the keyboard is spoken for, and
     // the wheel is a perfectly good front door.
-    { id: 'xwing', icon: '🛩️', label: 'x-wing' },
-  ],
-  () => ride,
-  (id) => equipRide(id as Ride),
-)
+    { id: 'xwing', label: 'x-wing' },
+  ].map((item) => ({ ...item, preview: () => ridePreview(item.id, color) })),
+  getCurrent: () => ride,
+  onPick: (id) => equipRide(id as Ride),
+})
 player.onSplash = (x, z) => effects.spawnSplash(x, z)
 remotes.onSplash = (x, z) => {
   effects.spawnSplash(x, z)
@@ -1358,10 +1370,19 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') equipWeapon(weapon === 'shovel' ? 'none' : 'shovel')
   if (e.code === 'KeyB') equipWeapon(weapon === 'bow' ? 'none' : 'bow')
   if (e.code === 'KeyT') equipWeapon(weapon === 'builder' ? 'none' : 'builder')
-  if (weapon === 'builder' && /^Digit[1-4]$/.test(e.code)) {
-    material = Number(e.code.slice(5)) - 1
-    buildHud.setMaterial(material)
-    saveLoadout()
+  // Numbers are the hotbar: 1-9 equip the hand wheel's wedges in order. The
+  // builder keeps 1-4 for its materials while it's out — that's the one place
+  // a digit means something else, and the chips on screen say so.
+  const digit = /^Digit([1-9])$/.exec(e.code)
+  if (digit) {
+    const slot = Number(digit[1])
+    if (weapon === 'builder' && slot <= MATERIALS.length) {
+      material = slot - 1
+      buildHud.setMaterial(material)
+      saveLoadout()
+    } else if (slot <= HAND_ITEMS.length) {
+      equipWeapon(HAND_ITEMS[slot - 1].id)
+    }
   }
   if (e.code === 'KeyK') equipWeapon(weapon === 'firework' ? 'none' : 'firework')
   if (e.code === 'KeyO') equipWeapon(weapon === 'm2' ? 'none' : 'm2')

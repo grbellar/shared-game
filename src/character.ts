@@ -32,6 +32,13 @@ export function disposeSubtree(obj: THREE.Object3D): void {
   })
 }
 
+// Drop a character out of the registry but keep it alive: the wheel previews
+// (preview.ts) build real characters that must not be restyled by cheats or
+// counted as players in the room.
+export function untrackCharacter(group: THREE.Group): void {
+  registry.delete(group)
+}
+
 // Drop a character from the registry when it leaves the scene, and free what
 // it holds on the GPU — the nametag sprite's canvas texture rides along in
 // the traverse, and the webcam face texture hides in userData when the
