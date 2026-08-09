@@ -19,7 +19,7 @@ import { heightAt } from './world'
 export const BLOCK = 1.5 // under the ~2.0 jump apex, so one block is climbable
 // |gx|,|gz| cap. Wide enough for the island AND the shadow realm out at
 // x ≈ 1800. Keep in sync with server/room.ts.
-export const GRID_XZ_MAX = 1400
+export const GRID_XZ_MAX = 2700
 export const GY_MIN = -8
 export const GY_MAX = 40
 // One shared step threshold: floors up to STEP above the feet auto-step you

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { heightAt, ISLANDS, landingSpotOn, nearestIsland } from './world'
 import { REALM_X, REALM_Z, inRealm } from './realm'
+import { WICHITA_X, WICHITA_Z, inWichita } from './wichita'
 import { WATER_LEVEL, type Player } from './player'
 import { ROCKET_ASCENT_S, ROCKET_DESCENT_S, ROCKET_FLIGHT_S } from './emotes'
 import type { Effects } from './effects'
@@ -41,12 +42,15 @@ export const DESTINATIONS: Destination[] = [
   ...ISLANDS.map((isl, i) => ({
     name: isl.name,
     icon: '🚀',
-    // inRealm first: the realm is nearer to no island, but nearestIsland
-    // still has to answer something, and it would claim you're on the rock.
-    here: (x: number, z: number) => !inRealm(x, z) && nearestIsland(x, z) === i,
+    // Regions first: neither the realm nor Wichita is near any island, but
+    // nearestIsland still has to answer something, and it would claim you're
+    // on home while you're standing in the middle of Douglas Ave.
+    here: (x: number, z: number) =>
+      !inRealm(x, z) && !inWichita(x, z) && nearestIsland(x, z) === i,
     spot: () => landingSpotOn(i),
   })),
   { name: 'the castle', icon: '🏰', here: inRealm, spot: realmPad },
+  { name: 'wichita', icon: '🌾', here: inWichita, spot: wichitaPad },
 ]
 
 // Down on the apron: clear of the castle curtain (33 units from centre) and
@@ -56,6 +60,16 @@ function realmPad(): { x: number; z: number } {
   const a = Math.random() * Math.PI * 2
   const r = 46 + Math.random() * 30
   return { x: REALM_X + Math.cos(a) * r, z: REALM_Z + Math.sin(a) * r }
+}
+
+// Somewhere on Douglas Ave near Market (the city's local origin). Scatter
+// along the street, not across it — the buildings are solid-looking but not
+// solid, and arriving inside one is a bad first impression.
+function wichitaPad(): { x: number; z: number } {
+  return {
+    x: WICHITA_X + (Math.random() - 0.5) * 60,
+    z: WICHITA_Z + (Math.random() - 0.5) * 6,
+  }
 }
 
 export interface RocketDest {

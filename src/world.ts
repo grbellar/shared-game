@@ -69,9 +69,10 @@ let revision = 0
 const props: Prop[] = []
 const terrainGeos: THREE.BufferGeometry[] = []
 let worldScene: THREE.Scene | null = null
-// Somewhere else on the map another landmass owns the heightfield (the
-// shadow realm, way out past the fog). It returns null everywhere it isn't.
-let region: ((x: number, z: number) => number | null) | null = null
+// Somewhere else on the map other landmasses own the heightfield (the shadow
+// realm, downtown Wichita — both way out past the fog). Each returns null
+// everywhere it isn't; regions never overlap, so order doesn't matter.
+const regions: ((x: number, z: number) => number | null)[] = []
 
 // A landmass beyond the island: its own analytic height, and a mesh that
 // craters carve the same way they carve the island.
@@ -79,7 +80,7 @@ export function addRegion(
   heightFn: (x: number, z: number) => number | null,
   geo: THREE.BufferGeometry,
 ): void {
-  region = heightFn
+  regions.push(heightFn)
   terrainGeos.push(geo)
 }
 
@@ -96,8 +97,10 @@ export function addRegion(
 // realm) owns its patch of the map outright and short-circuits everything
 // else. Otherwise the tallest ISLAND wins.
 export function baseHeightAt(x: number, z: number): number {
-  const other = region?.(x, z)
-  if (other !== null && other !== undefined) return other
+  for (const region of regions) {
+    const other = region(x, z)
+    if (other !== null) return other
+  }
   const noise =
     Math.sin(x * 0.05) * Math.cos(z * 0.05) * 3 +
     Math.sin(x * 0.021 + 1.7) * Math.cos(z * 0.017 - 0.4) * 6 +

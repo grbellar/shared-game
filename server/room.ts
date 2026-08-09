@@ -19,15 +19,16 @@ interface Block {
 
 const BLOCK_HP = [2, 4, 6, 8] // keep in sync with MATERIALS in src/blocks.ts
 const BLOCK_CAP = 1500
-const GRID_XZ_MAX = 1400 // |gx|,|gz| cap — keep in sync with src/blocks.ts
+const GRID_XZ_MAX = 2700 // |gx|,|gz| cap — keep in sync with src/blocks.ts
 // Damage to blocks this room never stored: the castle in the shadow realm,
 // which every client generates for itself. Roughly one entry per castle block
 // anyone has touched, so the cap is sized to let the whole thing come down.
 const WORLD_DMG_CAP = 5000
-// Craters and world damage reach out to the realm — and to the far rock at
-// x=280 (src/world.ts). Anything beyond this gets clamped somewhere nobody
-// asked for, which forks everyone's terrain.
-const WORLD_XZ_MAX = 2000
+// Craters and world damage reach out to the realm (x≈1800), the far rock at
+// x=280 (src/world.ts) — and downtown Wichita, whose west bank runs out past
+// x=-3900 (src/wichita.ts). Anything beyond this gets clamped somewhere
+// nobody asked for, which forks everyone's terrain.
+const WORLD_XZ_MAX = 4100
 // Skeleton roster cap: 5 packed numbers each (see src/skeletons.ts), with room
 // to grow the garrison without touching the server.
 const SKEL_MAX_FIELDS = 64 * 5

@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { addRegion } from './world'
 import { BUILDINGS, ROADS, WATER } from './wichita-data'
 
 // Downtown Wichita, Kansas — for real. Baked from OpenStreetMap by
@@ -11,16 +12,9 @@ import { BUILDINGS, ROADS, WATER } from './wichita-data'
 // island from ever seeing each other. Everything world-space — blocks,
 // craters, rockets, chat, remotes — works here for free.
 //
-// NOT WIRED UP YET. Integration needs (deliberately left for later, some of
-// these files are being worked in):
-//   - world.ts: addRegion currently holds ONE region fn (the realm's);
-//     chain/array it, then register wichitaHeightAt + the terrain geo here.
-//   - main.ts: call createWichita(scene) after createRealm.
-//   - rocket.ts: a DESTINATIONS entry (use WICHITA_X/WICHITA_Z, pad at
-//     Douglas & Market = local 0,0) — that alone puts it on the Tab map.
-//   - blocks.ts GRID_XZ_MAX and server/room.ts GRID_XZ_MAX/WORLD_XZ_MAX are
-//     sized for x±2000ish; the city spans x -3900..-1200, so both need a
-//     bump (~4000 world, ~2700 grid cells) or blocks/craters get clamped.
+// Buildings are scenery, not walls, in this first cut: you can walk through
+// them (and build/blast your own real ones anywhere — the block grid and
+// craters both reach out here). Proper collision is a follow-up.
 
 export const WICHITA_X = -2600
 export const WICHITA_Z = 0
@@ -302,11 +296,10 @@ export function buildWichitaTerrain(): THREE.Mesh {
   return mesh
 }
 
-// Builds the whole city into the scene and returns the terrain mesh so the
-// caller can register it (heightfield + crater carving) with world.ts.
-export function createWichita(scene: THREE.Scene): THREE.Mesh {
+export function createWichita(scene: THREE.Scene): void {
   const terrain = buildWichitaTerrain()
   scene.add(terrain)
+  addRegion(wichitaHeightAt, terrain.geometry)
   scene.add(buildBuildings())
   scene.add(buildRoads())
 
@@ -321,6 +314,4 @@ export function createWichita(scene: THREE.Scene): THREE.Mesh {
   water.position.set(WICHITA_X + (X0 + X1) / 2, 0, WICHITA_Z + (Z0 + Z1) / 2)
   water.name = 'wichita-water'
   scene.add(water)
-
-  return terrain
 }
