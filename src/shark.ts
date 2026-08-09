@@ -62,6 +62,7 @@ const LAND_RANGE = 58 // it'll chase anyone on the island proper
 const LAND_AGGRO_R = 22 // beach raid only starts when someone approaches it
 const LAND_LOSE_R = 36
 const STALE_HOST = 2 // seconds of silence before we assume the host can't sim
+const HOST_GRACE = 3 // a fresh join adopts the incumbent's sim before hosting
 const BITE_DAMAGE = 16
 const CHOMP_DAMAGE = 22 // the initial grab
 const DRAG_DPS = 9
@@ -269,8 +270,18 @@ export class Shark {
   // Alone or offline there is nobody else, so we host our own shark.
   private get isHost(): boolean {
     const low = this.hostId
-    return low === null || low === this.net.id
+    if (low !== null && low !== this.net.id) return false
+    // A fresh join defers hosting even with the winning id: it holds only
+    // constructor defaults, and needs a few seconds of the incumbent's
+    // stream (follow() adopts it) before taking over — otherwise every
+    // join can teleport the shark back to spawn at full health.
+    if (this.uptime < HOST_GRACE) {
+      for (const _ of this.remotes.targets()) return false
+    }
+    return true
   }
+
+  private uptime = 0
 
   // The id the local player answers to. Offline there is no id, so the shark
   // still has something to latch onto.
@@ -564,6 +575,7 @@ export class Shark {
   // --- per-frame --------------------------------------------------------
 
   update(dt: number, player: Player): void {
+    this.uptime += dt
     this.sinceNet += dt
     // If the elected host isn't actually streaming — most likely it's a tab
     // running a build from before the shark existed, which happens every time

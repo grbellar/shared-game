@@ -68,6 +68,14 @@ function clampLook(v: unknown, limit: number): number {
   return Math.max(-limit, Math.min(limit, n))
 }
 
+// A finite number or 0. Infinity survives `Number(v) || 0` and then
+// JSON.stringify turns it into null in every later welcome — so anything
+// stored and replayed must come through here.
+function finiteNum(v: unknown): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
 // Real seconds per full in-game day. Keep in sync with src/daynight.ts.
 const DAY_LENGTH_S = 600
 
@@ -152,13 +160,16 @@ export class GameRoom extends DurableObject<Env> {
     } catch {
       return
     }
+    // JSON.parse('null') succeeds — and msg.t on null would throw, which
+    // resets the whole Durable Object and disconnects the room.
+    if (msg === null || typeof msg !== 'object') return
     if (msg.t === 'state') {
       const p: PlayerState = {
         id: att.id,
-        x: Number(msg.x) || 0,
-        y: Number(msg.y) || 0,
-        z: Number(msg.z) || 0,
-        ry: Number(msg.ry) || 0,
+        x: finiteNum(msg.x),
+        y: finiteNum(msg.y),
+        z: finiteNum(msg.z),
+        ry: finiteNum(msg.ry),
         // Clamped to the flight model's own limits in src/xwing.ts, so a
         // bad number can't hand anyone an inside-out character.
         rx: clampLook(msg.rx, 1.6),
@@ -510,12 +521,13 @@ export class GameRoom extends DurableObject<Env> {
       // 'me' means the sender; store the real id so a joiner can resolve it.
       const raw = String(msg.by ?? '').slice(0, 16)
       const by = raw === 'me' ? att.id : raw
-      this.meck.set(i, {
-        x: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x)),
-        z: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z)),
-        by,
-      })
-      this.broadcast(JSON.stringify({ t: 'meck', id: att.id, i, x, z, by }), ws)
+      // Broadcast the same clamped values we store — relaying the raw ones
+      // leaves live clients and late joiners disagreeing about where a
+      // Meckie sits, with nothing to ever reconcile them.
+      const cx = Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x))
+      const cz = Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z))
+      this.meck.set(i, { x: cx, z: cz, by })
+      this.broadcast(JSON.stringify({ t: 'meck', id: att.id, i, x: cx, z: cz, by }), ws)
     } else if (msg.t === 'land') {
       // Rocket travel touching down. Relayed like `fire`: every client plays
       // the impact, and each one shoves only itself. Nothing stored — the

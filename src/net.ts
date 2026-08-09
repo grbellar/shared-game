@@ -167,11 +167,18 @@ export class Net {
   onSkeletons: (packed: number[]) => void = () => {}
   onSkeletonHit: (index: number, dmg: number) => void = () => {}
   private ws: WebSocket | null = null
+  private attempts = 0
 
   connect(): void {
+    // Defensive: a stray second connect() must not leave two live sockets
+    // each rescheduling their own reconnects.
+    if (this.ws && this.ws.readyState <= WebSocket.OPEN) this.ws.close()
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${proto}://${location.host}/ws`)
     this.ws = ws
+    ws.onopen = () => {
+      this.attempts = 0
+    }
     ws.onmessage = (event) => {
       let msg: ServerMsg
       try {
@@ -280,8 +287,12 @@ export class Net {
       }
     }
     ws.onclose = () => {
+      if (this.ws !== ws) return // superseded by a newer socket
       this.id = null
-      setTimeout(() => this.connect(), 1500)
+      // Capped exponential backoff with jitter, so a dead server (or a room
+      // reset disconnecting everyone at once) isn't hammered in lockstep.
+      const delay = Math.min(15000, 1500 * 2 ** this.attempts++) * (0.5 + Math.random())
+      setTimeout(() => this.connect(), delay)
     }
   }
 

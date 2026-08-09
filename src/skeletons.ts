@@ -39,6 +39,7 @@ const GRAVITY = 26
 const STRIKE_DAMAGE = 11
 const RESPAWN_TIME = 25
 const STALE_HOST = 2
+const HOST_GRACE = 3 // a fresh join adopts the incumbent's sim before hosting
 const SEND_INTERVAL = 0.1
 const BONE = 0xd9d3bb
 
@@ -153,7 +154,11 @@ export const SKEL_TARGET_PREFIX = 'skel:'
 
 export class Skeletons {
   private list: Skel[] = []
-  private sinceNet = 99
+  // Starts fresh, not stale: at 99 every joiner spent its first frames in
+  // "the host must be gone" mode — and with the send un-gated below, one
+  // broadcast of its default all-alive roster reset the garrison room-wide.
+  private sinceNet = 0
+  private uptime = 0
   private sendT = 0
   private tmp = new THREE.Vector3()
 
@@ -216,7 +221,16 @@ export class Skeletons {
   // handshake and the next-lowest takes over the moment the host leaves.
   private get isHost(): boolean {
     let low = this.net.id
-    for (const { id } of this.remotes.targets()) if (low === null || id < low) low = id
+    let others = false
+    for (const { id } of this.remotes.targets()) {
+      others = true
+      if (low === null || id < low) low = id
+    }
+    // A fresh join defers hosting even with the winning id: it holds only
+    // constructor defaults, and needs a few seconds of the incumbent's
+    // stream before taking over — otherwise every join can resurrect the
+    // whole garrison at its posts.
+    if (others && this.uptime < HOST_GRACE) return false
     return low === null || low === this.net.id
   }
 
@@ -286,6 +300,7 @@ export class Skeletons {
   // --- simulation --------------------------------------------------------
 
   update(dt: number, player: Player): void {
+    this.uptime += dt
     this.sinceNet += dt
     const host = this.isHost
     // If the elected host isn't actually streaming — most likely a background
@@ -314,7 +329,11 @@ export class Skeletons {
       this.render(dt, s)
     }
 
-    if (simulate && this.net.connected) {
+    // Only the elected host broadcasts — the stale fallback sims privately,
+    // same rule as the shark and the mobs. Broadcasting from the fallback
+    // meant every backgrounded host turned the rest of the room into
+    // competing hosts all streaming at once.
+    if (host && this.net.connected) {
       this.sendT -= dt
       if (this.sendT <= 0) {
         this.sendT = SEND_INTERVAL

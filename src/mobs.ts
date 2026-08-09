@@ -32,6 +32,7 @@ export interface MobNetState {
 
 const SEND_INTERVAL = 0.1
 const STALE_HOST = 2 // seconds of silence before we sim privately (shark rule)
+const HOST_GRACE = 3 // a fresh join adopts the incumbent's sim before hosting
 const LEASH = 62 // island only — nobody follows you into the sea or the fog
 
 interface MobDef {
@@ -231,6 +232,7 @@ export class Mobs {
   private mobs: Mob[] = []
   private sinceNet = 0
   private sendT = 0
+  private uptime = 0
 
   constructor(
     scene: THREE.Scene,
@@ -287,7 +289,16 @@ export class Mobs {
   // without a handshake, next-lowest takes over the moment the host leaves.
   private get isHost(): boolean {
     let low = this.net.id
-    for (const { id } of this.remotes.targets()) if (low === null || id < low) low = id
+    let others = false
+    for (const { id } of this.remotes.targets()) {
+      others = true
+      if (low === null || id < low) low = id
+    }
+    // A fresh join defers hosting even with the winning id: it holds only
+    // constructor defaults, and needs a few seconds of the incumbent's
+    // stream before taking over — otherwise every join can snap the mobs
+    // back to their anchors at full health.
+    if (others && this.uptime < HOST_GRACE) return false
     return low === null || low === this.net.id
   }
 
@@ -474,6 +485,7 @@ export class Mobs {
 
   update(dt: number, player: Player): void {
     this.playerPos = player.group.position
+    this.uptime += dt
     this.sinceNet += dt
     // Same stale-host fallback as the shark: if the elected host runs a build
     // without mobs, sim privately (no broadcast) instead of showing statues.

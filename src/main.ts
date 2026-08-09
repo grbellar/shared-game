@@ -1506,6 +1506,18 @@ function crossTo(gate: Gate): void {
 const clock = new THREE.Clock()
 let remoteTrailT = 0
 renderer.setAnimationLoop(() => {
+  // One bad frame must not end the session: three.js re-arms the next
+  // requestAnimationFrame only after this callback returns, so an uncaught
+  // throw here would stop rendering and simulation forever — while the
+  // state interval kept streaming a frozen player to the room.
+  try {
+    frame()
+  } catch (e) {
+    console.error('frame skipped:', e)
+  }
+})
+
+function frame(): void {
   const dt = Math.min(clock.getDelta(), 0.05)
 
   gameCamera.addYaw(touch.consumeYaw())
@@ -1729,4 +1741,4 @@ renderer.setAnimationLoop(() => {
   )
 
   renderer.render(scene, camera)
-})
+}
