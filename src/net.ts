@@ -23,7 +23,7 @@ export interface PlayerState {
   name: string
   pose: Pose
   weapon: string // 'none' | 'gun' | 'sniper' | 'sword' | 'shovel' | 'firework'
-  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing'
+  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'nessie'
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
   emote: string // 'none' or an id from src/emotes.ts
@@ -70,6 +70,7 @@ type ServerMsg =
       meck?: [number, number, number, string][]
       scores?: Score[]
       found?: number[]
+      treb?: boolean
     }
   | { t: 'clock'; hours: number; running: boolean }
   | { t: 'state'; p: PlayerState }
@@ -113,6 +114,9 @@ export class Net {
     meck: [number, number, number, string][],
     scores: Score[],
     found: number[],
+    // Whether the room remembers the trebuchet destroyed; a reconnect into a
+    // fresh room needs the false to rebuild it.
+    treb: boolean,
   ) => void = () => {}
   onState: (p: PlayerState) => void = () => {}
   onLeave: (id: string) => void = () => {}
@@ -197,6 +201,7 @@ export class Net {
           msg.meck ?? [],
           msg.scores ?? [],
           msg.found ?? [],
+          msg.treb === true,
         )
         if (msg.clock) this.onClock(msg.clock.hours, msg.clock.running)
       } else if (msg.t === 'clock') {

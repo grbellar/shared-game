@@ -44,6 +44,8 @@ export class Remotes {
   onSplash: (x: number, z: number) => void = () => {}
   // Fires when someone starts an emote, so main.ts can play its sound.
   onEmote: (id: string, emote: string) => void = () => {}
+  // Fires when someone's ride changes, so main.ts can announce Nessie's rider.
+  onRide: (id: string, ride: string, name: string) => void = () => {}
   private players = new Map<string, Remote>()
   // Latest webcam frame per id, kept separately because a `face` message can
   // land before that player's first `state` creates their character.
@@ -115,12 +117,17 @@ export class Remotes {
       setWeapon(remote.group, weapon)
     }
     const ride =
-      p.ride === 'wheelchair' || p.ride === 'ramsey' || p.ride === 'plane' || p.ride === 'xwing'
+      p.ride === 'wheelchair' ||
+      p.ride === 'ramsey' ||
+      p.ride === 'plane' ||
+      p.ride === 'xwing' ||
+      p.ride === 'nessie'
         ? p.ride
         : 'none'
     if (remote.ride !== ride) {
       remote.ride = ride
       setRide(remote.group, ride)
+      this.onRide(p.id, ride, p.name)
     }
     const hat = typeof p.hat === 'string' ? p.hat : 'none'
     if (remote.hat !== hat) {
@@ -186,6 +193,15 @@ export class Remotes {
 
   nameOf(id: string): string {
     return this.players.get(id)?.name ?? '???'
+  }
+
+  // Everyone currently riding Nessie.
+  nessieRiders(): { id: string; group: THREE.Group }[] {
+    const out: { id: string; group: THREE.Group }[] = []
+    for (const [id, r] of this.players) {
+      if (r.ride === 'nessie') out.push({ id, group: r.group })
+    }
+    return out
   }
 
   // Who is wearing what, for the killboard badges.

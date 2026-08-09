@@ -79,7 +79,9 @@ build) is the only gate.
   - `trebuchet.ts` — the siege engine on the shelf at (-15, 45). Walk into the
     sling and it latches you in; A/D swings the frame, space fires, C climbs
     out. It shares rocket travel's touchdown (`land`) and adds **no message of
-    its own** — see below.
+    its own** — see below. A ridden Nessie can eat it: that one event rides
+    the `egg` channel (kind `treb`), the room remembers it, and it stays gone
+    until the room empties.
   - `xwing.ts` — the X-wing: the model, and the arcade flight model that flies
     it. `lasers.ts` is its cannons. See "Flying" below. (The plane in
     `character.ts` is a separate, simpler ride — it climbs and dives but
@@ -87,6 +89,21 @@ build) is the only gate.
   - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
     island out past the fog. Both ride the wall clock rather than a synced
     tick; a second of drift between clients is invisible on wildlife.
+    Nessie is also a secret ride: jump onto her back and `ride: 'nessie'`
+    goes out in your ordinary state stream — never on the ride wheel, never
+    saved to the profile. While anyone streams it the ambient copy hides
+    (one Nessie; lowest id keeps her in a mount race), her trailing humps
+    follow each rider's path per client (`nessie.ts`), and the rider's head
+    bores through blocks, terrain, players and NPCs using only the existing
+    messages under the usual mint-once rules. She also flies plane-style
+    (space climbs, hands-off sinks — see player.ts), body serpentining along
+    the flight path; carving pauses while airborne. Aiming the view down
+    while she runs overland (`digging` in main.ts, ridden into player.ts as
+    `crouch`) bites deeper and more often: the synced craters overlap into a
+    trench that MAX_DIG (world.ts) lets stack deep enough to swallow a
+    standing player, and her burrow floor rides the trench down with it. Dirt, wake, and the farts that
+    keep time with her body wave are all derived — riding her costs the
+    network nothing beyond the `ride` field.
   - `treasure.ts` — buried caches and the shovel's detector. Placed by their
     own seed, so digging can never shift where the trees are.
   - `cheats.ts` — chat cheat codes. They ride the existing chat relay, so
@@ -175,8 +192,10 @@ JSON over one websocket (`/ws`). Message types live in `src/net.ts` and
 - client→server `egg`: one-off easter-egg events, `{k, n?}`, relayed with the
   sender's id and name. Kinds: `dig` (treasure cache `n` claimed), `duck`
   (the duck was murdered), `sun` (someone shot the sun), `nessie` (Nessie was
-  hit). Only `dig` is remembered — the room stores claimed cache indices and
-  replays them in `welcome`, so nobody digs up a chest that's already gone.
+  hit), `treb` (a ridden Nessie ate the trebuchet). Only `dig` and `treb` are
+  remembered — the room stores claimed cache indices plus the trebuchet flag
+  and replays them in `welcome` (`found` / `treb`), so nobody digs up a chest
+  that's already gone or finds a machine that's already been eaten.
   Everything else is fire-and-forget. Add new eggs as new `k` values rather
   than new message types.
 - client→server `shark`: the shark's `{x, z, ry, hp, st, grab}`, ~10x/sec.

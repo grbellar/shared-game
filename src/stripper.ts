@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { type Bubbles } from './bubbles'
 import { animateCharacter, createCharacter, makeNameTag, startJabber, type Rig } from './character'
 import { heightAt } from './world'
+import type { Effects } from './effects'
 
 // Destiny is intentionally local-only. She is a harmless cosmetic
 // NPC, and each client lets her trail whichever player is nearest on screen.
@@ -12,6 +13,7 @@ const STOP_DISTANCE = 3.2
 const CHAT_DISTANCE = 5.2
 const CHAT_COOLDOWN = 12
 const RETARGET_TIME = 0.75
+const RESPAWN_S = 60
 
 export class Stripper {
   readonly group: THREE.Group
@@ -20,6 +22,7 @@ export class Stripper {
   private chatIn = 3
   private target: THREE.Vector3 | null = null
   private delta = new THREE.Vector3()
+  private deadFor = 0
 
   constructor(
     scene: THREE.Scene,
@@ -30,7 +33,27 @@ export class Stripper {
     scene.add(this.group)
   }
 
+  get alive(): boolean {
+    return this.deadFor <= 0
+  }
+
+  kill(effects: Effects): void {
+    if (this.deadFor > 0) return
+    this.deadFor = RESPAWN_S
+    this.group.visible = false
+    const at = this.group.position.clone().add(new THREE.Vector3(0, 1, 0))
+    effects.spawnDebris(at, 0xff218c, 12, 6)
+    effects.spawnDebris(at, 0xffe36e, 6, 5)
+  }
+
   update(dt: number, people: THREE.Vector3[]): void {
+    if (this.deadFor > 0) {
+      this.deadFor -= dt
+      if (this.deadFor > 0) return
+      this.group.visible = true
+      this.group.position.set(8, heightAt(8, 6), 6)
+      this.chatIn = 3
+    }
     this.retargetIn -= dt
     if (this.retargetIn <= 0) {
       this.retargetIn = RETARGET_TIME

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { applyEmote, clearEmotePose } from './emotes'
 import { buildXWing, poseXWing } from './xwing'
+import { NESSIE_BELLY, NESSIE_HIDE } from './critters'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
 
@@ -170,7 +171,11 @@ export function animateCharacter(
   }
   const ride = group.userData.ride as string | undefined
   const riding =
-    ride === 'wheelchair' || ride === 'ramsey' || ride === 'plane' || ride === 'xwing'
+    ride === 'wheelchair' ||
+    ride === 'ramsey' ||
+    ride === 'plane' ||
+    ride === 'xwing' ||
+    ride === 'nessie'
   const k = Math.min(1, 10 * dt)
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
   anim.swim += ((pose === 'swim' && !riding ? 1 : 0) - anim.swim) * k
@@ -240,6 +245,23 @@ export function animateCharacter(
       limbs.frontR.rotation.x = bound
       limbs.hindL.rotation.x = -bound
       limbs.hindR.rotation.x = -bound
+    }
+  } else if (ride === 'nessie') {
+    // Straddling the brow: knees wide over her cheeks, arms out for balance.
+    rig.legL.rotation.x = -0.85
+    rig.legR.rotation.x = -0.85
+    rig.legL.rotation.z = 0.5
+    rig.legR.rotation.z = -0.5
+    rig.armL.rotation.x = -1.15
+    rig.armR.rotation.x = -1.15
+    rig.armL.rotation.z = 0.55
+    rig.armR.rotation.z = -0.55
+    // The head noses side to side with the surge; the humps behind carry the
+    // real undulation (nessie.ts).
+    const mount = group.userData.rideHead as THREE.Group | undefined
+    if (mount) {
+      mount.position.y = Math.sin(walkPhase * 0.55) * 0.14 * moving
+      mount.rotation.y = Math.sin(walkPhase * 0.3) * 0.09 * moving
     }
   } else if (ride === 'xwing') {
     // Down in the cockpit: knees up under the console, hands on the stick.
@@ -602,6 +624,7 @@ export function setRide(group: THREE.Group, ride: string): void {
   delete group.userData.rideLimbs
   delete group.userData.rideProp
   delete group.userData.rideShip
+  delete group.userData.rideHead
   if (ride === 'wheelchair') {
     const chair = buildWheelchair()
     group.add(chair)
@@ -619,8 +642,41 @@ export function setRide(group: THREE.Group, ride: string): void {
     const ship = buildXWing()
     group.add(ship)
     group.userData.rideShip = ship
+  } else if (ride === 'nessie') {
+    const head = buildNessieMount()
+    group.add(head)
+    group.userData.rideHead = head
   }
   liftNameTag(group)
+}
+
+// Nessie's head, lowered for the charge, with the rider straddling the brow.
+// Half-sunk below the rider's feet on purpose: she plows through the ground
+// like a worm through dirt. The trailing humps are NOT part of the character —
+// they follow the head's path through the world (see nessie.ts).
+function buildNessieMount(): THREE.Group {
+  const mount = new THREE.Group()
+  mount.name = 'ride'
+  const hide = NESSIE_HIDE
+  const belly = NESSIE_BELLY
+  const ink = new THREE.MeshLambertMaterial({ color: 0x111111 })
+  const head = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.3, 2.7), hide)
+  head.position.set(0, -0.35, 0.3)
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.85, 1.05), belly)
+  snout.position.set(0, -0.55, 1.85)
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.3, 0.16), ink)
+    eye.position.set(side * 0.6, -0.1, 1.35)
+    mount.add(eye)
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.65, 4), belly)
+    horn.position.set(side * 0.45, 0.45, -0.35)
+    mount.add(horn)
+  }
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 1.15, 3.8, 6), hide)
+  neck.position.set(0, -1.15, -2.4)
+  neck.rotation.x = 1.0 // +Y end tips up and forward, meeting the head's chin
+  mount.add(head, snout, neck)
+  return mount
 }
 
 // Cherry-red open-cockpit prop plane, built around the seated rider (who

@@ -15,6 +15,11 @@ class Sfx {
   private masterGain = 0.4 // sits under voice chat, which has no gain stage of ours
   private mutedFlag = false
   private squeakHigh = false
+  private fartRun = 0
+  private fartHigh = false
+  // One shared noise bed for a fart's three streams; random start offsets
+  // keep them uncorrelated.
+  private fartNoise: AudioBuffer | null = null
   private sharkNext = 0
   private sharkLow = false
 
@@ -735,6 +740,148 @@ class Sfx {
     if (vol <= 0.02) return
     this.tone('sawtooth', 95, 42, 1.1, 0.3 * vol)
     this.noise('lowpass', 500, 120, 1, 0.16 * vol)
+  }
+
+  // Nessie under way: one wet toot per body-wave (nessie.ts keeps the beat).
+  // Modelled on a reference recording (docs/farts, tuned in fart-lab): one
+  // sustained ~50Hz lip-buzz per call, roughness from noise-driven pitch and
+  // amplitude jitter, and a feedback delay echoing off the loch. The
+  // reference reads as a *melody* of blats — runs of low rumbles, runs of
+  // high toots — so register is held across calls (fartRun/fartHigh) instead
+  // of rerolled per blat, and a rare long rip carries the squeal.
+  fart(vol = 1): void {
+    if (!this.ctx || !this.out) return
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    const ctx = this.ctx
+    const t0 = ctx.currentTime
+    this.fartNoise ??= this.noiseBuffer(4, 8000)
+    const noiseSrc = (): AudioBufferSourceNode => {
+      const src = ctx.createBufferSource()
+      src.buffer = this.fartNoise
+      src.loop = true
+      return src
+    }
+
+    if (this.fartRun <= 0) {
+      this.fartHigh = !this.fartHigh
+      this.fartRun = 2 + Math.floor(Math.random() * 3)
+    }
+    this.fartRun--
+    const long = Math.random() < 0.12
+    const dur = long ? 0.95 + Math.random() * 0.2 : 0.36 + Math.random() * 0.1
+    let f = 50 + Math.random() * 8
+    if (this.fartHigh && !long) f *= 3.3
+
+    const osc = ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(f, t0)
+    osc.frequency.exponentialRampToValueAtTime(f * 0.88, t0 + dur)
+
+    // Noise-driven jitter is the roughness a clean LFO can't fake: one
+    // stream wobbles the pitch, another wobbles the gain.
+    const jitter = (rate: number, depth: number): GainNode => {
+      const src = noiseSrc()
+      const jlp = ctx.createBiquadFilter()
+      jlp.type = 'lowpass'
+      jlp.frequency.value = rate
+      const jg = ctx.createGain()
+      jg.gain.value = depth
+      src.connect(jlp)
+      jlp.connect(jg)
+      src.start(t0, Math.random() * 3)
+      src.stop(t0 + dur + 0.2)
+      return jg
+    }
+    jitter(60, 18 * (f / 50)).connect(osc.frequency)
+    const am = ctx.createGain()
+    am.gain.value = 0.725
+    jitter(70, 0.275).connect(am.gain)
+
+    const wet = noiseSrc()
+    const wetLp = ctx.createBiquadFilter()
+    wetLp.type = 'lowpass'
+    wetLp.frequency.value = 600
+    const wetGain = ctx.createGain()
+    wetGain.gain.value = 0.35
+
+    // Keep the lows (the reference is ~75% sub-250Hz); a mid peak gives it
+    // the honk instead of a bandpass gutting the fundamental.
+    const lp = ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 900
+    const formant = ctx.createBiquadFilter()
+    formant.type = 'peaking'
+    formant.frequency.value = 400
+    formant.gain.value = 8
+    formant.Q.value = 2
+
+    const env = ctx.createGain()
+    env.gain.setValueAtTime(0.0001, t0)
+    env.gain.exponentialRampToValueAtTime(1, t0 + 0.02)
+    env.gain.setValueAtTime(1, t0 + dur * 0.7)
+    env.gain.exponentialRampToValueAtTime(0.001, t0 + dur)
+
+    // The squeal, saved for long rips only — rare in the reference too.
+    if (long && Math.random() < 0.7) {
+      const st = t0 + dur * (0.35 + Math.random() * 0.25)
+      const sf = 850 + Math.random() * 400
+      const so = ctx.createOscillator()
+      so.type = 'sawtooth'
+      so.frequency.setValueAtTime(sf, st)
+      so.frequency.exponentialRampToValueAtTime(sf * 1.5, st + 0.25)
+      const sq = ctx.createBiquadFilter()
+      sq.type = 'bandpass'
+      sq.Q.value = 9
+      sq.frequency.setValueAtTime(sf, st)
+      sq.frequency.exponentialRampToValueAtTime(sf * 1.5, st + 0.25)
+      const sg = ctx.createGain()
+      sg.gain.setValueAtTime(0.0001, st)
+      sg.gain.exponentialRampToValueAtTime(0.3, st + 0.02)
+      sg.gain.exponentialRampToValueAtTime(0.001, st + 0.25)
+      so.connect(sq)
+      sq.connect(sg)
+      sg.connect(env)
+      so.start(st)
+      so.stop(st + 0.27)
+    }
+
+    const delay = ctx.createDelay(1)
+    delay.delayTime.value = 0.21
+    const feedback = ctx.createGain()
+    feedback.gain.value = 0.35
+    const echoLp = ctx.createBiquadFilter()
+    echoLp.type = 'lowpass'
+    echoLp.frequency.value = 800
+    delay.connect(echoLp)
+    echoLp.connect(feedback)
+    feedback.connect(delay)
+
+    const dry = ctx.createGain()
+    dry.gain.value = 0.6 * v
+    const echoOut = ctx.createGain()
+    echoOut.gain.value = 0.35 * v
+
+    osc.connect(am)
+    am.connect(lp)
+    wet.connect(wetLp)
+    wetLp.connect(wetGain)
+    wetGain.connect(lp)
+    lp.connect(formant)
+    formant.connect(env)
+    env.connect(dry)
+    env.connect(delay)
+    dry.connect(this.out)
+    delay.connect(echoOut)
+    echoOut.connect(this.out)
+
+    const end = t0 + dur + 1.4 // let the echo tail ring before teardown
+    osc.start(t0)
+    osc.stop(end)
+    wet.start(t0, Math.random() * 3)
+    wet.stop(t0 + dur + 0.1)
+    echoOut.gain.setValueAtTime(0.35 * v, t0 + dur)
+    echoOut.gain.exponentialRampToValueAtTime(0.001, end)
   }
 
   // The sun taking it personally.

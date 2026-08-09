@@ -20,12 +20,27 @@ const DUCK_QUACK_RANGE = 34
 
 const NESSIE_RADIUS = 118
 const NESSIE_SPEED = 0.022
-const NESSIE_HUMPS = 4
 const NESSIE_DIVE = 30
+
+// Nessie's look, shared with the ridden copy (character.ts, nessie.ts) so a
+// recolor or resize can't fork her silhouette between animal and ride.
+export const NESSIE_HIDE = new THREE.MeshLambertMaterial({ color: 0x2f5d43, flatShading: true })
+export const NESSIE_BELLY = new THREE.MeshLambertMaterial({ color: 0x8ec08a, flatShading: true })
+export const NESSIE_HUMPS = 4
+export const NESSIE_HUMP_SPACING = 3.4
+
+export function buildNessieHump(i: number): THREE.Mesh {
+  return new THREE.Mesh(
+    new THREE.SphereGeometry(1.5 - i * 0.18, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2),
+    NESSIE_HIDE,
+  )
+}
 
 function clockSeconds(): number {
   return Date.now() / 1000
 }
+
+const partWorld = new THREE.Vector3()
 
 export class Critters {
   private duck: THREE.Group
@@ -35,6 +50,7 @@ export class Critters {
   private nessie: THREE.Group
   private nessieParts: THREE.Object3D[] = []
   private nessieDive = 0
+  private nessieClaimed = false
 
   constructor(
     scene: THREE.Scene,
@@ -61,13 +77,24 @@ export class Critters {
     this.effects.spawnDebris(at, 0xf0a02a, 5, 5)
   }
 
-  // Is this blast close enough to any of Nessie's visible parts to annoy her?
+  setNessieClaimed(claimed: boolean): void {
+    this.nessieClaimed = claimed
+    this.nessie.visible = !claimed
+  }
+
+  nessieMountable(pos: THREE.Vector3, radius: number): boolean {
+    return this.nessieHitBy(pos, radius)
+  }
+
+  // Is this point close enough to any of Nessie's visible parts to touch her?
+  // Runs per frame while Space is held (the mount check), so the whole-animal
+  // early-out matters; every part sits within ~13 units of the group origin.
   nessieHitBy(center: THREE.Vector3, radius: number): boolean {
-    if (this.nessieDive > 0) return false
-    const world = new THREE.Vector3()
+    if (this.nessieDive > 0 || this.nessieClaimed) return false
+    if (this.nessie.position.distanceTo(center) > radius + 20) return false
     for (const part of this.nessieParts) {
-      part.getWorldPosition(world)
-      if (world.distanceTo(center) < radius) return true
+      part.getWorldPosition(partWorld)
+      if (partWorld.distanceTo(center) < radius) return true
     }
     return false
   }
@@ -160,8 +187,8 @@ function buildDuck(): THREE.Group {
 // Segments are collected into `parts` so update() can bob them individually.
 function buildNessie(parts: THREE.Object3D[]): THREE.Group {
   const nessie = new THREE.Group()
-  const hide = new THREE.MeshLambertMaterial({ color: 0x2f5d43, flatShading: true })
-  const belly = new THREE.MeshLambertMaterial({ color: 0x8ec08a, flatShading: true })
+  const hide = NESSIE_HIDE
+  const belly = NESSIE_BELLY
   const ink = new THREE.MeshLambertMaterial({ color: 0x111111 })
 
   const neck = new THREE.Group()
@@ -186,11 +213,8 @@ function buildNessie(parts: THREE.Object3D[]): THREE.Group {
   parts.push(neck)
 
   for (let i = 0; i < NESSIE_HUMPS; i++) {
-    const hump = new THREE.Mesh(
-      new THREE.SphereGeometry(1.5 - i * 0.18, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2),
-      hide,
-    )
-    hump.position.set(0, 0, -i * 3.4)
+    const hump = buildNessieHump(i)
+    hump.position.set(0, 0, -i * NESSIE_HUMP_SPACING)
     hump.userData.baseY = -0.5
     nessie.add(hump)
     parts.push(hump)

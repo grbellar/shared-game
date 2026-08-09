@@ -42,6 +42,12 @@ export class GameCamera {
     return this.camYaw
   }
 
+  // Boom elevation, up-positive: high means the camera is overhead looking
+  // down at the player. Nessie reads this as the urge to dig (main.ts).
+  get pitch(): number {
+    return this.camPitch
+  }
+
   // Direct yaw steering from outside the mouse path (touch drag).
   addYaw(delta: number): void {
     this.targetYaw += delta
