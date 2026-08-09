@@ -383,9 +383,16 @@ export class GameRoom extends DurableObject<Env> {
         // block itself — or a stale hit on something already dead. We can't
         // tell the two apart and don't need to: damaging a cell with nothing
         // in it is a no-op on every client, so recording it is harmless.
-        this.worldDmg.set(cell, (this.worldDmg.get(cell) ?? 0) + dmg)
-        if (this.worldDmg.size > WORLD_DMG_CAP) {
-          this.worldDmg.delete(this.worldDmg.keys().next().value!)
+        // But only remember cells where world-generated blocks can exist —
+        // the realm's footprint (x 1800±400 over BLOCK 1.5 → gx 1200±267).
+        // Anywhere else a recorded hit is pure no-op, and without this gate
+        // one client spraying bhits at empty cells fills the cap and churns
+        // real castle damage out of the map (the castle silently heals).
+        if (Math.abs(gx - 1200) <= 267 && Math.abs(gz) <= 267) {
+          this.worldDmg.set(cell, (this.worldDmg.get(cell) ?? 0) + dmg)
+          if (this.worldDmg.size > WORLD_DMG_CAP) {
+            this.worldDmg.delete(this.worldDmg.keys().next().value!)
+          }
         }
       }
       // hp is a commutative sum of relayed dmg, so clients that see hits in
