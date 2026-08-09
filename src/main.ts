@@ -16,7 +16,7 @@ import { Destruction } from './destruction'
 import { DayNight, SUN_AIM_DOT } from './daynight'
 import { Building } from './building'
 import { createRealm, inRealm } from './realm'
-import { createWichita } from './wichita'
+import { createWichita, updateWichita } from './wichita'
 import { buildCastle } from './castle'
 import { Portals, type Gate } from './portal'
 import * as blocks from './blocks'
@@ -1756,6 +1756,8 @@ function frame(): void {
     shadow ? 1 : 0,
     Math.max(rocket.fogLift, planeLift, xwing.fogLift, trebuchet.fogLift),
   )
+  // Wichita's windows come on with the same clock that just drove the sky.
+  updateWichita(daynight.now())
   minimap.update(player, remotes, settings, voice.level, skeletons)
   critters.update(dt, player.group.position)
   cheats.update()
