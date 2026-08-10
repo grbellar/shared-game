@@ -92,6 +92,21 @@ export class GameMap {
     this.me.id = 'map-me'
     this.view.append(this.me)
 
+    // Compass rose. Map-up is world -z, which is true north — the same north
+    // Wichita's street grid runs on, so the rose never needs to rotate.
+    const compass = document.createElement('div')
+    compass.id = 'map-compass'
+    for (const [dir, cls] of [['N', 'n'], ['E', 'e'], ['S', 's'], ['W', 'w']] as const) {
+      const d = document.createElement('span')
+      d.className = `map-compass-${cls}`
+      d.textContent = dir
+      compass.append(d)
+    }
+    const needle = document.createElement('div')
+    needle.id = 'map-compass-needle'
+    compass.append(needle)
+    this.view.append(compass)
+
     // One button per destination. The one you're standing on is hidden rather
     // than greyed — a trip to where you already are isn't a choice.
     this.dests = document.createElement('div')
@@ -412,6 +427,67 @@ function styleTag(): HTMLStyleElement {
     .map-pin:hover .map-pin-label {
       background: #fff;
       color: #111;
+    }
+    #map-compass {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      pointer-events: none;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 10px;
+      line-height: 1;
+    }
+    #map-compass span {
+      position: absolute;
+    }
+    .map-compass-n {
+      top: 3px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #ff6b5e;
+      font-weight: bold;
+    }
+    .map-compass-e {
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .map-compass-s {
+      bottom: 3px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .map-compass-w {
+      left: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    /* Two stacked triangles: red half pointing at N, pale half at S. */
+    #map-compass-needle {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 0;
+      height: 0;
+      transform: translateX(-50%);
+      border-left: 3px solid transparent;
+      border-right: 3px solid transparent;
+      border-bottom: 9px solid #ff6b5e;
+      margin-top: -9px;
+    }
+    #map-compass-needle::after {
+      content: '';
+      position: absolute;
+      left: -3px;
+      top: 9px;
+      border-left: 3px solid transparent;
+      border-right: 3px solid transparent;
+      border-top: 9px solid rgba(255, 255, 255, 0.6);
     }
     #map-me {
       position: absolute;
