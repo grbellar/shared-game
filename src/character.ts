@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { applyEmote, clearEmotePose } from './emotes'
 import { buildXWing, poseXWing } from './xwing'
+import { buildA10, poseA10 } from './a10'
 import { NESSIE_BELLY, NESSIE_HIDE } from './critters'
 
 export type Pose = 'stand' | 'crouch' | 'swim'
@@ -175,6 +176,7 @@ export function animateCharacter(
     ride === 'ramsey' ||
     ride === 'plane' ||
     ride === 'xwing' ||
+    ride === 'a10' ||
     ride === 'nessie'
   const k = Math.min(1, 10 * dt)
   anim.crouch += ((pose === 'crouch' && !riding ? 1 : 0) - anim.crouch) * k
@@ -284,6 +286,26 @@ export function animateCharacter(
       const heat = (group.userData.throttle as number | undefined) ?? (up ? 0.5 : 0)
       poseXWing(ship, anim.foils, anim.foils * (0.25 + 0.75 * heat))
     }
+  } else if (ride === 'a10') {
+    // Same cockpit slouch as the X-wing: knees up, hands on the stick.
+    rig.legL.rotation.x = -1.5
+    rig.legR.rotation.x = -1.5
+    rig.legL.rotation.z = 0.12
+    rig.legR.rotation.z = -0.12
+    rig.armL.rotation.x = -1.35
+    rig.armR.rotation.x = -1.35
+    rig.armL.rotation.z = 0.2
+    rig.armR.rotation.z = -0.2
+    // No S-foils to fan — the Hog just lights its engines. Same derived
+    // facts as the X-wing: airborne from the terrain, glow from the speed.
+    const hog = group.userData.rideShip as THREE.Group | undefined
+    if (hog) {
+      const up = (group.userData.airborne as boolean | undefined) ? 1 : 0
+      const heat = (group.userData.throttle as number | undefined) ?? (up ? 0.5 : 0)
+      poseA10(hog, up ? 0.3 + 0.7 * heat : 0.1)
+      const wheels = hog.userData.wheels as THREE.Mesh[] | undefined
+      if (wheels && !up) for (const wheel of wheels) wheel.rotation.x = walkPhase * 1.5
+    }
   } else {
     // Legs: stride on land (shorter while crouched), flutter kick in water.
     const kick = Math.sin(walkPhase * 2.6) * (0.35 + 0.25 * moving)
@@ -355,7 +377,7 @@ export function animateCharacter(
   // pitch — which is also where a flying X-wing keeps its nose attitude.
   // Hold onto it and put it back below, or a remote fighter's dive is wiped
   // every frame, one line after remotes.ts interpolated it in.
-  const flightPitch = ride === 'xwing' ? group.rotation.x : 0
+  const flightPitch = ride === 'xwing' || ride === 'a10' ? group.rotation.x : 0
   clearEmotePose(group, rig)
   const emote = group.userData.emote as string | undefined
   if (emote) {
@@ -369,7 +391,7 @@ export function animateCharacter(
     rig.head.rotation.y = look.yaw
     rig.head.position.y += 0.07 * Math.abs(look.pitch)
   }
-  if (ride === 'xwing') group.rotation.x = flightPitch
+  if (ride === 'xwing' || ride === 'a10') group.rotation.x = flightPitch
 }
 
 // Start (or clear, with 'none') an emote on a character. Synced via the
@@ -517,7 +539,40 @@ export function setWeapon(group: THREE.Group, weapon: string): void {
     armR.add(buildBuilder())
   } else if (weapon === 'firework') {
     armR.add(buildFirework())
+  } else if (weapon === 'radio') {
+    armR.add(buildRadio())
   }
+}
+
+// The forward-observer's radio: an olive brick with a whip antenna and a
+// palm mic on a curly wire, held like the katana (hanging from the fist).
+// Keying it calls Droid's A-10 in on whatever you're looking at.
+export function buildRadio(): THREE.Group {
+  const radio = new THREE.Group()
+  radio.name = 'weapon'
+  const olive = new THREE.MeshLambertMaterial({ color: 0x55603a, flatShading: true })
+  const dark = new THREE.MeshLambertMaterial({ color: 0x22252a, flatShading: true })
+  const red = new THREE.MeshLambertMaterial({ color: 0xc23b3b, flatShading: true })
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.4, 0.14), olive)
+  body.position.y = -0.75
+  const dial = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.03), dark)
+  dial.position.set(0, -0.62, 0.08)
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.03), red)
+  lamp.position.set(0.06, -0.88, 0.08)
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.85, 4), dark)
+  antenna.position.set(-0.08, -0.2, 0)
+  antenna.rotation.z = 0.12
+  const mic = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.06), dark)
+  mic.position.set(0.14, -0.98, 0.06)
+  // The curly cord, faked as three little beads sagging between box and mic.
+  for (const [bx, by] of [[0.05, -0.94], [0.1, -1.0], [0.13, -1.03]] as const) {
+    const bead = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.035), dark)
+    bead.position.set(bx, by, 0.05)
+    radio.add(bead)
+  }
+  radio.add(body, dial, lamp, antenna, mic)
+  return radio
 }
 
 // Buried-treasure loot (and the duck's revenge). Synced via the `hat` field
@@ -642,6 +697,10 @@ export function setRide(group: THREE.Group, ride: string): void {
     const ship = buildXWing()
     group.add(ship)
     group.userData.rideShip = ship
+  } else if (ride === 'a10') {
+    const hog = buildA10()
+    group.add(hog)
+    group.userData.rideShip = hog
   } else if (ride === 'nessie') {
     const head = buildNessieMount()
     group.add(head)
@@ -1200,5 +1259,6 @@ export function setName(group: THREE.Group, name: string): void {
 // from both setName and setRide, since either can happen first.
 function liftNameTag(group: THREE.Group): void {
   const tag = group.getObjectByName('nametag')
-  if (tag) tag.position.y = group.userData.ride === 'xwing' ? 3.7 : 2.8
+  const ride = group.userData.ride
+  if (tag) tag.position.y = ride === 'xwing' || ride === 'a10' ? 3.7 : 2.8
 }

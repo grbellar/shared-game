@@ -17,6 +17,7 @@ import {
   buildFirework,
   buildKatana,
   buildM2,
+  buildRadio,
   buildShovel,
   buildSniper,
   createCharacter,
@@ -147,6 +148,7 @@ const HAND_MESH: Record<string, () => THREE.Object3D> = {
   bow: buildBow,
   builder: buildBuilder,
   firework: buildFirework,
+  radio: buildRadio,
 }
 
 // What's in your hand: the weapon itself on a turntable, big enough to read.
@@ -166,8 +168,8 @@ export function ridePreview(ride: string, color: string): Preview {
   const group = doll(color)
   setRide(group, ride)
   // Airborne, so the X-wing shows its S-foils open — the only shape anyone
-  // recognises it by (see animateCharacter).
-  if (ride === 'xwing') {
+  // recognises it by (see animateCharacter) — and the Hog its engine glow.
+  if (ride === 'xwing' || ride === 'a10') {
     group.userData.airborne = true
     group.userData.throttle = 0.6
   }

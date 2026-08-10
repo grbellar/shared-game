@@ -33,7 +33,7 @@ import { Shark, SHARK_TARGET_ID } from './shark'
 import { Mobs, MOB_TARGET_PREFIX } from './mobs'
 import { Skeletons, SKEL_TARGET_PREFIX } from './skeletons'
 import { Cats } from './cats'
-import { Meckies } from './meckies'
+import { Meckies, RESIDENTS } from './meckies'
 import { Stripper } from './stripper'
 import { EmoteController } from './emotes'
 import { EmoteWheel } from './emotewheel'
@@ -44,6 +44,8 @@ import { RocketRide, DESTINATIONS, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from '
 import { Trebuchet } from './trebuchet'
 import { NessieRide } from './nessie'
 import { XWingFlight, airborneAt } from './xwing'
+import { A10_MUZZLE } from './a10'
+import { A10Strikes } from './a10strike'
 import { Lasers } from './lasers'
 import {
   setWeapon,
@@ -251,10 +253,10 @@ net.onFace = (id, dataUrl) => {
 net.connect()
 
 type Weapon =
-  | 'none' | 'gun' | 'sniper' | 'm2' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
+  | 'none' | 'gun' | 'sniper' | 'm2' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework' | 'radio'
 // 'nessie' is deliberately absent from the ride wheel: she is only ever
 // mounted by jumping onto her back out at sea (see the Nessie block below).
-type Ride = 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'nessie'
+type Ride = 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'a10' | 'nessie'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
 let ride = profile.ride as Ride
@@ -366,8 +368,9 @@ function equipWeapon(next: Weapon): void {
 function equipRide(next: Ride): void {
   // Climbing out of a ship that's still in the air is allowed — you just
   // fall. What isn't allowed is leaving the flight model running without a
-  // ship attached to it.
-  if (ride === 'xwing' && next !== 'xwing') xwing.stop(player.group)
+  // ship attached to it. The Hog shares the X-wing's flight model, so both
+  // count as "a ship".
+  if ((ride === 'xwing' || ride === 'a10') && next !== ride) xwing.stop(player.group)
   ride = next
   setRide(player.group, ride)
   player.ride = ride
@@ -375,6 +378,7 @@ function equipRide(next: Ride): void {
   sfx.equip(ride !== 'none')
   if (ride === 'ramsey') sfx.ramseyMount()
   if (ride === 'xwing') chat.addMessage('🛩️', 'space to take off · WS pitch · AD bank · click to fire')
+  if (ride === 'a10') chat.addMessage('🐗', 'space to take off · WS pitch · AD bank · hold click to BRRRT')
   if (ride === 'nessie')
     chat.addMessage('🦕', 'AD steer · W hurry · space flies · aim down to dig deep · C climb off')
   saveLoadout()
@@ -397,6 +401,8 @@ const HAND_ITEMS: { id: Weapon; label: string; letter?: string }[] = [
   { id: 'builder', label: 'builder', letter: 'T' },
   { id: 'firework', label: 'firework', letter: 'K' },
   { id: 'm2', label: 'fifty cal', letter: 'O' },
+  // Slot 10: wheel-only, like the X-wing — the digits stop at 9.
+  { id: 'radio', label: 'radio' },
 ]
 const handWheel = new ItemWheel({
   key: 'KeyE',
@@ -422,6 +428,7 @@ const rideWheel = new ItemWheel({
     // No hotkey of its own: every letter on the keyboard is spoken for, and
     // the wheel is a perfectly good front door.
     { id: 'xwing', label: 'x-wing' },
+    { id: 'a10', label: 'warthog' },
   ].map((item) => ({ ...item, preview: () => ridePreview(item.id, color) })),
   getCurrent: () => ride,
   onPick: (id) => equipRide(id as Ride),
@@ -747,7 +754,7 @@ xwing.onCrash = (pos, kind) => {
     sfx.splash()
   } else {
     effects.spawnImpact(pos)
-    effects.spawnDebris(pos, 0xd8d4c6, 16, 9)
+    effects.spawnDebris(pos, ride === 'a10' ? 0x7f8578 : 0xd8d4c6, 16, 9)
     sfx.explosion()
     health.damage(CRASH_DAMAGE)
   }
@@ -801,6 +808,74 @@ function fireCannons(ownerId: string, origin: THREE.Vector3, dir: THREE.Vector3)
       lasers.spawn(ownerId, from, dir)
     }
   }
+}
+
+// Fire missions: the radio hands a target to Droid, who flies the A-10 in on
+// it (a10strike.ts). Everyone watches the same derived run; the caller alone
+// mints what the gun breaks — the fifty's rule, at aircraft scale.
+const strikes = new A10Strikes(scene)
+const STRIKE_HIT_R = 2.6
+const STRIKE_SELF_DAMAGE = 60 // danger close cuts both ways, but full health survives it
+const STRIKE_CRATER = { r: 1.7, d: 0.55 }
+const RADIO_COOLDOWN_MS = 16000
+let lastStrikeCrater = 0
+let lastStrikeAt = -1e9
+strikes.onTracer = (from, to) => effects.spawnTracer(from, to)
+strikes.onPuff = (pos) =>
+  effects.spawnDebris(pos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xd23b2f, 2, 3)
+strikes.onBurst = (owner, impact) => {
+  // The dirt kicks up on every screen; what it broke is the caller's to say.
+  effects.spawnDebris(impact, 0x6b4526, 3, 5)
+  if (owner !== 'me') return
+  for (const { id, pos } of remotes.targets()) {
+    if (pos.distanceTo(impact) < STRIKE_HIT_R) net.sendHit(id, MAX_HP)
+  }
+  // Your own strike can shred you too — through health.damage, the same
+  // self-inflicted path as standing under your own rocket.
+  if (player.group.position.distanceTo(impact) < STRIKE_HIT_R) health.damage(STRIKE_SELF_DAMAGE)
+  shark.blast(impact)
+  mobs.blast(impact)
+  skeletons.blast(impact)
+  // A burst chews through anything built where it lands — one block per
+  // tick, so a castle wall comes apart course by course, not all at once.
+  for (const h of [0.4, 1.6, 2.8]) {
+    const block = blockAtPoint(impact.x, impact.y + h, impact.z)
+    if (block) {
+      building.hit(block.gx, block.gy, block.gz, FIFTY_BLOCK_DAMAGE)
+      break
+    }
+  }
+  // Craters at the handheld fifty's cadence, and for the same reason: one
+  // per round would melt the frame and flood the room.
+  const now = performance.now()
+  if (now - lastStrikeCrater > BULLET_CRATER_MS) {
+    lastStrikeCrater = now
+    destruction.bite(impact.x, impact.z, STRIKE_CRATER)
+  }
+}
+net.onCas = (id, x, z) => {
+  strikes.call(id, x, z)
+  const caller = remotes.list().find((f) => f.id === id)?.name ?? 'somebody'
+  chat.addMessage(RESIDENTS[0]?.name ?? 'Droid', `FIRE MISSION FOR ${caller.toUpperCase()}. DANGER CLOSE.`)
+}
+
+function callFireMission(): void {
+  const now = performance.now()
+  if (now - lastStrikeAt < RADIO_COOLDOWN_MS) {
+    hud.banner('DROID IS REARMING', 1400)
+    return
+  }
+  // The crosshair's ground point in first person; a spot well ahead of your
+  // facing in third. Droid takes it from there.
+  const aimed = fp.isActive ? fp.aimedDigPoint() : null
+  const ry = player.group.rotation.y
+  const x = aimed ? aimed.x : player.group.position.x + Math.sin(ry) * 28
+  const z = aimed ? aimed.z : player.group.position.z + Math.cos(ry) * 28
+  if (!strikes.call('me', x, z)) return // the sky is already full of Warthogs
+  lastStrikeAt = now
+  net.sendCas(x, z)
+  sfx.equip(true)
+  chat.addMessage('📻', 'fire mission called — Droid is inbound')
 }
 
 meckies.onMove = (i, x, z, by) => net.sendMeckie(i, x, z, by)
@@ -926,10 +1001,11 @@ function meleeBlockTarget(): BlockSpec | undefined {
   return undefined
 }
 
-// At the controls of an airborne fighter, which overrides whatever is in
-// your hands: the trigger is the cannons and nothing else.
+// At the controls of an airborne aircraft, which overrides whatever is in
+// your hands: the trigger is the ship's own gun and nothing else. The X-wing
+// and the Warthog share one flight model (`xwing`), so this covers both.
 function inCockpit(): boolean {
-  return ride === 'xwing' && xwing.airborne
+  return (ride === 'xwing' || ride === 'a10') && xwing.airborne
 }
 
 let lastAttack = 0
@@ -941,15 +1017,77 @@ let lastAttack = 0
 const BULLET_CRATER_MS = 500
 let lastBulletCrater = 0
 let bulletSpark = 0
-// Trigger held down. Only the M2 uses it; everything else is click-per-shot.
+// Trigger held down. The M2 and the A-10's gun use it; everything else is
+// click-per-shot.
 let firing = false
+let lastBrrrt = 0 // the burp sound spans several rounds, so it has its own gate
 const SWORD_DAMAGE = 55 // two clean swings takes a head off
 const SNIPER_DAMAGE = 80 // brutal, but it's two hits and a slow bolt either way
+
+// Everything one lethal .50 round does when it lands — shared by the
+// handheld M2 and the A-10's nose gun, so the two can never disagree about
+// what "kills anything it touches" means. Living things die outright; blocks
+// come apart whatever they're made of; dirt gets bitten at a sane cadence.
+function applyFiftyRound(hit: ReturnType<typeof hitscan>, now: number): void {
+  if (hit.id === SHARK_TARGET_ID) {
+    shark.shot(FIFTY_LETHAL)
+    sfx.hitmark()
+  } else if (hit.id?.startsWith(MOB_TARGET_PREFIX)) {
+    mobs.shot(hit.id, FIFTY_LETHAL)
+    sfx.hitmark()
+  } else if (hit.id?.startsWith(SKEL_TARGET_PREFIX)) {
+    skeletons.shot(hit.id, FIFTY_LETHAL)
+    sfx.hitmark()
+  } else if (hit.id) {
+    // A player still gets to announce their own death — attackers only ever
+    // send damage. MAX_HP from full health is one round, one kill.
+    net.sendHit(hit.id, MAX_HP)
+    sfx.hitmark()
+  } else if (hit.block) {
+    building.hit(hit.block.gx, hit.block.gy, hit.block.gz, FIFTY_BLOCK_DAMAGE)
+  } else if (hit.kind !== 'sky') {
+    if (
+      now - lastBulletCrater > BULLET_CRATER_MS &&
+      hit.point.y <= Math.max(heightAt(hit.point.x, hit.point.z), 0) + 0.3
+    ) {
+      lastBulletCrater = now
+      destruction.bite(hit.point.x, hit.point.z, FIFTY_CRATER)
+    }
+    if (++bulletSpark % 3 === 0) {
+      effects.spawnDebris(hit.point, hit.kind === 'prop' ? 0x4a7a35 : 0x6b4526, 3, 5)
+    }
+  }
+}
+
 function attack(): void {
   if (player.dead) return
   const now = performance.now()
   emotes.stop() // no waving mid-rocket
   if (inCockpit()) {
+    if (ride === 'a10') {
+      // The GAU-8: the handheld M2's lethal ray fired down the nose at the
+      // same cadence, with the mouse held down for the burp. Same tracer
+      // message, same mint-once consequences — the plane is just the mount.
+      if (now - lastAttack < FIFTY_RPM) return
+      lastAttack = now
+      if (now - lastBrrrt > 400) {
+        lastBrrrt = now
+        sfx.brrrt(0.9)
+      }
+      const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(player.group.quaternion).normalize()
+      player.group.updateMatrixWorld()
+      const origin = player.group.localToWorld(A10_MUZZLE.clone())
+      const hit = hitscan(
+        origin,
+        dir,
+        [...remotes.targets(), ...shark.targets(), ...mobs.targets(), ...skeletons.targets()],
+        { blocks: true },
+      )
+      effects.spawnTracer(origin, hit.point)
+      net.sendFifty(origin, hit.point)
+      applyFiftyRound(hit, now)
+      return
+    }
     if (now - lastAttack < 180) return
     lastAttack = now
     // Straight down the nose, from just past it — with pitch and roll on the
@@ -1139,36 +1277,10 @@ function attack(): void {
     effects.spawnMuzzleFlash(muzzle)
     effects.spawnTracer(muzzle, hit.point)
     net.sendFifty(muzzle, hit.point)
-    // It kills anything it touches. Living things die outright; blocks come
-    // apart whatever they're made of.
-    if (hit.id === SHARK_TARGET_ID) {
-      shark.shot(FIFTY_LETHAL)
-      sfx.hitmark()
-    } else if (hit.id?.startsWith(MOB_TARGET_PREFIX)) {
-      mobs.shot(hit.id, FIFTY_LETHAL)
-      sfx.hitmark()
-    } else if (hit.id?.startsWith(SKEL_TARGET_PREFIX)) {
-      skeletons.shot(hit.id, FIFTY_LETHAL)
-      sfx.hitmark()
-    } else if (hit.id) {
-      // A player still gets to announce their own death — attackers only ever
-      // send damage. MAX_HP from full health is one round, one kill.
-      net.sendHit(hit.id, MAX_HP)
-      sfx.hitmark()
-    } else if (hit.block) {
-      building.hit(hit.block.gx, hit.block.gy, hit.block.gz, FIFTY_BLOCK_DAMAGE)
-    } else if (hit.kind !== 'sky') {
-      if (
-        now - lastBulletCrater > BULLET_CRATER_MS &&
-        hit.point.y <= Math.max(heightAt(hit.point.x, hit.point.z), 0) + 0.3
-      ) {
-        lastBulletCrater = now
-        destruction.bite(hit.point.x, hit.point.z, FIFTY_CRATER)
-      }
-      if (++bulletSpark % 3 === 0) {
-        effects.spawnDebris(hit.point, hit.kind === 'prop' ? 0x4a7a35 : 0x6b4526, 3, 5)
-      }
-    }
+    applyFiftyRound(hit, now)
+  } else if (weapon === 'radio' && now - lastAttack > 500) {
+    lastAttack = now
+    callFireMission()
   } else if (weapon === 'firework' && now - lastAttack > 450) {
     lastAttack = now
     sfx.plant()
@@ -1258,8 +1370,9 @@ window.addEventListener('mousedown', (e) => {
     sfx.bowDraw()
     return
   }
-  // The M2 is belt-fed: hold the button and it keeps going.
-  if (weapon === 'm2') firing = true
+  // The M2 is belt-fed, and so is the Hog's nose: hold the button and it
+  // keeps going.
+  if (weapon === 'm2' || (ride === 'a10' && xwing.airborne)) firing = true
   attack()
 })
 window.addEventListener('mouseup', (e) => {
@@ -1449,7 +1562,13 @@ window.addEventListener('keydown', (e) => {
   // The X-wing has no letter of its own — the alphabet ran out — so it's
   // wheel-only. Space is still its throttle once you're strapped in: it
   // lights the engines from a standstill, and boosts after that.
-  if (e.code === 'Space' && ride === 'xwing' && !xwing.airborne && !player.dead && !e.repeat) {
+  if (
+    e.code === 'Space' &&
+    (ride === 'xwing' || ride === 'a10') &&
+    !xwing.airborne &&
+    !player.dead &&
+    !e.repeat
+  ) {
     xwing.takeoff(player.group)
   }
   if (e.code === 'KeyJ') rocketToNextIsland()
@@ -1627,7 +1746,8 @@ function frame(): void {
       !touch.active &&
       !rocket.active &&
       !trebuchet.busy &&
-      ride !== 'xwing',
+      ride !== 'xwing' &&
+      ride !== 'a10',
     weapon,
   )
   fp.setScoped(scope.active)
@@ -1653,7 +1773,7 @@ function frame(): void {
   // anything else this frame gets to write our position.
   if (xwing.airborne && (player.dead || player.grabbed)) xwing.stop(player.group)
   // Touch has no space bar, so the jump pad doubles as the throttle.
-  if (ride === 'xwing' && !xwing.airborne && touch.jumpHeld && !player.dead) {
+  if ((ride === 'xwing' || ride === 'a10') && !xwing.airborne && touch.jumpHeld && !player.dead) {
     xwing.takeoff(player.group)
   }
   player.piloting = xwing.airborne
@@ -1689,8 +1809,8 @@ function frame(): void {
       f: surging ? (keys.has('KeyS') ? 0.55 : 1) : stickF,
       s: stickS,
       // Space belongs to the throttle while you're strapped in — otherwise
-      // taking off would also make the parked fighter hop.
-      jump: ride === 'xwing' ? false : boost,
+      // taking off would also make the parked aircraft hop.
+      jump: ride === 'xwing' || ride === 'a10' ? false : boost,
       crouch: surging ? digging : keys.has('KeyC'),
       sprint: surging ? keys.has('KeyW') : keys.has('ShiftLeft') || keys.has('ShiftRight'),
       strafe: fp.isActive,
@@ -1721,12 +1841,14 @@ function frame(): void {
   trebuchet.update(dt, player, stickS)
   // Our own S-foils and exhaust, off the same two facts remotes.ts derives
   // them from for everyone else (see xwing.ts).
-  if (ride === 'xwing') {
+  if (ride === 'xwing' || ride === 'a10') {
     const p = player.group.position
     player.group.userData.airborne = xwing.airborne || airborneAt(p.x, p.y, p.z)
     player.group.userData.throttle = xwing.throttle
   }
-  gameCamera.pullBack(ride === 'xwing' ? (xwing.airborne ? 13 : 8) : ride === 'nessie' ? 6 : 0)
+  gameCamera.pullBack(
+    ride === 'xwing' || ride === 'a10' ? (xwing.airborne ? 13 : 8) : ride === 'nessie' ? 6 : 0,
+  )
   const gate = portals.update(dt, player.group.position)
   if (gate) crossTo(gate)
   const nowShadow = inRealm(player.group.position.x, player.group.position.z)
@@ -1799,9 +1921,11 @@ function frame(): void {
   // Bolts only need the players: everything else they can hit is resolved at
   // the impact point through the same `swing` calls a katana uses.
   lasers.update(dt, [...remotes.targets(), { id: 'me', pos: player.group.position }])
-  if (firing && (weapon !== 'm2' || player.dead || chat.isOpen || map.isOpen)) ceaseFire()
-  if (firing && weapon === 'm2') attack()
+  const beltFed = weapon === 'm2' || (ride === 'a10' && xwing.airborne)
+  if (firing && (!beltFed || player.dead || chat.isOpen || map.isOpen)) ceaseFire()
+  if (firing && beltFed) attack()
   fireworks.update(dt)
+  strikes.update(dt, player.group.position)
   remotes.update(dt)
   // `nessieRiders` is still the list from the top of the frame — nothing
   // between there and here changes anyone's ride.

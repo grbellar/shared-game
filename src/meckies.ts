@@ -52,7 +52,9 @@ const BOB = 0.16
 
 // What the face is doing. Mapped from what's happening to them rather than
 // from anything synced — an expression is cosmetic, so each client picks it.
-type Mood = 'curious' | 'excited' | 'happy' | 'thinking' | 'furious'
+// Exported for a10strike.ts, which paints Droid into a cockpit.
+export type MeckieMood = 'curious' | 'excited' | 'happy' | 'thinking' | 'furious'
+type Mood = MeckieMood
 
 interface Live {
   group: THREE.Group
@@ -299,14 +301,16 @@ export class Meckies {
   private paint(l: Live, res: Resident, mood: Mood): void {
     if (l.drawn === mood) return
     l.drawn = mood
-    drawFace(l.ctx, res.color, mood)
+    drawMeckieFace(l.ctx, res.color, mood)
     l.texture.needsUpdate = true
   }
 }
 
 // The face: base blue rotated to the resident's own colour is how identity
 // reads at a glance on the desktop, so here it's simply drawn in their colour.
-function drawFace(ctx: CanvasRenderingContext2D, color: string, mood: Mood): void {
+// Exported so a Meckie can appear places other than their plinth (the A-10's
+// canopy, for one) without a second copy of the face drifting from this one.
+export function drawMeckieFace(ctx: CanvasRenderingContext2D, color: string, mood: Mood): void {
   ctx.clearRect(0, 0, FACE_PX, FACE_PX)
   ctx.fillStyle = 'rgba(8,12,18,0.92)'
   ctx.beginPath()

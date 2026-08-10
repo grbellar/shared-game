@@ -67,7 +67,7 @@ export class Player {
   moving = false // movement input this frame? The follow cam only recenters while true.
   pose: Pose = 'stand'
   dead = false
-  ride: 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'nessie' = 'none'
+  ride: 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'a10' | 'nessie' = 'none'
   // Something has hold of you (the shark) — input is ignored and whatever
   // grabbed you owns your position until it lets go.
   grabbed = false
@@ -213,7 +213,7 @@ export class Player {
             ? RAMSEY_SPEED
             : this.ride === 'wheelchair'
               ? RIDE_SPEED
-              : this.ride === 'xwing'
+              : this.ride === 'xwing' || this.ride === 'a10'
                 ? TAXI_SPEED
                 : this.ride === 'nessie'
                   ? NESSIE_SPEED
@@ -334,7 +334,7 @@ export class Player {
         if (this.ride === 'wheelchair' || this.ride === 'plane') sfx.squeak() // taxiing on unoiled gear
         else if (this.ride === 'ramsey') sfx.gallop()
         // A parked fighter has no feet, and Nessie's footsteps are the farts.
-        else if (this.ride !== 'xwing' && this.ride !== 'nessie') sfx.step()
+        else if (this.ride !== 'xwing' && this.ride !== 'a10' && this.ride !== 'nessie') sfx.step()
       }
     }
     this.wasFloating = floating

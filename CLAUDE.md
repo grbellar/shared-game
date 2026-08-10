@@ -86,6 +86,13 @@ build) is the only gate.
     it. `lasers.ts` is its cannons. See "Flying" below. (The plane in
     `character.ts` is a separate, simpler ride — it climbs and dives but
     never banks, and it lives in `player.ts`.)
+  - `a10.ts` / `a10strike.ts` — the A-10 Warthog. As a ride (`ride: 'a10'`)
+    it shares the X-wing's flight model instance wholesale; airborne, the
+    trigger is the GAU-8 — the handheld fifty's lethal hitscan and `mg`
+    tracer fired down the nose, belt-fed on mouse hold. `a10strike.ts` is
+    Droid flying it instead: the `radio` weapon marks a target and sends
+    `cas` (see the protocol list), and every client derives the same
+    strafing run. Droid's face in the canopy comes from `meckies.ts`.
   - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
     island out past the fog. Both ride the wall clock rather than a synced
     tick; a second of drift between clients is invisible on wildlife.
@@ -241,6 +248,13 @@ split as blast knockback.
   through the ordinary `hit` / `bhit` / `crater` messages. This one exists purely so everyone draws the tracer
   landing in the same place; per-client aim drift must never mint a second,
   contradictory hit. Nothing stored — a tracer is gone in a tenth of a second.
+- client→server `cas`: a fire mission — key the radio and Droid flies the A-10
+  in on `{x, z}`. Fire-and-forget like `fw`: the run-in heading, flight path,
+  gun window and timings are all closed-form functions of the target
+  (`a10strike.ts`), so one message buys every client the same ~11s strafing
+  run. Only the CALLER resolves what the gun broke, minting it through the
+  ordinary `hit` / `bhit` / `crater` messages — tracers and dirt are cosmetic
+  everywhere else. Nothing stored; a late joiner just misses the show.
 - client→server `meck`: a Meckie was picked up or set down, `{i, x, z, by}`
   (`by` = carrier id, `''` = on the ground; send `'me'` and the room rewrites
   it to your id). Where a *carried* Meckie is takes no traffic at all — every

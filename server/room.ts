@@ -517,6 +517,22 @@ export class GameRoom extends DurableObject<Env> {
         }),
         ws,
       )
+    } else if (msg.t === 'cas') {
+      // A fire mission: Droid's A-10 strafes (x, z). Fire-and-forget like a
+      // firework — the run derives from the target and lasts seconds, and
+      // everything it breaks arrives as the caller's hit / bhit / crater.
+      const x = Number(msg.x)
+      const z = Number(msg.z)
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return
+      this.broadcast(
+        JSON.stringify({
+          t: 'cas',
+          id: att.id,
+          x: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, x)),
+          z: Math.max(-WORLD_XZ_MAX, Math.min(WORLD_XZ_MAX, z)),
+        }),
+        ws,
+      )
     } else if (msg.t === 'meck') {
       // Somebody picked a Meckie up or set them down. Last writer wins: two
       // people grabbing at once is rare and self-correcting, since the loser

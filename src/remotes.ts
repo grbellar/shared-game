@@ -121,6 +121,7 @@ export class Remotes {
       p.ride === 'ramsey' ||
       p.ride === 'plane' ||
       p.ride === 'xwing' ||
+      p.ride === 'a10' ||
       p.ride === 'nessie'
         ? p.ride
         : 'none'
@@ -315,7 +316,7 @@ export class Remotes {
       // out here rather than sent: the terrain under them is deterministic,
       // so every client agrees on who's off the ground. Same for the glow,
       // which just tracks how fast they're actually going.
-      if (remote.ride === 'xwing') {
+      if (remote.ride === 'xwing' || remote.ride === 'a10') {
         group.userData.airborne = airborneAt(group.position.x, group.position.y, group.position.z)
         group.userData.throttle = Math.min(1, speed / 70)
       }

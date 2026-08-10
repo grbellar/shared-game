@@ -23,7 +23,7 @@ export interface PlayerState {
   name: string
   pose: Pose
   weapon: string // 'none' | 'gun' | 'sniper' | 'sword' | 'shovel' | 'firework'
-  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'nessie'
+  ride: string // 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'a10' | 'nessie'
   skin: string // skin id from skins.ts; 'none' is the base look
   talk: number // 0..1 mic level, drives the mouth on remote screens
   emote: string // 'none' or an id from src/emotes.ts
@@ -98,6 +98,7 @@ type ServerMsg =
   | { t: 'land'; id: string; x: number; y: number; z: number }
   | { t: 'meck'; id: string; i: number; x: number; z: number; by: string }
   | { t: 'mg'; id: string; x: number; y: number; z: number; tx: number; ty: number; tz: number }
+  | { t: 'cas'; id: string; x: number; z: number }
   | { t: 'mob'; i: number; x: number; z: number; ry: number; hp: number; st: string }
   | { t: 'mobhit'; i: number; dmg: number }
   | { t: 'skel'; s: number[] }
@@ -163,6 +164,9 @@ export class Net {
   // the shooter's, who already resolved and applied the hit.
   onFifty: (id: string, from: [number, number, number], to: [number, number, number]) => void =
     () => {}
+  // Somebody called in a fire mission at (x, z). The whole strafing run is
+  // derived from the target (see a10strike.ts); the caller mints the damage.
+  onCas: (id: string, x: number, z: number) => void = () => {}
   onMob: (s: MobNetState) => void = () => {}
   onMobHit: (i: number, dmg: number) => void = () => {}
   // The castle garrison, packed five numbers per skeleton (see skeletons.ts).
@@ -277,6 +281,8 @@ export class Net {
         if (msg.id !== this.id) this.onMeckie(msg.id, msg.i, msg.x, msg.z, msg.by)
       } else if (msg.t === 'mg') {
         if (msg.id !== this.id) this.onFifty(msg.id, [msg.x, msg.y, msg.z], [msg.tx, msg.ty, msg.tz])
+      } else if (msg.t === 'cas') {
+        if (msg.id !== this.id) this.onCas(msg.id, msg.x, msg.z)
       } else if (msg.t === 'mob') {
         const st = msg.st
         this.onMob({
@@ -481,6 +487,13 @@ export class Net {
     this.ws!.send(
       JSON.stringify({ t: 'mg', x: from.x, y: from.y, z: from.z, tx: to.x, ty: to.y, tz: to.z }),
     )
+  }
+
+  // Key the radio: Droid's A-10 on (x, z). One message, and every client
+  // derives the same run from it — the firework trick with wings.
+  sendCas(x: number, z: number): void {
+    if (!this.connected) return
+    this.ws!.send(JSON.stringify({ t: 'cas', x, z }))
   }
 
   // Picked a Meckie up ('me' as `by`) or set them down (''). Where a carried

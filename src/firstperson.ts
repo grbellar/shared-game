@@ -6,6 +6,7 @@ import {
   buildBuilder,
   buildFirework,
   buildKatana,
+  buildRadio,
   buildShovel,
   buildSniper,
   buildM2,
@@ -51,6 +52,9 @@ const VIEW_POSES: Record<
   // Also built pointing +Z, so it flips like the bazooka. Sat low and close:
   // it's a big lump of a gun and it would otherwise eat the whole screen.
   m2: { pos: [0.36, -0.46, -0.75], rot: [0, Math.PI, 0] },
+  // Built hanging from the fist like the katana; raised so the brick and the
+  // handset sit in the corner of the view while you eyeball the target.
+  radio: { pos: [0.46, -0.3, -0.6], rot: [1.7, 0, 0.15], hand: [0.05, 0.1, -0.38] },
 }
 // Any weapon without an entry above. A missing pose used to be a TypeError
 // thrown out of setActive — which runs at the top of the game loop, so it took
@@ -188,7 +192,9 @@ export class FirstPersonAim {
                   ? buildBuilder()
                   : weapon === 'firework'
                     ? buildFirework()
-                    : buildBow()
+                    : weapon === 'radio'
+                      ? buildRadio()
+                      : buildBow()
     model.position.set(0, 0, 0) // strip the shoulder-mount offset baked into buildBazooka
     model.rotation.set(...pose.rot)
     held.add(model)

@@ -320,6 +320,25 @@ class Sfx {
     this.noise('lowpass', 900, 120, 0.34, 0.32 * v, 0.02, 8000)
   }
 
+  // The GAU-8: not rat-tat-tat but one long burp — a sawtooth down near the
+  // gun's actual firing rate with a bed of low noise under it. BRRRT.
+  brrrt(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 66, 58, 0.42, 0.34 * v)
+    this.tone('square', 132, 116, 0.42, 0.11 * v)
+    this.noise('lowpass', 750, 260, 0.5, 0.3 * v, 0, 8000)
+  }
+
+  // A turbofan somewhere overhead, ticked every quarter second while Droid's
+  // A-10 is in the air (a10strike.ts) — volume is the flyby.
+  jet(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.noise('lowpass', 520, 360, 0.3, 0.2 * v)
+    this.tone('sawtooth', 92, 86, 0.28, 0.05 * v)
+  }
+
   // Rocket travel leaving the ground: an ignition crack, then a long roar
   // climbing away from you as the motor burns out (see rocket.ts).
   rocketLaunch(): void {
