@@ -124,6 +124,7 @@ export class Trebuchet {
   private ratchetT = 0
   private threw = false
   private slammed = false
+  private smashed = false
 
   // Riding it: latched in the basket, and then in the air. `launching` is the
   // sliver between the trigger and the release, where you're still in the
@@ -351,6 +352,39 @@ export class Trebuchet {
     return this.t < 0
   }
 
+  get isSmashed(): boolean {
+    return this.smashed
+  }
+
+  smash(player: Player, quiet = false): void {
+    if (this.smashed) return
+    this.smashed = true
+    if (this.riding) this.eject(player)
+    this.group.visible = false
+    this.hint.style.display = 'none'
+    this.hintShown = ''
+    if (quiet) return
+    const vol = this.volumeAt(this.base)
+    sfx.trebSlam(vol)
+    sfx.crunch(vol)
+    for (const [color, n] of [
+      [0x6d4a2c, 14],
+      [0x4a3220, 8],
+      [0x6a6a72, 6],
+    ] as const) {
+      const at = this.base.clone()
+      at.y += 2.5
+      this.effects.spawnDebris(at, color, n, 8)
+    }
+  }
+
+  // The room forgot it (reconnect into a fresh room): put it back.
+  restore(): void {
+    if (!this.smashed) return
+    this.smashed = false
+    this.group.visible = true
+  }
+
   // Climb out again, or get yanked out by a shark. Puts you down beside the
   // frame rather than inside it, and holds the latch off long enough that
   // standing there doesn't put you straight back in.
@@ -372,7 +406,7 @@ export class Trebuchet {
   // finished hauling itself back down. You stay in the basket for the first
   // fraction of the swing — the arm snatches you up, and only then lets go.
   fire(): boolean {
-    if (!this.riding || !this.ready) return false
+    if (this.smashed || !this.riding || !this.ready) return false
     this.launching = true
     this.t = 0
     this.threw = false
@@ -388,7 +422,7 @@ export class Trebuchet {
   // clock at the release rather than at the trigger, because the state that
   // told us about it IS the release. The wind-up we missed was 130ms long.
   remoteFire(): void {
-    if (!this.ready) return
+    if (this.smashed || !this.ready) return
     this.t = T_RELEASE - 0.01
     this.threw = false
     this.slammed = false
@@ -477,6 +511,11 @@ export class Trebuchet {
   }
 
   update(dt: number, player: Player, turn: number): void {
+    // Smashed, the frame is gone but a shot already in the air still lands.
+    if (this.smashed) {
+      if (this.flight) this.updateFlight(dt, player)
+      return
+    }
     this.idle += dt
     this.boardLock = Math.max(0, this.boardLock - dt)
     // The machine's own clock runs first, so the basket the rider is pinned to

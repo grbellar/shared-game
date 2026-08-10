@@ -61,7 +61,7 @@ export const WATER_LEVEL = -1.1
 
 // Craters can only dig so deep at one spot — enough that holes below the
 // water line become swimmable ponds, not tunnels to the void.
-const MAX_DIG = 5
+const MAX_DIG = 9
 
 const craters: Crater[] = []
 const craterKeys = new Set<string>()

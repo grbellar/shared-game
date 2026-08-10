@@ -123,6 +123,8 @@ export class GameRoom extends DurableObject<Env> {
   // Treasure caches already dug up (indices into the client's deterministic
   // cache list). Replayed in `welcome` so a late joiner can't re-claim one.
   private found: number[] = []
+  // The trebuchet has been destroyed
+  private treb = false
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
@@ -146,6 +148,7 @@ export class GameRoom extends DurableObject<Env> {
         meck: [...this.meck].map(([i, m]) => [i, m.x, m.z, m.by]),
         scores: [...this.scores.values()],
         found: this.found,
+        treb: this.treb,
       }),
     )
     return new Response(null, { status: 101, webSocket: client })
@@ -267,12 +270,16 @@ export class GameRoom extends DurableObject<Env> {
     } else if (msg.t === 'egg') {
       const k = String(msg.k).slice(0, 12)
       const n = Number(msg.n)
-      // 'dig' claims a treasure cache — the only egg the room remembers, so
-      // late joiners can't dig up something that's already gone.
+      // 'dig' claims a treasure cache and 'treb' fells the trebuchet — the
+      // two eggs the room remembers, so late joiners can't dig up something
+      // that's already gone or find a machine that's already been eaten.
       if (k === 'dig') {
         if (!Number.isInteger(n) || n < 0 || n > 63) return
         if (this.found.includes(n)) return
         this.found.push(n)
+      } else if (k === 'treb') {
+        if (this.treb) return
+        this.treb = true
       }
       const name = this.states.get(att.id)?.name ?? 'someone'
       this.broadcast(

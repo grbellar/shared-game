@@ -9,6 +9,8 @@ const RIDE_SPEED = 16 // wheelchair beats walking
 const RAMSEY_SPEED = 19 // and four limbs beat two wheels
 const TAXI_SPEED = 12 // an X-wing still parked on its skids, trundling about
 const PLANE_SPEED = 26 // and a propeller beats everything
+const NESSIE_SPEED = 24
+const NESSIE_BURROW = 1.1
 const PLANE_CLIMB = 13 // Space, held
 const PLANE_DIVE = 17 // C, held — down faster than up, like all good crashes
 const PLANE_SINK = 2.5 // hands off the stick: a lazy glide toward the ground
@@ -65,7 +67,7 @@ export class Player {
   moving = false // movement input this frame? The follow cam only recenters while true.
   pose: Pose = 'stand'
   dead = false
-  ride: 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' = 'none'
+  ride: 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'nessie' = 'none'
   // Something has hold of you (the shark) — input is ignored and whatever
   // grabbed you owns your position until it lets go.
   grabbed = false
@@ -79,9 +81,9 @@ export class Player {
   // the camera and the follow-cam want to tell them apart.
   piloting = false
   // Called when the respawn timer puts you back on the island.
-  onRespawn: () => void = () => {}
+  onRespawn: () => void = () => { }
   // Fired when we hit water hard enough to splash (main.ts spawns the effect).
-  onSplash: (x: number, z: number) => void = () => {}
+  onSplash: (x: number, z: number) => void = () => { }
   private velY = 0
   private velX = 0
   private velZ = 0
@@ -213,7 +215,9 @@ export class Player {
               ? RIDE_SPEED
               : this.ride === 'xwing'
                 ? TAXI_SPEED
-                : SPEED
+                : this.ride === 'nessie'
+                  ? NESSIE_SPEED
+                  : SPEED
       this.tryMove(dx * moveSpeed * speedMul * analog * dt, dz * moveSpeed * speedMul * analog * dt)
       // Face the direction of travel, taking the short way around —
       // unless the mouse owns the facing (first-person strafe).
@@ -240,18 +244,22 @@ export class Player {
     this.velZ *= friction
 
     // Gravity, then ground, block-top, or water-surface collision. At the
-    // controls of the plane, gravity yields: the throttle owns the vertical
-    // axis — Space climbs, C dives, hands off is a gentle glide down. The
-    // ease means takeoffs and pull-ups swoop instead of snapping. Moonjump
-    // only touches the falling branch; a plane already ignores gravity.
-    if (this.ride === 'plane' && !this.dead) {
+    // controls of a flying ride, gravity yields: the throttle owns the
+    // vertical axis — Space climbs, C dives, hands off is a gentle glide
+    // down. The ease means takeoffs and pull-ups swoop instead of snapping.
+    // Moonjump only touches the falling branch; a flier already ignores
+    // gravity. Nessie flies plane-style (main.ts never passes her crouch,
+    // and C is her dismount, so hands-off is her only way down — a lazy
+    // sink).
+    const flies = this.ride === 'plane' || this.ride === 'nessie'
+    if (flies && !this.dead) {
       const target = input.jump ? PLANE_CLIMB : input.crouch ? -PLANE_DIVE : -PLANE_SINK
       this.velY += (target - this.velY) * Math.min(1, 5 * dt)
     } else {
       this.velY -= GRAVITY * gravityScale * dt
     }
     this.group.position.y += this.velY * dt
-    if (this.ride === 'plane' && this.group.position.y > PLANE_CEILING) {
+    if (flies && this.group.position.y > PLANE_CEILING) {
       this.group.position.y = PLANE_CEILING
       this.velY = Math.min(this.velY, 0)
     }
@@ -277,7 +285,24 @@ export class Player {
       this.onGround = true
       floating = true
     } else {
-      const floor = Math.max(ground, WATER_LEVEL, blockTop)
+      let floor = Math.max(ground, WATER_LEVEL, blockTop)
+      // Nessie bores shallowly through dry land rather than standing on it.
+      // Only where the terrain itself is the floor (block tops stay ridable,
+      // the sea keeps her at the surface), and the camera can never follow
+      // her under — camera.ts clamps itself to heightAt. Space still lifts
+      // her straight out of the ground into flight.
+      if (
+        this.ride === 'nessie' &&
+        !this.dead &&
+        floor === ground &&
+        ground > WATER_LEVEL + 0.05
+      ) {
+        // While digging (main.ts passes crouch with the view aimed into the
+        // ground) the carving drops `ground` itself, and this burrow offset
+        // rides the trench floor down with it — the dive rate on velY (the
+        // crouch branch above) just makes sure she keeps up with her own hole.
+        floor -= NESSIE_BURROW
+      }
       if (this.group.position.y <= floor) {
         if (!this.onGround && this.velY < -5 && floor < -0.05) {
           // Landing feet-underwater in the shallows: splash, not thud.
@@ -293,7 +318,7 @@ export class Player {
         this.onGround = false
       }
     }
-    if (input.jump && this.onGround && !this.dead && this.ride !== 'plane') {
+    if (input.jump && this.onGround && !this.dead && !flies) {
       this.velY = JUMP_VELOCITY
       this.onGround = false
       sfx.jump()
@@ -308,7 +333,8 @@ export class Player {
       else if (moving > 0.15 && this.onGround) {
         if (this.ride === 'wheelchair' || this.ride === 'plane') sfx.squeak() // taxiing on unoiled gear
         else if (this.ride === 'ramsey') sfx.gallop()
-        else if (this.ride !== 'xwing') sfx.step() // a parked fighter has no feet
+        // A parked fighter has no feet, and Nessie's footsteps are the farts.
+        else if (this.ride !== 'xwing' && this.ride !== 'nessie') sfx.step()
       }
     }
     this.wasFloating = floating

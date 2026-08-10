@@ -42,6 +42,7 @@ import { handPreview, ridePreview } from './preview'
 import { GameMap } from './map'
 import { RocketRide, DESTINATIONS, LAND_BLAST_RADIUS, LAND_BLAST_DAMAGE } from './rocket'
 import { Trebuchet } from './trebuchet'
+import { NessieRide } from './nessie'
 import { XWingFlight, airborneAt } from './xwing'
 import { Lasers } from './lasers'
 import {
@@ -198,7 +199,7 @@ function distVol(pos: THREE.Vector3, range = 70): number {
 
 const net = new Net()
 const voice = new Voice(net)
-net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, found) => {
+net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, found, treb) => {
   remotes.clear()
   voice.reset() // reconnects mint a new id; old voice links are orphaned
   players.forEach((p) => {
@@ -226,6 +227,10 @@ net.onWelcome = (players, craters, blocks, worldDamage, faces, meck, scores, fou
   // Treasure somebody already dug up, and the damage already done.
   found.forEach((i) => treasure.markClaimed(i))
   killboard.setScores(scores)
+  // The trebuchet the room remembers being eaten — or, on a reconnect into a
+  // fresh room, forgot: put it back.
+  if (treb) trebuchet.smash(player, true)
+  else trebuchet.restore()
 }
 net.onState = (p) => {
   const isNew = !remotes.getGroup(p.id)
@@ -247,7 +252,9 @@ net.connect()
 
 type Weapon =
   | 'none' | 'gun' | 'sniper' | 'm2' | 'sword' | 'shovel' | 'bow' | 'builder' | 'firework'
-type Ride = 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing'
+// 'nessie' is deliberately absent from the ride wheel: she is only ever
+// mounted by jumping onto her back out at sea (see the Nessie block below).
+type Ride = 'none' | 'wheelchair' | 'ramsey' | 'plane' | 'xwing' | 'nessie'
 // Loadout picks up where you left off last session (profile validates them).
 let weapon = profile.weapon as Weapon
 let ride = profile.ride as Ride
@@ -368,6 +375,8 @@ function equipRide(next: Ride): void {
   sfx.equip(ride !== 'none')
   if (ride === 'ramsey') sfx.ramseyMount()
   if (ride === 'xwing') chat.addMessage('🛩️', 'space to take off · WS pitch · AD bank · click to fire')
+  if (ride === 'nessie')
+    chat.addMessage('🦕', 'AD steer · W hurry · space flies · aim down to dig deep · C climb off')
   saveLoadout()
 }
 
@@ -518,6 +527,7 @@ net.onEgg = (e) => {
   else if (e.k === 'duck') killDuck(e.name, false)
   else if (e.k === 'nessie') annoyNessie(e.name, false)
   else if (e.k === 'sun') strikeSun(e.name, false)
+  else if (e.k === 'treb') smashTrebuchet(e.name, false)
 }
 net.onBlockPlace = (gx, gy, gz, m) => building.applyRemotePlace(gx, gy, gz, m)
 net.onBlockHit = (gx, gy, gz, dmg) => building.applyRemoteHit(gx, gy, gz, dmg)
@@ -628,6 +638,43 @@ remotes.onEmote = (id, emote) => {
   sfx.emote(emote, group ? distVol(group.position, 60) : 0.6)
   if (emote === 'slung') trebuchet.remoteFire()
 }
+remotes.onRide = (id, r, name) => {
+  if (r !== 'nessie') return
+  hud.feed(`★ ${name} TAMED NESSIE ★`)
+  const group = remotes.getGroup(id)
+  sfx.bellow(group ? distVol(group.position, 130) : 0.4)
+}
+
+// Nessie's ride behaviour lives in nessie.ts; this is only her wiring.
+const nessie = new NessieRide(scene, effects, distVol, {
+  building,
+  remotes,
+  net,
+  shark,
+  mobs,
+  skeletons,
+  critters,
+  trebuchet,
+  destruction,
+  hud,
+  killDuck: () => killDuck(profile.name, true),
+  smashTrebuchet: () => smashTrebuchet(profile.name, true),
+})
+
+function mountNessie(): void {
+  equipRide('nessie')
+  nessie.mount(player.group.position)
+  sfx.bellow(0.9)
+  hud.banner('YOU TAMED NESSIE', 3200)
+}
+
+function smashTrebuchet(byName: string, mine: boolean): void {
+  if (trebuchet.isSmashed) return
+  trebuchet.smash(player)
+  hud.feed(`★ ${byName}'s NESSIE ATE THE TREBUCHET ★`)
+  if (mine) net.sendEgg('treb')
+}
+
 net.onLand = (_id, at) => {
   const pos = new THREE.Vector3(...at)
   effects.spawnImpact(pos)
@@ -662,6 +709,9 @@ map.data = () => ({
 function launchRocket(dest: { x: number; z: number; followId?: string }): boolean {
   xwing.stop(player.group)
   player.piloting = false
+  // Nessie doesn't do air travel: dismount first, so the arc doesn't drag a
+  // sea monster's body across the sky behind you.
+  if (ride === 'nessie') equipRide('none')
   return rocket.launch(player, dest)
 }
 map.onPickPlayer = (id) => {
@@ -806,6 +856,9 @@ health.onDeath = () => {
   dieLocally()
 }
 function dieLocally(): void {
+  // Death always unseats you from Nessie — unlike a wheelchair, she is not
+  // yours to keep, and the respawn is back on the island anyway.
+  if (ride === 'nessie') equipRide('none')
   const headPos = popHead(player.group)
   if (headPos) effects.spawnHeadPop(headPos)
   sfx.pop()
@@ -1189,7 +1242,7 @@ window.addEventListener('mousedown', (e) => {
     // Chrome enforces a short cooldown after Esc; a too-quick click rejects
     // and the one after lands. Keep the console quiet about it.
     const lock = renderer.domElement.requestPointerLock() as unknown as Promise<void> | undefined
-    void lock?.catch(() => {})
+    void lock?.catch(() => { })
     return
   }
   // Right-click is the builder's eraser and the sniper's scope. Every other
@@ -1365,6 +1418,7 @@ window.addEventListener('keydown', (e) => {
     }
     if (e.code === 'KeyC' && !e.repeat) trebuchet.eject(player)
   }
+  if (e.code === 'KeyC' && !e.repeat && ride === 'nessie') equipRide('none')
   if (e.code === 'KeyG') equipWeapon(weapon === 'gun' ? 'none' : 'gun')
   if (e.code === 'KeyN') equipWeapon(weapon === 'sniper' ? 'none' : 'sniper')
   if (e.code === 'KeyZ' && !e.repeat && weapon === 'sniper') scopeInput.toggle()
@@ -1604,23 +1658,47 @@ function frame(): void {
   }
   player.piloting = xwing.airborne
 
+  const nessieRiders = remotes.nessieRiders()
+  if (ride === 'nessie' && net.id && nessieRiders.some((r) => r.id < net.id!)) {
+    equipRide('none')
+    hud.banner('SHE CHOSE SOMEBODY ELSE', 2600)
+  }
+  critters.setNessieClaimed(ride === 'nessie' || nessieRiders.length > 0)
+  if (
+    ride !== 'nessie' &&
+    (keys.has('Space') || touch.jumpHeld) &&
+    !player.dead &&
+    !player.flying &&
+    !player.piloting &&
+    !player.grabbed &&
+    !trebuchet.busy &&
+    nessieRiders.length === 0 &&
+    critters.nessieMountable(player.group.position, 8)
+  ) {
+    mountNessie()
+  }
+
   const stickF = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF
   const stickS = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS
   const boost = keys.has('Space') || touch.jumpHeld
+  const surging = ride === 'nessie' && !player.dead
+  const digging = surging && (fp.isActive ? fp.pitch < -0.5 : gameCamera.pitch > 1.02)
   player.update(
     dt,
     {
-      f: stickF,
+      f: surging ? (keys.has('KeyS') ? 0.55 : 1) : stickF,
       s: stickS,
       // Space belongs to the throttle while you're strapped in — otherwise
       // taking off would also make the parked fighter hop.
       jump: ride === 'xwing' ? false : boost,
-      crouch: keys.has('KeyC'),
-      sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+      crouch: surging ? digging : keys.has('KeyC'),
+      sprint: surging ? keys.has('KeyW') : keys.has('ShiftLeft') || keys.has('ShiftRight'),
       strafe: fp.isActive,
     },
     gameCamera.yaw,
   )
+  if (surging && !rocket.active && !player.grabbed)
+    nessie.rampage(player.group.position, performance.now(), digging)
   // Straight after player.update, which left our position alone while it's
   // flying us. W/S is the stick (push forward to dive), A/D banks, Space is
   // the throttle and Shift the airbrake.
@@ -1648,7 +1726,7 @@ function frame(): void {
     player.group.userData.airborne = xwing.airborne || airborneAt(p.x, p.y, p.z)
     player.group.userData.throttle = xwing.throttle
   }
-  gameCamera.pullBack(ride === 'xwing' ? (xwing.airborne ? 13 : 8) : 0)
+  gameCamera.pullBack(ride === 'xwing' ? (xwing.airborne ? 13 : 8) : ride === 'nessie' ? 6 : 0)
   const gate = portals.update(dt, player.group.position)
   if (gate) crossTo(gate)
   const nowShadow = inRealm(player.group.position.x, player.group.position.z)
@@ -1725,6 +1803,15 @@ function frame(): void {
   if (firing && weapon === 'm2') attack()
   fireworks.update(dt)
   remotes.update(dt)
+  // `nessieRiders` is still the list from the top of the frame — nothing
+  // between there and here changes anyone's ride.
+  const allNessieRiders =
+    ride === 'nessie' && !player.dead
+      ? [{ id: 'me', group: player.group }, ...nessieRiders]
+      : nessieRiders
+  nessie.update(dt, allNessieRiders)
+  nessie.shove(player, nessieRiders, performance.now())
+  nessie.trample(stripper, allNessieRiders)
   // After the player and remotes have moved: the shark chases current
   // positions, and when it has you it overrides where you ended up.
   shark.update(dt, player)
@@ -1749,7 +1836,9 @@ function frame(): void {
   // The plane earns the rocket's view: altitude pushes the fog wall back the
   // same way, so climbing actually reveals the world spread out below.
   const planeLift =
-    ride === 'plane' ? Math.max(0, player.group.position.y - 20) * 4.5 : 0
+    ride === 'plane' || ride === 'nessie'
+      ? Math.max(0, player.group.position.y - 20) * 4.5
+      : 0
   daynight.update(
     settings,
     camera.position,
