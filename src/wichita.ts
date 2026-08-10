@@ -652,6 +652,138 @@ function buildRoads(): THREE.Mesh {
   return mesh
 }
 
+// ---- street signs -----------------------------------------------------------
+// Green blades on gray posts along every real street (w >= 8 skips alleys and
+// footpaths), so you can orient the same way you would in the real city. One
+// 128x16 canvas per street name (nametag-sized — chunky pixels read better at
+// 320x240 than anything finer), and one merged mesh per name, so Douglas costs
+// one draw call no matter how many blades it earns.
+
+const SIGN_SPACING = 170
+const BLADE_W = 4.4
+const BLADE_H = 0.55
+const POST_H = 3.1
+const SIGN_GREEN = 0x1d6a38
+
+const ABBREV: [RegExp, string][] = [
+  [/\bNorth\b/g, 'N'],
+  [/\bSouth\b/g, 'S'],
+  [/\bEast\b/g, 'E'],
+  [/\bWest\b/g, 'W'],
+  [/\bStreet\b/g, 'St'],
+  [/\bAvenue\b/g, 'Ave'],
+  [/\bBoulevard\b/g, 'Blvd'],
+  [/\bDrive\b/g, 'Dr'],
+  [/\bCourt\b/g, 'Ct'],
+  [/\bPlace\b/g, 'Pl'],
+  [/\bLane\b/g, 'Ln'],
+]
+
+function signTexture(name: string): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 16
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#' + SIGN_GREEN.toString(16).padStart(6, '0')
+  ctx.fillRect(0, 0, 128, 16)
+  ctx.strokeStyle = '#e8e8e0'
+  ctx.strokeRect(0.5, 0.5, 127, 15)
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 10px monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(name.toUpperCase(), 64, 9, 120)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.minFilter = THREE.NearestFilter
+  tex.magFilter = THREE.NearestFilter
+  tex.generateMipmaps = false
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+function buildSigns(scene: THREE.Scene): void {
+  if (typeof document === 'undefined') return
+  // Candidate spots: the midpoint of every segment of every named street,
+  // grouped by (abbreviated) name.
+  interface Spot {
+    x: number
+    z: number
+    dx: number
+    dz: number
+    half: number
+  }
+  const spots = new Map<string, Spot[]>()
+  for (const r of ROADS) {
+    if (!r.n || r.w < 8) continue
+    let short = r.n
+    for (const [re, s] of ABBREV) short = short.replace(re, s)
+    for (let i = 0; i + 3 < r.p.length; i += 2) {
+      const x1 = r.p[i]
+      const z1 = r.p[i + 1]
+      const x2 = r.p[i + 2]
+      const z2 = r.p[i + 3]
+      const dx = x2 - x1
+      const dz = z2 - z1
+      const len = Math.hypot(dx, dz)
+      if (len < 8) continue
+      let list = spots.get(short)
+      if (!list) spots.set(short, (list = []))
+      list.push({ x: (x1 + x2) / 2, z: (z1 + z2) / 2, dx: dx / len, dz: dz / len, half: r.w / 2 })
+    }
+  }
+
+  const postBuf: Buf = { pos: [], col: [] }
+  const postC = new THREE.Color(0x6f7276)
+  const white = new THREE.Color(0xffffff)
+  const y = WICHITA_GROUND
+
+  for (const [name, list] of spots) {
+    const placed: Spot[] = []
+    const blade: Buf = { pos: [], col: [], uv: [] }
+    for (const s of list) {
+      // Greedy spacing: a blade roughly every long block, not one per segment.
+      if (placed.some((p) => Math.hypot(p.x - s.x, p.z - s.z) < SIGN_SPACING)) continue
+      placed.push(s)
+      // Post on the curb, blade across the top running with the street.
+      const px = s.x - s.dz * (s.half + 1.5)
+      const pz = s.z + s.dx * (s.half + 1.5)
+      pushBox(postBuf, px, y, pz, 0.16, POST_H, 0.16, postC)
+      const ex = s.dx * (BLADE_W / 2)
+      const ez = s.dz * (BLADE_W / 2)
+      const y0 = y + POST_H - BLADE_H
+      const y1 = y + POST_H
+      // The same quad twice with opposite winding and mirrored u, so the name
+      // reads correctly from both sides instead of one side being mirror-text.
+      blade.pos.push(px - ex, y0, pz - ez, px + ex, y0, pz + ez, px + ex, y1, pz + ez)
+      blade.pos.push(px - ex, y0, pz - ez, px + ex, y1, pz + ez, px - ex, y1, pz - ez)
+      blade.uv!.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1)
+      blade.pos.push(px + ex, y0, pz + ez, px - ex, y0, pz - ez, px - ex, y1, pz - ez)
+      blade.pos.push(px + ex, y0, pz + ez, px - ex, y1, pz - ez, px + ex, y1, pz + ez)
+      blade.uv!.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1)
+      for (let k = 0; k < 12; k++) blade.col.push(white.r, white.g, white.b)
+    }
+    if (!blade.pos.length) continue
+    scene.add(
+      bufToMesh(
+        blade,
+        new THREE.MeshLambertMaterial({
+          map: signTexture(name),
+          vertexColors: true,
+          flatShading: true,
+        }),
+        'wichita-sign',
+      ),
+    )
+  }
+  scene.add(
+    bufToMesh(
+      postBuf,
+      new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }),
+      'wichita-signposts',
+    ),
+  )
+}
+
 // ---- terrain ----------------------------------------------------------------
 // One big flat tile: pale downtown concrete fading to prairie grass at the
 // edges, river bed cut in, rim shearing into the sea. Vertices are
@@ -710,6 +842,7 @@ export function createWichita(scene: THREE.Scene): void {
   addRegion(wichitaHeightAt, terrain.geometry)
   buildBuildings(scene)
   scene.add(buildRoads())
+  buildSigns(scene)
 
   const heroes = new THREE.Group()
   heroes.position.set(WICHITA_X, 0, WICHITA_Z)
