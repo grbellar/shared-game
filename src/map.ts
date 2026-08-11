@@ -9,6 +9,7 @@ import {
   wichitaHeightAt,
 } from './wichita'
 import { BUILDINGS, ROADS } from './wichita-data'
+import { inOz } from './oz'
 import { DESTINATIONS } from './rocket'
 import { sfx } from './audio'
 
@@ -244,10 +245,11 @@ export class GameMap {
     if (!this.opened) return
     const { me, friends } = this.data()
 
-    // The marker rides whichever map you're actually on; in the realm
-    // there's no map to be on, and an off-panel marker (which is what the
-    // island projection makes of x=1800) helps nobody.
-    const meView = inWichita(me.x, me.z) ? this.wview : inRealm(me.x, me.z) ? null : this.view
+    // The marker rides whichever map you're actually on; in the realm or in
+    // Oz there's no map to be on, and an off-panel marker (which is what
+    // the island projection makes of x=1800) helps nobody.
+    const meView =
+      inWichita(me.x, me.z) ? this.wview : inRealm(me.x, me.z) || inOz(me.x, me.z) ? null : this.view
     this.me.style.display = meView ? '' : 'none'
     if (meView) {
       if (this.me.parentElement !== meView) meView.append(this.me)
@@ -278,8 +280,10 @@ export class GameMap {
     const seen = new Set<string>()
     for (const f of friends) {
       // Anyone in the realm is off both maps entirely — they're counted on
-      // the castle button instead. Leaving them out of `seen` drops the pin.
-      if (inRealm(f.x, f.z)) continue
+      // the castle button instead. Oz players are off them too: fairyland
+      // has no map, no button, and no rocket service (clicking their pin
+      // would only bounce off the launch gate anyway).
+      if (inRealm(f.x, f.z) || inOz(f.x, f.z)) continue
       seen.add(f.id)
       let pin = this.pins.get(f.id)
       if (!pin) {

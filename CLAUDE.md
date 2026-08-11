@@ -116,7 +116,11 @@ build) is the only gate.
     content only — silver shoes, not ruby): yellow brick road and poppies
     painted into the terrain colours, Emerald City, Munchkin village, and
     the whole company as clock-choreographed scenery with name tags.
-    Also travellable directly: `oz` is in DESTINATIONS.
+    The twister is the ONLY way in: Oz is deliberately not in DESTINATIONS,
+    launchRocket refuses trips that start or end there (friend-pin back
+    door included), and the Tab map shows no Oz pins. The two ways out (X
+    key): knock the silver shoes' heels three times, or board the Wizard's
+    balloon for the arc home.
   - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
     island out past the fog. Both ride the wall clock rather than a synced
     tick; a second of drift between clients is invisible on wildlife.

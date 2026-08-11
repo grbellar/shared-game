@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { heightAt, ISLANDS, landingSpotOn, nearestIsland } from './world'
 import { REALM_X, REALM_Z, inRealm } from './realm'
 import { WICHITA_X, WICHITA_Z, inWichita } from './wichita'
-import { inOz, ozArrival } from './oz'
+import { inOz } from './oz'
 import { WATER_LEVEL, type Player } from './player'
 import { ROCKET_ASCENT_S, ROCKET_DESCENT_S, ROCKET_FLIGHT_S } from './emotes'
 import type { Effects } from './effects'
@@ -52,9 +52,10 @@ export const DESTINATIONS: Destination[] = [
   })),
   { name: 'the castle', icon: '🏰', here: inRealm, spot: realmPad },
   { name: 'wichita', icon: '🌾', here: inWichita, spot: wichitaPad },
-  // The scenic route is a Kansas twister (tornado.ts); this is the direct
-  // flight. Sets down by the Munchkin village, where the road starts.
-  { name: 'oz', icon: '🌪️', here: inOz, spot: ozArrival },
+  // Oz is deliberately NOT here: the only way in is the twister
+  // (tornado.ts), and the only ways out are the silver shoes and the
+  // Wizard's balloon (main.ts). main.ts also refuses rocket launches that
+  // start or end there, so a friend's pin can't be a back door.
 ]
 
 // Down on the apron: clear of the castle curtain (33 units from centre) and

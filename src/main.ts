@@ -19,7 +19,7 @@ import { createRealm, inRealm } from './realm'
 import { createWichita, updateWichita } from './wichita'
 import { Arcade } from './arcade'
 import { Theater } from './theater'
-import { Oz, inOz, ozArrival } from './oz'
+import { Oz, inOz, ozArrival, ozShoesSpot, ozBalloonSpot } from './oz'
 import { Tornado } from './tornado'
 import { buildCastle } from './castle'
 import { Portals, type Gate } from './portal'
@@ -727,7 +727,22 @@ map.data = () => ({
 // ground before the arc starts — otherwise the flight model keeps quietly
 // steering you while rocket.ts is writing your position, and the two fight
 // over where you are for the whole four seconds.
-function launchRocket(dest: { x: number; z: number; followId?: string }): boolean {
+function launchRocket(dest: { x: number; z: number; followId?: string }, magic = false): boolean {
+  // Oz doesn't do rockets. The twister is the only way in, and the silver
+  // shoes or the Wizard's balloon are the only ways out — `magic` marks
+  // those sanctioned trips. This also closes the back door of clicking a
+  // friend's pin while they're off in fairyland.
+  if (!magic) {
+    const p = player.group.position
+    if (inOz(p.x, p.z)) {
+      hud.banner('THE SHOES OR THE BALLOON TAKE YOU HOME', 2600)
+      return false
+    }
+    if (inOz(dest.x, dest.z)) {
+      hud.banner('ONLY THE TWISTER GOES TO OZ', 2600)
+      return false
+    }
+  }
   xwing.stop(player.group)
   player.piloting = false
   // Nessie doesn't do air travel: dismount first, so the arc doesn't drag a
@@ -741,7 +756,41 @@ function launchRocket(dest: { x: number; z: number; followId?: string }): boolea
 tornado.onStrike = () => {
   hud.banner('TWISTER!', 2600)
   sfx.warp()
-  launchRocket(ozArrival())
+  launchRocket(ozArrival(), true)
+}
+
+// Leaving Oz, the two sanctioned ways. X is the knock/board key — the same
+// key as the arcade cabinets, which are a continent away and can't collide.
+let heelKnocks = 0
+let lastKnockAt = 0
+function ozExit(): void {
+  const p = player.group.position
+  if (player.dead || rocket.active || !inOz(p.x, p.z)) return
+  const shoes = ozShoesSpot()
+  const balloon = ozBalloonSpot()
+  const now = performance.now()
+  if (Math.hypot(p.x - shoes.x, p.z - shoes.z) < 3.5) {
+    // The book's ritual: knock the heels together three times and command
+    // the shoes. Slow knockers start over.
+    if (now - lastKnockAt > 4000) heelKnocks = 0
+    lastKnockAt = now
+    heelKnocks++
+    sfx.arcadeBlip(320 + heelKnocks * 160) // the heels clink, rising
+    if (heelKnocks < 3) {
+      hud.banner(`✦ KNOCK ${heelKnocks} OF 3 ✦`, 1000)
+      return
+    }
+    heelKnocks = 0
+    hud.banner('TAKE ME HOME TO AUNT EM!', 2600)
+    sfx.warp()
+    const home = DESTINATIONS[0].spot()
+    player.teleport(home.x, Math.max(heightAt(home.x, home.z), 0), home.z, 0)
+    gameCamera.snapTo(player)
+  } else if (Math.hypot(p.x - balloon.x, p.z - balloon.z) < 5.5) {
+    // The Wizard's way: up, and eventually down, the ordinary arc home.
+    hud.banner('UP, UP, AND AWAY', 2600)
+    launchRocket(DESTINATIONS[0].spot(), true)
+  }
 }
 map.onPickPlayer = (id) => {
   const group = remotes.getGroup(id)
@@ -1603,10 +1652,10 @@ window.addEventListener('keydown', (e) => {
     xwing.takeoff(player.group)
   }
   if (e.code === 'KeyJ') rocketToNextIsland()
-  // X sits you down at the nearest arcade cabinet (or backs you off it) —
-  // the prompt only shows inside the Old Town Arcade, where X means nothing
-  // else.
-  if (e.code === 'KeyX' && !e.repeat) arcade.toggle(player.group.position)
+  // X sits you down at the nearest arcade cabinet (or backs you off it);
+  // when no cabinet wants it, it's Oz's exit key — the two places are a
+  // continent apart, so the chain can't misfire.
+  if (e.code === 'KeyX' && !e.repeat && !arcade.toggle(player.group.position)) ozExit()
   if (e.code === 'KeyU') meckies.toggleNearest()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
@@ -1911,6 +1960,7 @@ function frame(): void {
     if (nowOz) {
       announce('THE LAND OF OZ')
       sfx.warp()
+      chat.addMessage('🌪️', 'no rockets here — X at the silver shoes (knock ×3) or the balloon goes home')
     }
   }
   // The realm's sea is molten. player.ts floats you in it exactly like water,

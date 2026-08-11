@@ -467,12 +467,21 @@ function buildCompany(scene: THREE.Scene): Walker[] {
   return walkers
 }
 
-// Where arriving trips set down — twister deliveries and rockets alike: the
-// road's east end, by the Munchkin village and the silver shoes, which is
-// where the book starts everybody off too.
+// Where twister deliveries set down: the road's east end, by the Munchkin
+// village and the silver shoes, which is where the book starts everybody
+// off too. The twister is the ONLY way in.
 export function ozArrival(): { x: number; z: number } {
   const s = 116 + Math.random() * 16
   return { x: OZ_X + s, z: OZ_Z + roadZ(s) + (Math.random() - 0.5) * 6 }
+}
+
+// The two ways OUT, for main.ts's X-key checks: the silver shoes on their
+// plinth (knock the heels three times), and the Wizard's balloon.
+export function ozShoesSpot(): { x: number; z: number } {
+  return { x: OZ_X + 134, z: OZ_Z + roadZ(134) - 5 }
+}
+export function ozBalloonSpot(): { x: number; z: number } {
+  return { x: OZ_X - 10, z: OZ_Z - 32 }
 }
 
 export class Oz {
