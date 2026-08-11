@@ -37,6 +37,15 @@ const Z0 = -1140
 const Z1 = 790
 const EDGE = 120
 
+// The city rectangle in world coordinates, for the map's Wichita inset
+// (map.ts) — the prairie margin included, so the river mouth isn't cropped.
+export const WICHITA_BOUNDS = {
+  minX: WICHITA_X + X0 - EDGE,
+  maxX: WICHITA_X + X1 + EDGE,
+  minZ: WICHITA_Z + Z0 - EDGE,
+  maxZ: WICHITA_Z + Z1 + EDGE,
+}
+
 export function inWichita(x: number, z: number): boolean {
   return (
     x - WICHITA_X > X0 - EDGE &&
@@ -240,8 +249,9 @@ const OLD_TOWN_BRICK = [new THREE.Color(0x92462f), new THREE.Color(0x9e553a), ne
 const TALL_GLASS = new THREE.Color(0x7c8fa6)
 const ROOF_DARKEN = 0.72
 
-// Old Town's warehouse district really is wall-to-wall red brick.
-function inOldTown(lx: number, lz: number): boolean {
+// Old Town's warehouse district really is wall-to-wall red brick. Local
+// coords; exported so the map's inset can paint it the same colour.
+export function inOldTown(lx: number, lz: number): boolean {
   return lx > 620 && lx < 1260 && lz > -460 && lz < 130
 }
 

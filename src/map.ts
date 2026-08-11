@@ -1,5 +1,14 @@
 import { ISLANDS, baseHeightAt } from './world'
 import { inRealm } from './realm'
+import {
+  WICHITA_X,
+  WICHITA_Z,
+  WICHITA_BOUNDS,
+  inWichita,
+  inOldTown,
+  wichitaHeightAt,
+} from './wichita'
+import { BUILDINGS, ROADS } from './wichita-data'
 import { DESTINATIONS } from './rocket'
 import { sfx } from './audio'
 
@@ -18,11 +27,18 @@ const MAP_H = 136
 const VIEW_W = MAP_W * 2
 const VIEW_H = MAP_H * 2
 
-// World bounds the map covers: both terrain tiles, edge to edge.
+// World bounds the island map covers: both terrain tiles, edge to edge.
 const MIN_X = -170
 const MAX_X = 390
 const MIN_Z = -170
 const MAX_Z = 170
+
+// The Wichita inset: a real street map beside the islands, drawn from the
+// same baked data the city itself is built from. The city is 2950x2170
+// meters — five times the archipelago — so it gets its own canvas and its
+// own projection rather than a share of the islands'.
+const WMAP_W = 196
+const WMAP_H = 144
 
 export interface MapPlayer {
   id: string
@@ -44,8 +60,10 @@ export class GameMap {
   data: () => MapData = () => ({ me: { x: 0, z: 0, ry: 0, color: '#fff', name: '' }, friends: [] })
   private root: HTMLDivElement
   private view: HTMLDivElement
+  private wview: HTMLDivElement
   private me: HTMLDivElement
   private canvas: HTMLCanvasElement
+  private wcanvas: HTMLCanvasElement
   private dests: HTMLDivElement
   private destButtons: HTMLDivElement[] = []
   private islandChips: HTMLDivElement[] = []
@@ -64,7 +82,12 @@ export class GameMap {
     panel.id = 'map-panel'
     const title = document.createElement('div')
     title.id = 'map-title'
-    title.textContent = 'THE ISLANDS'
+    title.textContent = 'THE WORLD'
+
+    // Two maps side by side (stacked on a narrow screen): the archipelago
+    // and, five fog walls west of it, downtown Wichita.
+    const views = document.createElement('div')
+    views.id = 'map-views'
 
     this.view = document.createElement('div')
     this.view.id = 'map-view'
@@ -73,6 +96,28 @@ export class GameMap {
     this.canvas.width = MAP_W
     this.canvas.height = MAP_H
     this.view.append(this.canvas)
+
+    this.wview = document.createElement('div')
+    this.wview.id = 'map-wview'
+    this.wcanvas = document.createElement('canvas')
+    this.wcanvas.id = 'map-wcanvas'
+    this.wcanvas.width = WMAP_W
+    this.wcanvas.height = WMAP_H
+    this.wview.append(this.wcanvas)
+    // Landmark labels, same class as the island chips. Local city coords.
+    for (const [lx, lz, label] of [
+      [0, 60, 'downtown'],
+      [1055, 10, '🕹 old town'],
+      [-985, -729, '🔥 keeper'],
+    ] as const) {
+      const chip = document.createElement('div')
+      chip.className = 'map-island'
+      const [px, py] = wproject(WICHITA_X + lx, WICHITA_Z + lz)
+      chip.style.left = `${px}%`
+      chip.style.top = `${py}%`
+      chip.textContent = label
+      this.wview.append(chip)
+    }
 
     // Labels only — which blob is which. Travel is the button row below, so
     // that the castle (1800 units east, nowhere near this map) is offered the
@@ -128,7 +173,8 @@ export class GameMap {
     hint.id = 'map-hint'
     hint.textContent = 'click a friend to rocket to them'
 
-    panel.append(title, this.view, this.dests, hint)
+    views.append(this.view, this.wview)
+    panel.append(title, views, this.dests, hint)
     this.root.append(panel)
     document.body.append(this.root)
 
@@ -179,6 +225,7 @@ export class GameMap {
     if (!this.painted) {
       this.painted = true
       paintTerrain(this.canvas)
+      paintWichita(this.wcanvas)
     }
     this.opened = true
     this.root.hidden = false
@@ -197,13 +244,21 @@ export class GameMap {
     if (!this.opened) return
     const { me, friends } = this.data()
 
-    const [mx, my] = project(me.x, me.z)
-    this.me.style.left = `${mx}%`
-    this.me.style.top = `${my}%`
-    // A triangle drawn pointing up, turned to face the way you are. Screen +y
-    // is world +z, so the map's north is world -z and the angle flips.
-    this.me.style.transform = `translate(-50%, -50%) rotate(${180 - (me.ry * 180) / Math.PI}deg)`
-    this.me.style.borderBottomColor = me.color
+    // The marker rides whichever map you're actually on; in the realm
+    // there's no map to be on, and an off-panel marker (which is what the
+    // island projection makes of x=1800) helps nobody.
+    const meView = inWichita(me.x, me.z) ? this.wview : inRealm(me.x, me.z) ? null : this.view
+    this.me.style.display = meView ? '' : 'none'
+    if (meView) {
+      if (this.me.parentElement !== meView) meView.append(this.me)
+      const [mx, my] = (meView === this.wview ? wproject : project)(me.x, me.z)
+      this.me.style.left = `${mx}%`
+      this.me.style.top = `${my}%`
+      // A triangle drawn pointing up, turned to face the way you are. Screen
+      // +y is world +z, so the map's north is world -z and the angle flips.
+      this.me.style.transform = `translate(-50%, -50%) rotate(${180 - (me.ry * 180) / Math.PI}deg)`
+      this.me.style.borderBottomColor = me.color
+    }
 
     const here = DESTINATIONS.findIndex((dest) => dest.here(me.x, me.z))
     this.islandChips.forEach((chip, i) => chip.classList.toggle('here', i === here))
@@ -222,8 +277,8 @@ export class GameMap {
     // come and go.
     const seen = new Set<string>()
     for (const f of friends) {
-      // Anyone in the realm is off this map entirely — they're counted on the
-      // castle button instead. Leaving them out of `seen` drops their pin.
+      // Anyone in the realm is off both maps entirely — they're counted on
+      // the castle button instead. Leaving them out of `seen` drops the pin.
       if (inRealm(f.x, f.z)) continue
       seen.add(f.id)
       let pin = this.pins.get(f.id)
@@ -239,11 +294,14 @@ export class GameMap {
           this.close()
           this.onPickPlayer(f.id)
         })
-        this.view.append(el)
         pin = { el, label }
         this.pins.set(f.id, pin)
       }
-      const [px, py] = project(f.x, f.z)
+      // Pinned to whichever map they're standing on — a friend at the arcade
+      // used to project 400% off the island view's left edge.
+      const view = inWichita(f.x, f.z) ? this.wview : this.view
+      if (pin.el.parentElement !== view) view.append(pin.el)
+      const [px, py] = (view === this.wview ? wproject : project)(f.x, f.z)
       pin.el.style.left = `${px}%`
       pin.el.style.top = `${py}%`
       pin.el.style.background = f.color
@@ -264,6 +322,15 @@ function project(x: number, z: number): [number, number] {
   return [
     ((x - MIN_X) / (MAX_X - MIN_X)) * 100,
     ((z - MIN_Z) / (MAX_Z - MIN_Z)) * 100,
+  ]
+}
+
+// Same, into the Wichita inset.
+function wproject(x: number, z: number): [number, number] {
+  const b = WICHITA_BOUNDS
+  return [
+    ((x - b.minX) / (b.maxX - b.minX)) * 100,
+    ((z - b.minZ) / (b.maxZ - b.minZ)) * 100,
   ]
 }
 
@@ -312,6 +379,86 @@ function paintTerrain(canvas: HTMLCanvasElement): void {
   ctx.putImageData(img, 0, 0)
 }
 
+// The city, painted from the same baked data it's built from: terrain
+// heights for prairie, river and sea, then every real building footprint
+// (Old Town in its brick red), then the street grid stroked at true width.
+// A genuine street map of downtown Wichita in 28k pixels, paid once.
+function paintWichita(canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext('2d')!
+  const b = WICHITA_BOUNDS
+  const img = ctx.createImageData(WMAP_W, WMAP_H)
+  const px = img.data
+  for (let j = 0; j < WMAP_H; j++) {
+    const z = b.minZ + ((j + 0.5) / WMAP_H) * (b.maxZ - b.minZ)
+    for (let i = 0; i < WMAP_W; i++) {
+      const x = b.minX + ((i + 0.5) / WMAP_W) * (b.maxX - b.minX)
+      const h = wichitaHeightAt(x, z) ?? -20
+      let r: number
+      let g: number
+      let bl: number
+      if (h <= 0) {
+        // The river reads pale, the rim-sea dark — the island map's bands.
+        const t = Math.max(0, Math.min(1, -h / 26))
+        r = 63 - 33 * t
+        g = 118 - 60 * t
+        bl = 201 - 80 * t
+      } else {
+        // Concrete slab; the prairie fringe takes over near the edges, the
+        // same lerp the real terrain tile uses.
+        const cw = (b.maxX - b.minX) / 2
+        const cd = (b.maxZ - b.minZ) / 2
+        const t = Math.max(
+          (Math.abs(x - (b.minX + cw)) / cw) ** 3,
+          (Math.abs(z - (b.minZ + cd)) / cd) ** 3,
+        )
+        const k = Math.min(1, t * 1.4)
+        r = 185 - 58 * k
+        g = 178 - 20 * k
+        bl = 164 - 90 * k
+      }
+      const o = (j * WMAP_W + i) * 4
+      px[o] = r
+      px[o + 1] = g
+      px[o + 2] = bl
+      px[o + 3] = 255
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+
+  // Footprints and streets on top, in canvas space. Local city coords in,
+  // pixels out.
+  const sx = (lx: number) => ((lx + WICHITA_X - b.minX) / (b.maxX - b.minX)) * WMAP_W
+  const sz = (lz: number) => ((lz + WICHITA_Z - b.minZ) / (b.maxZ - b.minZ)) * WMAP_H
+  for (const bd of BUILDINGS) {
+    ctx.beginPath()
+    let cx = 0
+    let cz = 0
+    for (let i = 0; i < bd.p.length; i += 2) {
+      cx += bd.p[i]
+      cz += bd.p[i + 1]
+      if (i === 0) ctx.moveTo(sx(bd.p[i]), sz(bd.p[i + 1]))
+      else ctx.lineTo(sx(bd.p[i]), sz(bd.p[i + 1]))
+    }
+    ctx.closePath()
+    const n = bd.p.length / 2
+    ctx.fillStyle = inOldTown(cx / n, cz / n) ? '#8f4630' : '#7a6e60'
+    ctx.fill()
+  }
+  const roadScale = WMAP_W / (b.maxX - b.minX)
+  ctx.strokeStyle = '#54545c'
+  ctx.lineCap = 'round'
+  for (const r of ROADS) {
+    if (r.w < 8) continue // alleys and footpaths are noise at this scale
+    ctx.lineWidth = Math.max(0.7, r.w * roadScale)
+    ctx.beginPath()
+    for (let i = 0; i + 1 < r.p.length; i += 2) {
+      if (i === 0) ctx.moveTo(sx(r.p[i]), sz(r.p[i + 1]))
+      else ctx.lineTo(sx(r.p[i]), sz(r.p[i + 1]))
+    }
+    ctx.stroke()
+  }
+}
+
 function styleTag(): HTMLStyleElement {
   const style = document.createElement('style')
   style.textContent = `
@@ -344,6 +491,13 @@ function styleTag(): HTMLStyleElement {
       text-align: center;
       margin-bottom: 8px;
     }
+    #map-views {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+    }
     #map-view {
       position: relative;
       width: ${VIEW_W}px;
@@ -351,7 +505,14 @@ function styleTag(): HTMLStyleElement {
       max-width: 92vw;
       border: 1px solid rgba(255, 255, 255, 0.25);
     }
-    #map-canvas {
+    #map-wview {
+      position: relative;
+      width: ${WMAP_W * 2}px;
+      height: ${WMAP_H * 2}px;
+      max-width: 92vw;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+    #map-canvas, #map-wcanvas {
       display: block;
       width: 100%;
       height: 100%;

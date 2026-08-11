@@ -74,8 +74,10 @@ build) is the only gate.
     says they/them.
   - `rocket.ts` — rocket travel: the arc that throws you to another island or
     onto a friend, and the landing that leaves a crater. `map.ts` is the Tab
-    overlay that aims it — the islands drawn straight out of `baseHeightAt`,
-    with a clickable pin per player.
+    overlay that aims it — the islands drawn straight out of `baseHeightAt`
+    plus a Wichita street-map inset drawn from the baked city data, with a
+    clickable pin per player routed to whichever map they're standing on
+    (realm players appear only as the castle button's headcount).
   - `trebuchet.ts` — the siege engine on the shelf at (-15, 45). Walk into the
     sling and it latches you in; A/D swings the frame, space fires, C climbs
     out. It shares rocket travel's touchdown (`land`) and adds **no message of
