@@ -11,26 +11,58 @@ const LON0 = -97.334 // between Market and Broadway — x=0
 const M_LAT = 111320
 const M_LON = 111320 * Math.cos((LAT0 * Math.PI) / 180)
 
-// Known skyline buildings OSM has no height for, meters. Everything else
-// falls back to building:levels or a hash of the footprint.
+// Known skyline buildings OSM has no height for, meters — roof heights checked
+// against Wikipedia's list of tallest buildings in Wichita and Overture Maps
+// lidar. Everything else falls back to building:levels, then Overture heights
+// (tools/overture-heights.json, via tools/match-overture-heights.mjs), then a
+// hash of the footprint.
 const LANDMARK_H = {
-  'Epic Center': 90,
-  'Ruffin Building': 37,
-  'The Lux': 30,
-  'Broadway Plaza Building': 40,
-  'Wichita Executive Centre': 45,
+  'Epic Center': 98, // 320 ft roof, 22 floors — tallest in Kansas
+  'Ruffin Building': 30,
+  'The Lux': 27,
+  'Guild Plaza Hotel': 76, // 125 N Market, 250 ft, 19 floors
+  'AC Hotel Wichita Downtown': 48, // Broadway Plaza Building, 157 ft, 11 floors
   'Kansas Health Foundation': 25,
+  'Meritrust Credit Union': 20,
   'Century II Performing Arts & Convention Center': 21,
   'Intrust Bank Arena': 24,
   'Wichita Union Station': 16,
   'Keen Kutter Building': 18,
   'Scottish Rite Center;Temple Live': 18,
-  'Drury Plaza Hotel Broadview Wichita': 40,
-  'Ambassador Hotel Wichita, Autograph Collection': 32,
+  'Drury Plaza Hotel Broadview Wichita': 33,
+  'Ambassador Hotel Wichita, Autograph Collection': 52, // 172 ft, 14 floors
   'Eaton Place': 20,
   'Orpheum Theatre': 20,
   'The Orpheum Offices': 20,
 }
+
+// Towers OSM leaves unnamed, keyed by OSM way id: [roof height m, name].
+// Positions verified by rooftop-quality geocoding (Esri/Overture places POIs)
+// point-in-polygon tested against the OSM footprints.
+const WAY_FIX = {
+  399152896: [80, '250 Douglas Place'], // 262 ft, 26 floors (Garvey Center tower)
+  399133648: [43, 'One Main Place'], // merged block: One Main + Bitting/Douglas Tower
+  399152911: [42, 'Century Plaza'], // 137 ft, 10 floors, 1930
+  399152913: [43, 'High Touch Building'], // 141 ft, 10 floors
+  574696503: [45, 'Sutton Place'], // 147 ft, 11 floors
+  574696545: [34, 'Petroleum Building'], // 111 ft, 8 floors, 1929
+  399152919: [34, 'Board of Trade Center'], // 112 ft, 7 floors, 1921
+}
+
+// Real buildings missing from OSM and Overture entirely, hand-placed from
+// POI coordinates + satellite proportions. Local meters, same frame as the
+// projection below.
+const EXTRA_BUILDINGS = [
+  // Hyatt Regency Wichita, 400 W Waterman — 223 ft, 17 floors, on the river
+  // south of Century II. Third-tallest presence downtown; OSM has only sheds.
+  { cx: -690, cz: 370, w: 70, d: 34, h: 67, n: 'Hyatt Regency Wichita' },
+  // Wichita City Hall's 17-floor tower (171 ft, 1976). OSM maps the whole
+  // block as the low Municipal Court complex; the tower gets its own box.
+  { cx: -444, cz: -772, w: 40, d: 28, h: 52, n: 'Wichita City Hall' },
+  // Wichita Biomedical Campus, Broadway & William SE — 8 floors, opening
+  // 2026. Too new for OSM or Overture.
+  { cx: -105, cz: 152, w: 60, d: 45, h: 35, n: 'Wichita Biomedical Campus' },
+]
 
 const ROAD_W = {
   primary: 14,
@@ -90,9 +122,10 @@ function hashHeight(pts) {
   return 4 + (Math.abs(h) % 3) * 3 // 4, 7 or 10 m
 }
 
-function parseHeight(tags, pts) {
+function parseHeight(tags, pts, id) {
   const name = tags.name
   if (name && LANDMARK_H[name] != null) return LANDMARK_H[name]
+  if (WAY_FIX[id]) return WAY_FIX[id][0]
   if (tags.height) {
     const m = parseFloat(String(tags.height).replace(/[^0-9.]/g, ''))
     if (m > 2 && m < 120) return m
@@ -100,6 +133,10 @@ function parseHeight(tags, pts) {
   if (tags['building:levels']) {
     const l = parseFloat(tags['building:levels'])
     if (l >= 1 && l < 30) return 2 + l * 3.2
+  }
+  if (OVERTURE_H[id] != null) {
+    const m = OVERTURE_H[id]
+    if (m > 2.5 && m < 100) return m
   }
   const t = tags.building
   if (t === 'garage' || t === 'garages' || t === 'shed') return 3
@@ -150,6 +187,12 @@ async function overpass(query) {
 
 // Cache raw responses next to the script so re-bakes don't re-fetch.
 const { writeFileSync, readFileSync, existsSync } = await import('node:fs')
+
+// Overture Maps lidar heights per OSM element id (committed; regenerate with
+// tools/match-overture-heights.mjs).
+const OVERTURE_H = existsSync(new URL('./overture-heights.json', import.meta.url))
+  ? JSON.parse(readFileSync(new URL('./overture-heights.json', import.meta.url), 'utf8'))
+  : {}
 async function cached(name, query) {
   const path = new URL(`./.cache-${name}.json`, import.meta.url)
   if (existsSync(path)) {
@@ -200,10 +243,24 @@ for (const el of bldRaw) {
     }
     pts = simplify([...pts, pts[0]], 0.6).slice(0, -1)
     if (pts.length < 3) continue
-    const b = { p: pts.flatMap(([x, z]) => [q(x), q(z)]), h: q(parseHeight(tags, pts)) }
-    if (tags.name) b.n = tags.name
+    const b = { p: pts.flatMap(([x, z]) => [q(x), q(z)]), h: q(parseHeight(tags, pts, el.id)) }
+    const name = tags.name || (WAY_FIX[el.id] && WAY_FIX[el.id][1])
+    if (name) b.n = name
     buildings.push(b)
   }
+}
+
+for (const e of EXTRA_BUILDINGS) {
+  buildings.push({
+    p: [
+      q(e.cx - e.w / 2), q(e.cz - e.d / 2),
+      q(e.cx + e.w / 2), q(e.cz - e.d / 2),
+      q(e.cx + e.w / 2), q(e.cz + e.d / 2),
+      q(e.cx - e.w / 2), q(e.cz + e.d / 2),
+    ],
+    h: e.h,
+    n: e.n,
+  })
 }
 
 const roads = []

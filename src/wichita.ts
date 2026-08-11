@@ -233,6 +233,20 @@ const CURATED: Record<string, Style> = {
   'Orpheum Theatre': { c: 0x8d5a40 },
   'The Orpheum Offices': { c: 0x8d5a40 },
   'Intrust Bank Arena': { c: 0x6b5a48, glass: true },
+  // The rest of the real skyline (2026 audit): pre-war masonry towers must
+  // not fall into the tall-glass default.
+  'Garvey Center': { c: 0xb8b2a4, glass: true }, // 250 Douglas Place, 1969 precast
+  'Guild Plaza Hotel': { c: 0xcfd2cc, glass: true }, // 125 N Market, 1963
+  'Hyatt Regency Wichita': { c: 0x9fb8ad, glass: true },
+  'Wichita City Hall': { c: 0x84766a }, // 1976 brutalist brown
+  'AC Hotel Wichita Downtown': { c: 0xc9bfa8 }, // Broadway Plaza, 1929 deco
+  'One Main Place': { c: 0xb08968 },
+  'Sutton Place': { c: 0x9c9488 },
+  'High Touch Building': { c: 0x9a5f3e },
+  'Century Plaza': { c: 0x8d4f38 }, // 1930 deco brick
+  'Petroleum Building': { c: 0x8f4a34 },
+  'Board of Trade Center': { c: 0xc9b28a },
+  'Wichita Biomedical Campus': { c: 0xaabfcd, glass: true }, // opens 2026
 }
 
 // These get hand-built hero geometry instead of a plain extrusion.
