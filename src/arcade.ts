@@ -182,6 +182,21 @@ export class Arcade {
       shell.add(tube)
     }
 
+    // Actual light. The sun ignores the roof (nothing casts shadows at
+    // 320x240), so by night the room went black except the screens. Two warm
+    // point lights under visible ceiling tubes keep the cabinets and the
+    // people at them readable around the clock — the portal's trick, tuned
+    // arcade pink.
+    const fixture = lambert(0x3a2a3a, 0xffc9e8)
+    for (const lx of [-7, 7]) {
+      const tube = box(6, 0.14, 0.5, fixture)
+      tube.position.set(lx, H - 0.4, 1.5)
+      shell.add(tube)
+      const glowLight = new THREE.PointLight(0xffb8d8, 2.4, 26, 1.3)
+      glowLight.position.set(lx, H - 1.4, 1.5)
+      shell.add(glowLight)
+    }
+
     // A little dressing so it reads as a room: change machine and a prize
     // counter nobody is staffing.
     const change = box(1, 1.8, 0.8, lambert(0x3a4a9e, 0x101c50))
