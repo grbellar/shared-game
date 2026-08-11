@@ -105,6 +105,18 @@ build) is the only gate.
     no new message type. The theater (local 1030, -50) screens four
     procedural silent shorts driven off the shared day/night clock, so every
     client watches the same frame and scrubbing the clock scrubs the film.
+  - `tornado.ts` / `oz.ts` — the Kansas twister and where it takes you. The
+    funnel wanders the Wichita prairie as a closed-form function of the
+    SHARED day/night clock (integer sine cycles per 24h, so it never jumps at
+    midnight) — no host, no messages, and scrubbing the clock scrubs the
+    storm. Sirens by distance, suction as a self-applied impulse, and the
+    core strike is decided by your own client (the health.ts rule): main.ts
+    launches you down the ordinary rocket arc to Oz, so remotes watch you
+    leave Kansas for free. Oz is a fourth place (region at 0, -2600, book
+    content only — silver shoes, not ruby): yellow brick road and poppies
+    painted into the terrain colours, Emerald City, Munchkin village, and
+    the whole company as clock-choreographed scenery with name tags.
+    Also travellable directly: `oz` is in DESTINATIONS.
   - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
     island out past the fog. Both ride the wall clock rather than a synced
     tick; a second of drift between clients is invisible on wildlife.

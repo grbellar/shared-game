@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { heightAt, terrainVersion } from './world'
 import { REALM_X, REALM_Z, inRealm } from './realm'
 import { WICHITA_X, WICHITA_Z, inWichita, inOldTown } from './wichita'
+import { OZ_X, OZ_Z, inOz } from './oz'
 import { BUILDINGS, ROADS } from './wichita-data'
 import { BLOCK, MATERIALS, blocksVersion, forEachBlock } from './blocks'
 import { LIFETIME_MS as TALK_MS } from './bubbles'
@@ -29,6 +30,7 @@ const ZOOM = 2 // CSS upscale — integer, or nearest-neighbour goes lumpy
 const HALF_ISLAND = 94 // the shoreline plus a little sea
 const HALF_REALM = 62 // the castle, its apron, and the top of the road
 const HALF_CITY = 110 // a few Wichita blocks around you — the radar scrolls
+const HALF_OZ = 160 // the whole meadow, shore to shore
 // The city radar re-centres on you in steps this big, so the bake cache
 // still works: cross a cell, get a fresh neighbourhood.
 const CITY_SNAP = 24
@@ -55,10 +57,10 @@ const HIGH = [0x38, 0x2e, 0x48]
 // Wichita: the concrete slab; streets and footprints go on as vectors.
 const CONCRETE = [0xb9, 0xb2, 0xa4]
 
-type MapMode = 'island' | 'realm' | 'city'
+type MapMode = 'island' | 'realm' | 'city' | 'oz'
 
 function modeAt(x: number, z: number): MapMode {
-  return inRealm(x, z) ? 'realm' : inWichita(x, z) ? 'city' : 'island'
+  return inRealm(x, z) ? 'realm' : inWichita(x, z) ? 'city' : inOz(x, z) ? 'oz' : 'island'
 }
 
 export class Minimap {
@@ -139,9 +141,12 @@ export class Minimap {
     // is a radar that re-centres on you in CITY_SNAP steps.
     const p = player.group.position
     const mode = modeAt(p.x, p.z)
-    this.half = mode === 'realm' ? HALF_REALM : mode === 'city' ? HALF_CITY : HALF_ISLAND
-    this.cx = mode === 'realm' ? REALM_X : mode === 'city' ? Math.round(p.x / CITY_SNAP) * CITY_SNAP : 0
-    this.cz = mode === 'realm' ? REALM_Z : mode === 'city' ? Math.round(p.z / CITY_SNAP) * CITY_SNAP : 0
+    this.half =
+      mode === 'realm' ? HALF_REALM : mode === 'city' ? HALF_CITY : mode === 'oz' ? HALF_OZ : HALF_ISLAND
+    this.cx =
+      mode === 'realm' ? REALM_X : mode === 'city' ? Math.round(p.x / CITY_SNAP) * CITY_SNAP : mode === 'oz' ? OZ_X : 0
+    this.cz =
+      mode === 'realm' ? REALM_Z : mode === 'city' ? Math.round(p.z / CITY_SNAP) * CITY_SNAP : mode === 'oz' ? OZ_Z : 0
     const now = performance.now()
     // Terrain rebakes ride the same throttle as blocks: craters land in
     // bursts too (the fifty), and each bake sweeps thousands of heightAt

@@ -339,6 +339,18 @@ class Sfx {
     this.tone('sawtooth', 92, 86, 0.28, 0.05 * v)
   }
 
+  // The tornado sirens: a full rise-and-fall wail, two sawtooths a few cents
+  // apart so it beats like the real ones. tornado.ts ticks this every ~3s
+  // while the funnel is in earshot, volume by distance.
+  siren(vol = 1): void {
+    const v = Math.min(1, vol)
+    if (v <= 0.02) return
+    this.tone('sawtooth', 380, 640, 1.55, 0.09 * v)
+    this.tone('sawtooth', 385, 648, 1.55, 0.06 * v, 0.02)
+    this.tone('sawtooth', 640, 388, 1.5, 0.09 * v, 1.55)
+    this.tone('sawtooth', 648, 392, 1.5, 0.06 * v, 1.57)
+  }
+
   // Cabinet bleeps for the Old Town arcade (arcadegames.ts): one square
   // chirp at whatever pitch the game asked for, and the sad little slide
   // every quarter ever bought.

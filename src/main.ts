@@ -19,6 +19,8 @@ import { createRealm, inRealm } from './realm'
 import { createWichita, updateWichita } from './wichita'
 import { Arcade } from './arcade'
 import { Theater } from './theater'
+import { Oz, inOz, ozArrival } from './oz'
+import { Tornado } from './tornado'
 import { buildCastle } from './castle'
 import { Portals, type Gate } from './portal'
 import * as blocks from './blocks'
@@ -113,6 +115,11 @@ createWichita(scene)
 // ordinary chat relay; the film runs off the shared clock. No new messages.
 const arcade = new Arcade(scene)
 const theater = new Theater(scene)
+// The Land of Oz, and the Kansas weather that delivers you to it. The
+// tornado rides the shared clock (see tornado.ts), so it costs the network
+// nothing and everyone watches the same storm.
+const oz = new Oz(scene)
+const tornado = new Tornado(scene)
 // The castle is a world block seeder, not a snapshot: initBlocks builds it
 // now and rebuilds it on every welcome, before the room's damage replays.
 initBlocks(scene, buildCastle)
@@ -727,6 +734,14 @@ function launchRocket(dest: { x: number; z: number; followId?: string }): boolea
   // sea monster's body across the sky behind you.
   if (ride === 'nessie') equipRide('none')
   return rocket.launch(player, dest)
+}
+// The twister's prize: you're not hurt, you're RELOCATED. The trip is the
+// ordinary rocket arc, so remotes watch you leave Kansas with no new
+// machinery — and the arc's own crater rule and landing blast apply.
+tornado.onStrike = () => {
+  hud.banner('TWISTER!', 2600)
+  sfx.warp()
+  launchRocket(ozArrival())
 }
 map.onPickPlayer = (id) => {
   const group = remotes.getGroup(id)
@@ -1646,6 +1661,7 @@ settings.onClockChange = (fromToggle) => {
 const flash = document.getElementById('flash')!
 const banner = document.getElementById('realm-banner')!
 let shadow = inRealm(player.group.position.x, player.group.position.z)
+let ozZone = inOz(player.group.position.x, player.group.position.z)
 let burnT = 0
 
 // (Re)start a CSS animation: tear it off, force a reflow, put it back.
@@ -1887,6 +1903,16 @@ function frame(): void {
       gameCamera.snapTo(player)
     }
   }
+  // Oz gets its arrival fanfare too; leaving quietly is fine — wherever you
+  // land next will introduce itself.
+  const nowOz = inOz(player.group.position.x, player.group.position.z)
+  if (nowOz !== ozZone) {
+    ozZone = nowOz
+    if (nowOz) {
+      announce('THE LAND OF OZ')
+      sfx.warp()
+    }
+  }
   // The realm's sea is molten. player.ts floats you in it exactly like water,
   // which is the joke: the only difference is that it kills you.
   if (shadow && player.pose === 'swim' && !player.dead) {
@@ -2005,9 +2031,17 @@ function frame(): void {
     Math.max(rocket.fogLift, planeLift, xwing.fogLift, trebuchet.fogLift),
   )
   // Wichita's windows come on with the same clock that just drove the sky —
-  // and the same clock is the projector, so everyone watches the same frame.
+  // the same clock is the projector, the tornado's leash, and Oz's
+  // choreography, so everyone watches the same everything.
   updateWichita(daynight.now())
   theater.update(daynight.now(), player.group.position)
+  tornado.update(
+    dt,
+    daynight.now(),
+    player,
+    !rocket.active && !trebuchet.busy && !player.grabbed,
+  )
+  oz.update(dt, daynight.now(), player.group.position)
   minimap.update(player, remotes, settings, voice.level, skeletons)
   critters.update(dt, player.group.position)
   cheats.update()

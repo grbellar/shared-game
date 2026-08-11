@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { heightAt, ISLANDS, landingSpotOn, nearestIsland } from './world'
 import { REALM_X, REALM_Z, inRealm } from './realm'
 import { WICHITA_X, WICHITA_Z, inWichita } from './wichita'
+import { inOz, ozArrival } from './oz'
 import { WATER_LEVEL, type Player } from './player'
 import { ROCKET_ASCENT_S, ROCKET_DESCENT_S, ROCKET_FLIGHT_S } from './emotes'
 import type { Effects } from './effects'
@@ -46,11 +47,14 @@ export const DESTINATIONS: Destination[] = [
     // nearestIsland still has to answer something, and it would claim you're
     // on home while you're standing in the middle of Douglas Ave.
     here: (x: number, z: number) =>
-      !inRealm(x, z) && !inWichita(x, z) && nearestIsland(x, z) === i,
+      !inRealm(x, z) && !inWichita(x, z) && !inOz(x, z) && nearestIsland(x, z) === i,
     spot: () => landingSpotOn(i),
   })),
   { name: 'the castle', icon: '🏰', here: inRealm, spot: realmPad },
   { name: 'wichita', icon: '🌾', here: inWichita, spot: wichitaPad },
+  // The scenic route is a Kansas twister (tornado.ts); this is the direct
+  // flight. Sets down by the Munchkin village, where the road starts.
+  { name: 'oz', icon: '🌪️', here: inOz, spot: ozArrival },
 ]
 
 // Down on the apron: clear of the castle curtain (33 units from centre) and
