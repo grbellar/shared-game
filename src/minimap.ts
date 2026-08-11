@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { heightAt, terrainVersion } from './world'
 import { REALM_X, REALM_Z, inRealm } from './realm'
+import { WICHITA_X, WICHITA_Z, inWichita, inOldTown } from './wichita'
+import { BUILDINGS, ROADS } from './wichita-data'
 import { BLOCK, MATERIALS, blocksVersion, forEachBlock } from './blocks'
 import { LIFETIME_MS as TALK_MS } from './bubbles'
 import type { Player } from './player'
@@ -12,10 +14,12 @@ import type { Skeletons } from './skeletons'
 // deliberately tiny canvas and upscaled with nearest-neighbour, same trick as
 // the main view — the chunk is the look.
 //
-// There are two maps: the island, and the shadow realm with the castle drawn
-// on it. Which one you get follows where you are. Both are baked into an
-// offscreen canvas and only re-baked when something actually changes — the
-// terrain (craters) or, in the realm, the blocks — so per-frame work is a blit
+// There are three maps: the island, the shadow realm with the castle drawn
+// on it, and downtown Wichita with its real streets and footprints. Which
+// one you get follows where you are. All are baked into an offscreen canvas
+// and only re-baked when something actually changes — the terrain (craters),
+// the realm's blocks, or (Wichita being far bigger than one frame) you
+// wandering out of the baked neighbourhood — so per-frame work is a blit
 // plus a handful of rectangles.
 
 const SIZE = 72 // internal pixels
@@ -24,6 +28,10 @@ const ZOOM = 2 // CSS upscale — integer, or nearest-neighbour goes lumpy
 // only ~67 units across, and at the island's scale it would be a smudge.
 const HALF_ISLAND = 94 // the shoreline plus a little sea
 const HALF_REALM = 62 // the castle, its apron, and the top of the road
+const HALF_CITY = 110 // a few Wichita blocks around you — the radar scrolls
+// The city radar re-centres on you in steps this big, so the bake cache
+// still works: cross a cell, get a fresh neighbourhood.
+const CITY_SNAP = 24
 // Re-baking the castle layer sweeps every block, so cap how often a siege can
 // trigger it. A tenth of a second is well under one frame of visible lag.
 const REBAKE_MS = 120
@@ -44,6 +52,14 @@ const LAVA = [0xc4, 0x4a, 0x16]
 const SCORCH = [0x6d, 0x34, 0x1c]
 const BASALT = [0x4a, 0x40, 0x5c]
 const HIGH = [0x38, 0x2e, 0x48]
+// Wichita: the concrete slab; streets and footprints go on as vectors.
+const CONCRETE = [0xb9, 0xb2, 0xa4]
+
+type MapMode = 'island' | 'realm' | 'city'
+
+function modeAt(x: number, z: number): MapMode {
+  return inRealm(x, z) ? 'realm' : inWichita(x, z) ? 'city' : 'island'
+}
 
 export class Minimap {
   private canvas = document.createElement('canvas')
@@ -51,8 +67,10 @@ export class Minimap {
   private island = document.createElement('canvas')
   private islandCtx: CanvasRenderingContext2D
   private visible = true
-  // Which map is baked, and what it was baked from.
-  private bakedRealm: boolean | null = null
+  // Which map is baked, from where, and what it was baked from.
+  private bakedMode: MapMode | null = null
+  private bakedCx = 0
+  private bakedCz = 0
   private bakedTerrain = -1
   private bakedBlocks = -1
   private lastBake = 0
@@ -116,28 +134,33 @@ export class Minimap {
     }
     if (!this.visible) return
 
-    // Two maps, one canvas: which one you get follows which world you're in.
-    const realm = inRealm(player.group.position.x, player.group.position.z)
-    if (realm !== this.bakedRealm) {
-      this.half = realm ? HALF_REALM : HALF_ISLAND
-      this.cx = realm ? REALM_X : 0
-      this.cz = realm ? REALM_Z : 0
-    }
+    // Three maps, one canvas: which one you get follows which world you're
+    // in. The island and the realm are small enough to frame whole; Wichita
+    // is a radar that re-centres on you in CITY_SNAP steps.
+    const p = player.group.position
+    const mode = modeAt(p.x, p.z)
+    this.half = mode === 'realm' ? HALF_REALM : mode === 'city' ? HALF_CITY : HALF_ISLAND
+    this.cx = mode === 'realm' ? REALM_X : mode === 'city' ? Math.round(p.x / CITY_SNAP) * CITY_SNAP : 0
+    this.cz = mode === 'realm' ? REALM_Z : mode === 'city' ? Math.round(p.z / CITY_SNAP) * CITY_SNAP : 0
     const now = performance.now()
     // Terrain rebakes ride the same throttle as blocks: craters land in
     // bursts too (the fifty), and each bake sweeps thousands of heightAt
     // samples. Crossing worlds still swaps the map immediately.
     const stale =
-      realm !== this.bakedRealm ||
+      mode !== this.bakedMode ||
+      this.cx !== this.bakedCx ||
+      this.cz !== this.bakedCz ||
       ((terrainVersion() !== this.bakedTerrain ||
-        (realm && blocksVersion() !== this.bakedBlocks)) &&
+        (mode === 'realm' && blocksVersion() !== this.bakedBlocks)) &&
         now - this.lastBake > REBAKE_MS)
     if (stale) {
-      this.bakedRealm = realm
+      this.bakedMode = mode
+      this.bakedCx = this.cx
+      this.bakedCz = this.cz
       this.bakedTerrain = terrainVersion()
       this.bakedBlocks = blocksVersion()
       this.lastBake = now
-      this.bake(realm)
+      this.bake(mode)
     }
 
     const ctx = this.ctx
@@ -145,12 +168,12 @@ export class Minimap {
     ctx.drawImage(this.island, 0, 0)
 
     // Only people in the same world as you — the other lot are through a
-    // portal, not just off the edge of the picture.
+    // portal (or five fog walls west), not just off the edge of the picture.
     for (const { id, pos, color, talk } of remotes.blips()) {
-      if (inRealm(pos.x, pos.z) !== realm) continue
+      if (modeAt(pos.x, pos.z) !== mode) continue
       this.blip(pos, color, this.talkAge(id, now, talk))
     }
-    if (realm && skeletons) {
+    if (mode === 'realm' && skeletons) {
       for (const s of skeletons.blips()) this.bones(s.x, s.z, s.hunting)
     }
     const mine = this.place(player.group.position)
@@ -274,7 +297,7 @@ export class Minimap {
   // and the next column's sample doubles as the east neighbour for a cheap
   // hillshade. In the realm the castle goes on top, drawn from the live block
   // grid — so the map falls down as the walls do.
-  private bake(realm: boolean): void {
+  private bake(mode: MapMode): void {
     const img = this.islandCtx.createImageData(SIZE, SIZE)
     const cell = 1 / this.scale
     const row = new Float32Array(SIZE + 1)
@@ -287,14 +310,20 @@ export class Minimap {
         const h = row[px]
         let c: number[]
         let shade = 1
-        if (realm) {
+        if (mode === 'realm') {
           // The realm's "sea" is molten and its ground starts at REALM_GROUND.
           if (h < 0) c = LAVA
           else if (h < 3) c = SCORCH
           else c = h > 8 ? HIGH : BASALT
           if (h >= 0) shade = 1 + Math.max(-0.4, Math.min(0.4, (h - row[px + 1]) * 0.22))
         } else if (h < 0) {
+          // Water is water in both remaining worlds — the river cuts through
+          // downtown at the same depths the island sea uses.
           c = h < -3 ? DEEP : WATER
+        } else if (mode === 'city') {
+          c = CONCRETE
+          // Flat slab, so the only relief worth shading is crater damage.
+          shade = 1 + Math.max(-0.4, Math.min(0.4, (h - row[px + 1]) * 0.22))
         } else {
           c = h < 1 ? SAND : h < 10.5 ? GRASS : ROCK
           // Slopes falling away to the east catch the light, ones rising
@@ -308,8 +337,69 @@ export class Minimap {
         img.data[o + 3] = 255
       }
     }
-    if (realm) this.bakeCastle(img)
+    if (mode === 'realm') this.bakeCastle(img)
     this.islandCtx.putImageData(img, 0, 0)
+    if (mode === 'city') this.bakeCity()
+  }
+
+  // Streets and footprints over the slab, drawn as vectors on the baked
+  // canvas — putImageData first, paths after, and the canvas clips whatever
+  // falls outside the frame. ~1600 paths per bake, and a bake happens only
+  // when you cross into a fresh CITY_SNAP cell.
+  private bakeCity(): void {
+    const ctx = this.islandCtx
+    const lx = (x: number) => this.mapX(WICHITA_X + x)
+    const lz = (z: number) => this.mapY(WICHITA_Z + z)
+    const view = this.half + 60 // skip geometry nowhere near the frame
+    ctx.strokeStyle = '#54545c'
+    ctx.lineCap = 'round'
+    for (const r of ROADS) {
+      if (r.w < 6) continue
+      if (!this.nearCity(r.p, view)) continue
+      ctx.lineWidth = Math.max(1, r.w * this.scale)
+      ctx.beginPath()
+      for (let i = 0; i + 1 < r.p.length; i += 2) {
+        if (i === 0) ctx.moveTo(lx(r.p[i]), lz(r.p[i + 1]))
+        else ctx.lineTo(lx(r.p[i]), lz(r.p[i + 1]))
+      }
+      ctx.stroke()
+    }
+    for (const b of BUILDINGS) {
+      if (!this.nearCity(b.p, view)) continue
+      let cx = 0
+      let cz = 0
+      ctx.beginPath()
+      for (let i = 0; i < b.p.length; i += 2) {
+        cx += b.p[i]
+        cz += b.p[i + 1]
+        if (i === 0) ctx.moveTo(lx(b.p[i]), lz(b.p[i + 1]))
+        else ctx.lineTo(lx(b.p[i]), lz(b.p[i + 1]))
+      }
+      ctx.closePath()
+      const n = b.p.length / 2
+      ctx.fillStyle = inOldTown(cx / n, cz / n) ? '#8f4630' : '#7a6e60'
+      ctx.fill()
+    }
+  }
+
+  // Does this local-coord polyline come near the framed neighbourhood?
+  // Checked as the whole path's bounding box, not vertex by vertex — a long
+  // straight avenue can cross the frame with both endpoints far outside it,
+  // and Douglas vanishing from its own radar would be embarrassing.
+  private nearCity(p: number[], view: number): boolean {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
+    for (let i = 0; i < p.length; i += 2) {
+      minX = Math.min(minX, p[i])
+      maxX = Math.max(maxX, p[i])
+      minZ = Math.min(minZ, p[i + 1])
+      maxZ = Math.max(maxZ, p[i + 1])
+    }
+    const cx = this.cx - WICHITA_X
+    const cz = this.cz - WICHITA_Z
+    return minX < cx + view && maxX > cx - view && minZ < cz + view && maxZ > cz - view
   }
 
   // Every standing block, flattened to a plan view: keep the highest one per
