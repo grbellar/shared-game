@@ -62,13 +62,17 @@ function realmPad(): { x: number; z: number } {
   return { x: REALM_X + Math.cos(a) * r, z: REALM_Z + Math.sin(a) * r }
 }
 
-// Somewhere on Douglas Ave near Market (the city's local origin). Scatter
-// along the street, not across it — the buildings are solid-looking but not
-// solid, and arriving inside one is a bad first impression.
+// Douglas Ave in Old Town, on the stretch between the arcade (local 1055,
+// 10, marquee facing the street) and the theater across from it — you land
+// in the middle of the entertainment district instead of a kilometer of
+// sidewalk west of it. Scatter along the street, not across it: the arcade's
+// front wall sits at local z=0 and the theater's at z=-39, so the strip
+// between stays clear of both. The buildings aren't solid, but arriving
+// inside one is a bad first impression.
 function wichitaPad(): { x: number; z: number } {
   return {
-    x: WICHITA_X + (Math.random() - 0.5) * 60,
-    z: WICHITA_Z + (Math.random() - 0.5) * 6,
+    x: WICHITA_X + 1042 + (Math.random() - 0.5) * 50,
+    z: WICHITA_Z - 18 + (Math.random() - 0.5) * 10,
   }
 }
 
