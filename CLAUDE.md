@@ -93,6 +93,16 @@ build) is the only gate.
     Droid flying it instead: the `radio` weapon marks a target and sends
     `cas` (see the protocol list), and every client derives the same
     strafing run. Droid's face in the canopy comes from `meckies.ts`.
+  - `arcade.ts` / `arcadegames.ts` / `theater.ts` — Old Town's entertainment
+    district in Wichita, on lots scanned clear of the baked footprints. The
+    arcade (local 1055, 10) has eight playable cabinets: X sits you down,
+    WASD/space play, and the 64px cabinet canvas is mirrored into a DOM
+    overlay while you play (the scope-overlay trick) because a texture two
+    meters away isn't a playable screen. Runs are purely local — the one
+    synced thing is a new high score, bragged over the ordinary chat relay,
+    no new message type. The theater (local 1030, -50) screens four
+    procedural silent shorts driven off the shared day/night clock, so every
+    client watches the same frame and scrubbing the clock scrubs the film.
   - `critters.ts` — the duck patrolling the shoreline and Nessie looping the
     island out past the fog. Both ride the wall clock rather than a synced
     tick; a second of drift between clients is invisible on wildlife.

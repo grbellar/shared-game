@@ -17,6 +17,8 @@ import { DayNight, SUN_AIM_DOT } from './daynight'
 import { Building } from './building'
 import { createRealm, inRealm } from './realm'
 import { createWichita, updateWichita } from './wichita'
+import { Arcade } from './arcade'
+import { Theater } from './theater'
 import { buildCastle } from './castle'
 import { Portals, type Gate } from './portal'
 import * as blocks from './blocks'
@@ -106,6 +108,11 @@ scene.add(camera)
 createWorld(scene)
 createRealm(scene)
 createWichita(scene)
+// Old Town's entertainment district: playable cabinets and the picture
+// house, facing each other across Douglas. High scores brag over the
+// ordinary chat relay; the film runs off the shared clock. No new messages.
+const arcade = new Arcade(scene)
+const theater = new Theater(scene)
 // The castle is a world block seeder, not a snapshot: initBlocks builds it
 // now and rebuilds it on every welcome, before the room's damage replays.
 initBlocks(scene, buildCastle)
@@ -934,6 +941,7 @@ function dieLocally(): void {
   // Death always unseats you from Nessie — unlike a wheelchair, she is not
   // yours to keep, and the respawn is back on the island anyway.
   if (ride === 'nessie') equipRide('none')
+  arcade.stop() // no posthumous high scores
   const headPos = popHead(player.group)
   if (headPos) effects.spawnHeadPop(headPos)
   sfx.pop()
@@ -1061,6 +1069,7 @@ function applyFiftyRound(hit: ReturnType<typeof hitscan>, now: number): void {
 
 function attack(): void {
   if (player.dead) return
+  if (arcade.isPlaying) return // the trigger belongs to the cabinet
   const now = performance.now()
   emotes.stop() // no waving mid-rocket
   if (inCockpit()) {
@@ -1464,6 +1473,13 @@ mobs.onSay = (group, text) => bubbles.show(group, text)
 const stripper = new Stripper(scene, bubbles)
 // Longer messages get a longer mouth-flap while the bubble is up.
 const jabberFor = (text: string): number => Math.min(4000, 900 + text.length * 55)
+// A new personal best goes out as ordinary chat — the whole room hears the
+// brag with no new message type, and it lands in everyone's log by name.
+arcade.onHighScore = (title, score) => {
+  const brag = `🕹️ new high score on ${title}: ${score}`
+  net.sendChat(brag)
+  chat.addMessage(profile.name, brag)
+}
 chat.onSend = (text) => {
   // Cheat codes ride the chat channel — everyone in the room already gets
   // the text, so both ends parse it and toggle together. No new message type.
@@ -1572,6 +1588,10 @@ window.addEventListener('keydown', (e) => {
     xwing.takeoff(player.group)
   }
   if (e.code === 'KeyJ') rocketToNextIsland()
+  // X sits you down at the nearest arcade cabinet (or backs you off it) —
+  // the prompt only shows inside the Old Town Arcade, where X means nothing
+  // else.
+  if (e.code === 'KeyX' && !e.repeat) arcade.toggle(player.group.position)
   if (e.code === 'KeyU') meckies.toggleNearest()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
@@ -1798,9 +1818,12 @@ function frame(): void {
     mountNessie()
   }
 
-  const stickF = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF
-  const stickS = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS
-  const boost = keys.has('Space') || touch.jumpHeld
+  // At a cabinet the keys belong to the game: WASD steers WORM, not you,
+  // and space is the red button rather than a jump.
+  const atCabinet = arcade.isPlaying
+  const stickF = atCabinet ? 0 : (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0) + touch.moveF
+  const stickS = atCabinet ? 0 : (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0) + touch.moveS
+  const boost = !atCabinet && (keys.has('Space') || touch.jumpHeld)
   const surging = ride === 'nessie' && !player.dead
   const digging = surging && (fp.isActive ? fp.pitch < -0.5 : gameCamera.pitch > 1.02)
   player.update(
@@ -1926,6 +1949,18 @@ function frame(): void {
   if (firing && beltFed) attack()
   fireworks.update(dt)
   strikes.update(dt, player.group.position)
+  arcade.update(
+    dt,
+    player.group.position,
+    {
+      left: keys.has('KeyA') || keys.has('ArrowLeft'),
+      right: keys.has('KeyD') || keys.has('ArrowRight'),
+      up: keys.has('KeyW') || keys.has('ArrowUp'),
+      down: keys.has('KeyS') || keys.has('ArrowDown'),
+      a: keys.has('Space'),
+    },
+    player.dead,
+  )
   remotes.update(dt)
   // `nessieRiders` is still the list from the top of the frame — nothing
   // between there and here changes anyone's ride.
@@ -1969,8 +2004,10 @@ function frame(): void {
     shadow ? 1 : 0,
     Math.max(rocket.fogLift, planeLift, xwing.fogLift, trebuchet.fogLift),
   )
-  // Wichita's windows come on with the same clock that just drove the sky.
+  // Wichita's windows come on with the same clock that just drove the sky —
+  // and the same clock is the projector, so everyone watches the same frame.
   updateWichita(daynight.now())
+  theater.update(daynight.now(), player.group.position)
   minimap.update(player, remotes, settings, voice.level, skeletons)
   critters.update(dt, player.group.position)
   cheats.update()

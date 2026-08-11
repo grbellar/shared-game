@@ -339,6 +339,17 @@ class Sfx {
     this.tone('sawtooth', 92, 86, 0.28, 0.05 * v)
   }
 
+  // Cabinet bleeps for the Old Town arcade (arcadegames.ts): one square
+  // chirp at whatever pitch the game asked for, and the sad little slide
+  // every quarter ever bought.
+  arcadeBlip(freq: number): void {
+    this.tone('square', freq, freq * 1.02, 0.07, 0.12)
+  }
+  arcadeOver(): void {
+    this.tone('square', 380, 70, 0.5, 0.14)
+    this.tone('triangle', 190, 50, 0.55, 0.1, 0.05)
+  }
+
   // Rocket travel leaving the ground: an ignition crack, then a long roar
   // climbing away from you as the motor burns out (see rocket.ts).
   rocketLaunch(): void {
