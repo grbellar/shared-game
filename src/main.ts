@@ -19,6 +19,7 @@ import { createRealm, inRealm } from './realm'
 import { createWichita, updateWichita } from './wichita'
 import { Arcade } from './arcade'
 import { Theater } from './theater'
+import { IceCream } from './icecream'
 import { Oz, inOz, ozArrival, ozShoesSpot, ozBalloonSpot } from './oz'
 import { Tornado } from './tornado'
 import { buildCastle } from './castle'
@@ -198,6 +199,9 @@ if (settings.webcamFace) {
 const touch = new TouchControls()
 const health = new Health()
 player.onRespawn = () => health.revive()
+// Old Town Scoops, further down Douglas: sidewalk coins in, ice cream out.
+// Purely local, like an arcade run — see icecream.ts.
+const icecream = new IceCream(scene, player.group, health)
 // Anything that hurts us and isn't a player — a bear, a skeleton, the lava —
 // still brings the house down. Nobody to strike, but they shout about it.
 health.onHurt = () => meckies.rally()
@@ -1652,10 +1656,17 @@ window.addEventListener('keydown', (e) => {
     xwing.takeoff(player.group)
   }
   if (e.code === 'KeyJ') rocketToNextIsland()
-  // X sits you down at the nearest arcade cabinet (or backs you off it);
-  // when no cabinet wants it, it's Oz's exit key — the two places are a
-  // continent apart, so the chain can't misfire.
-  if (e.code === 'KeyX' && !e.repeat && !arcade.toggle(player.group.position)) ozExit()
+  // X sits you down at the nearest arcade cabinet (or backs you off it),
+  // then tries the ice cream counter down the street; when neither wants it,
+  // it's Oz's exit key — the places are far enough apart the chain can't
+  // misfire.
+  if (
+    e.code === 'KeyX' &&
+    !e.repeat &&
+    !arcade.toggle(player.group.position) &&
+    !icecream.buy(player.group.position)
+  )
+    ozExit()
   if (e.code === 'KeyU') meckies.toggleNearest()
   if (e.code === 'KeyP') cats.petNearest()
   if (e.code === 'KeyM') sfx.toggleMute()
@@ -2037,6 +2048,7 @@ function frame(): void {
     },
     player.dead,
   )
+  icecream.update(dt, player.group.position, player.dead)
   remotes.update(dt)
   // `nessieRiders` is still the list from the top of the frame — nothing
   // between there and here changes anyone's ride.

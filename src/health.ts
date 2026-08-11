@@ -159,6 +159,13 @@ export class Health {
     }
   }
 
+  // A good thing happened (ice cream, mostly). Quiet — no flash, no sfx.
+  heal(amount: number): void {
+    if (this.dead || !(amount > 0)) return
+    this.hp = Math.min(MAX_HP, this.hp + amount)
+    this.render()
+  }
+
   // Dead by some other route (a `kill` aimed at us). Stops regen until revive.
   kill(): void {
     this.hp = 0
